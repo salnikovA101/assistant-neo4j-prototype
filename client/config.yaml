@@ -1,0 +1,8 @@
+server_url: "http://localhost:8000"
+push_to_talk_key: "right ctrl"
+sample_rate: 16000
+playback_sample_rate: 24000
+debug_mode: false
+enable_voice_input: true
+enable_text_input: true
+request_timeout: 300

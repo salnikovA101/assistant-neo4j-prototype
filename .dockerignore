@@ -1,0 +1,14 @@
+.venv
+__pycache__
+*.pyc
+*.pyo
+.git
+.vscode
+.env
+.env.example
+.ruff_cache
+client/
+tests/
+db_dump.json
+test_results*.txt
+*.md

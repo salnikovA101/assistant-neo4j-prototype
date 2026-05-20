@@ -1,0 +1,40 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ./server/config.yaml:/app/server/config.yaml:ro
+      - ./prompts:/app/prompts:ro
+      - ./voices:/app/voices:ro
+      - hf_cache:/root/.cache/huggingface
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    depends_on:
+      - phoenix
+
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    ports:
+      - "6006:6006"
+    environment:
+      - PHOENIX_WORKING_DIR=/data
+    volumes:
+      - phoenix_data:/data
+
+volumes:
+  hf_cache:
+  phoenix_data:

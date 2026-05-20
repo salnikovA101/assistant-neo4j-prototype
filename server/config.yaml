@@ -1,0 +1,53 @@
+debug_mode: false
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  llm_timeout: 300
+
+stt:
+  model: "large-v3-turbo"
+  device: "cuda"
+  compute_type: "int8_bfloat16"
+  language: "ru"
+
+tts:
+  mode: "quality"
+  speed:
+    silero_speaker: "baya"
+    sample_rate: 24000
+    language: "ru"
+    speaker_type: "v5_ru"
+    device: "cuda"
+    speaker_name: "baya"
+  quality:
+    model: "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+    device: "cuda"
+    attn_implementation: "sdpa"
+    max_seq_len: 2048
+    ref_voice: "voices/example.wav"
+    ref_text: "Буду, получается, проходить сюжетку Пылью, Женщиной-пауком, ну или какими-нибудь другими супергероями. И, в общем-то, надеюсь, всё получится. Погнали!"
+    language: "Russian"
+    chunk_size: 4
+  cloud:
+    model: "openai/gpt-4o-mini-tts-2025-12-15"
+    voice: "alloy"
+
+llm:
+  current_profile: "other"
+  cypher_profile: "other"
+  history_len: 6
+  prompt_folder: "prompts"
+  profiles:
+    gemini:
+      provider: "openai"
+      model: "gemini-3.1-flash-lite"
+      temperature: 0.7
+      max_output_tokens: 4096
+      max_turns: 5
+    other:
+      provider: "openai"
+      model: "google/gemini-3-flash-preview"
+      temperature: 0.3
+      max_output_tokens: 4096
+      max_turns: 5

@@ -1,0 +1,23 @@
+# Environment & secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+
+# Linters / formatters
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+
+
+# OS
+Thumbs.db
+.DS_Store

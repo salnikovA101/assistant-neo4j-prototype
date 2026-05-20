@@ -1,0 +1,8 @@
+httpx
+sounddevice
+numpy
+keyboard
+soundfile
+pydantic
+pydantic-settings
+PyYAML
