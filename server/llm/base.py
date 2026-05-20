@@ -88,7 +88,7 @@ class BaseLLMProvider(ABC):
             }
             if tools:
                 kwargs["tools"] = tools
-                kwargs["tool_choice"] = "auto"
+                kwargs["tool_choice"] = "required"
 
             response = await self.client.chat.completions.create(**kwargs)
             logger.debug(response)
@@ -135,6 +135,7 @@ class BaseLLMProvider(ABC):
                         )
 
                 kwargs["messages"] = messages
+                kwargs["tool_choice"] = "auto"
                 response = await self.client.chat.completions.create(**kwargs)
                 logger.debug(response)
                 message = response.choices[0].message

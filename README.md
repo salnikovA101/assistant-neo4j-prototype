@@ -104,6 +104,12 @@ python -m client.main
 
 Удерживай `Right Ctrl` для голосового ввода, или печатай текст в консоли.
 
+### 5. Запуск тестов
+
+```bash
+python -m tests.test_runner
+```
+
 ## API Endpoints
 
 | Метод | Путь | Описание |
