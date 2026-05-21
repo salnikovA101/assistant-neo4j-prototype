@@ -4,7 +4,9 @@ from contextlib import asynccontextmanager
 from urllib.parse import quote
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from server.utils.config import load_config
 from server.core.pipeline import ServerPipeline
@@ -53,6 +55,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Voice Assistant Server", lifespan=lifespan)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Recognized-Text", "LLM-Response", "Sample-Rate", "Channels", "Sample-Width"],
+)
+
 
 @app.post("/process")
 async def process_audio(request: Request):
@@ -85,6 +95,25 @@ async def process_audio(request: Request):
             "Sample-Width": "2",
         },
     )
+
+
+@app.post("/stt")
+async def stt_only(request: Request):
+    """
+    Только STT: принимает WAV-аудио, возвращает распознанный текст (JSON).
+    Используется веб-клиентом для мгновенного отображения результата STT.
+    """
+    pipeline: ServerPipeline = request.app.state.pipeline
+    wav_bytes = await request.body()
+
+    if not wav_bytes:
+        return JSONResponse({"error": "Пустое тело запроса"}, status_code=400)
+
+    text = await pipeline.stt.transcribe_bytes(wav_bytes)
+    if not text:
+        return JSONResponse({"error": "Речь не распознана"}, status_code=422)
+
+    return JSONResponse({"text": text})
 
 
 @app.post("/process_text")
@@ -139,3 +168,8 @@ async def process_text_test(request: Request):
 async def health():
     """Проверка готовности сервера."""
     return {"status": "ready"}
+
+
+# Веб-интерфейс: http://localhost:8000/ui/
+app.mount("/ui", StaticFiles(directory="server/static", html=True), name="ui")
+

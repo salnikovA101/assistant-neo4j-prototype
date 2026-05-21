@@ -19,6 +19,7 @@ services:
       - ./server/config.yaml:/app/server/config.yaml:ro
       - ./prompts:/app/prompts:ro
       - ./voices:/app/voices:ro
+      - ./server/static:/app/server/static:ro
       - hf_cache:/root/.cache/huggingface
     dns:
       - 8.8.8.8
