@@ -58,10 +58,12 @@ class GraphQA:
 
     MAX_TURNS = 3
 
-    def __init__(self, neo4j_config, llm_profile, max_len: int):
+    def __init__(self, neo4j_config, llm_profile, max_len: int, run_id: str):
         """
         Инициализирует подключение к Neo4j и async OpenAI клиент.
         """
+        self.run_id = run_id
+        logger.info(f"GraphQA инициализирован с run_id='{self.run_id}'")
         try:
             self.graph = SafeReadOnlyNeo4jGraph(
                 url=neo4j_config.uri,
@@ -78,24 +80,35 @@ class GraphQA:
             api_key=llm_profile.api_key or "api-key",
         )
         self.model = llm_profile.model
-        self.schema = self.graph.schema
+        # self.schema = self.graph.schema
         # Компактная схема
-        # self.schema = """
-        #     Node labels and properties:
-        #     - Microbe {name: STRING, leiden_community: INTEGER}
-        #     - Metabolite {name: STRING, leiden_community: INTEGER}
-        #     - EnvironmentCondition {name: STRING, leiden_community: INTEGER}
+        self.schema = """
+            Node labels and properties:
+            - Microbe {name: STRING, leiden_community: INTEGER}
+            - Metabolite {name: STRING, leiden_community: INTEGER}
+            - EnvironmentCondition {name: STRING, leiden_community: INTEGER}
 
-        #     Relationship types:
-        #     - PRODUCES, CONSUMES, INHIBITS, STIMULATES, REQUIRES
+            Relationship types:
+            - PRODUCES, CONSUMES, INHIBITS, STIMULATES, REQUIRES
 
-        #     Relationship properties (apply to all relationships):
-        #     - confidence: FLOAT  -- reliability score [0.0, 1.0]
-        #     - evidence: STRING   -- verbatim quote from source document
-        #     - source_file: STRING
-        #     - chunk_id: STRING
-        #     - run_id: STRING
-        # """
+            Valid relationships (Source -> RELATION -> Target):
+            - Microbe -> PRODUCES|CONSUMES -> Metabolite|EnvironmentCondition
+            - Microbe -> INHIBITS|STIMULATES -> Microbe
+            - Microbe -> REQUIRES -> Metabolite|EnvironmentCondition
+            - Metabolite -> INHIBITS|STIMULATES|PRODUCES|CONSUMES -> Metabolite
+            - Metabolite -> INHIBITS|STIMULATES -> Microbe
+            - Metabolite -> REQUIRES -> EnvironmentCondition
+            IMPORTANT RULES: 
+            1. EnvironmentCondition is NEVER the source of any relationship.
+            2. INHIBITS and STIMULATES relationships NEVER target EnvironmentCondition.
+
+            Relationship properties (apply to all relationships):
+            - confidence: FLOAT  -- reliability score [0.0, 1.0]
+            - evidence: STRING   -- verbatim quote from source document
+            - source_file: STRING
+            - chunk_id: STRING
+            - run_id: STRING
+        """
         logger.info(self.schema)
         self.successful_queries: Deque[Tuple[str, str]] = deque(maxlen=max_len)
 
@@ -121,13 +134,20 @@ class GraphQA:
         Примеры из cypher_examples.md всегда присутствуют первыми как якорные примеры провенанса.
         История сессии дописывается следом, если есть успешные запросы.
         """
+        base_examples = self._cypher_examples.format(run_id=self.run_id)
+
         if self.successful_queries:
-            lines = ["Previous successful queries in this session (use as reference):"]
+            lines = [
+                base_examples,
+                "",
+                "Previous successful queries in this session (use as reference):",
+            ]
             for question, cypher in self.successful_queries:
                 lines.append(f"  Question: {question}")
                 lines.append(f"  Cypher: {cypher}")
             return "\n".join(lines)
-        return ""
+
+        return base_examples
 
     def _extract_cypher(self, text: str) -> str:
         """Извлекает Cypher-запрос из ```cypher``` markdown-блока."""
@@ -155,6 +175,7 @@ class GraphQA:
                 schema=self.schema,
                 history=self._format_history(),
                 limit=DEFAULT_LIMIT,
+                run_id=self.run_id,
             )
 
             user_content = question
@@ -173,6 +194,16 @@ class GraphQA:
 
                 raw = response.choices[0].message.content or ""
                 cypher = self._extract_cypher(raw)
+                cypher = re.sub(
+                    r"run_id\s*=\s*['\"][^'\"]+['\"]",
+                    f"run_id = '{self.run_id}'",
+                    cypher,
+                )
+                cypher = re.sub(
+                    r"run_id\s*:\s*['\"][^'\"]+['\"]",
+                    f"run_id: '{self.run_id}'",
+                    cypher,
+                )
                 logger.info(f"Сгенерирован Cypher: {cypher}")
                 set_span_ok(span, cypher)
                 return cypher

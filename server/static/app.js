@@ -306,7 +306,8 @@ async function processAudioBlob(blob) {
 
         // Читаем ответ LLM из заголовка
         const llmResponse = safeDecodeHeader(response.headers.get('LLM-Response'));
-        if (llmResponse) addMessage('assistant', llmResponse);
+        const hasGraph = response.headers.get('Has-Graph') === 'true';
+        if (llmResponse) addMessage('assistant', llmResponse, hasGraph);
 
         // Воспроизводим аудио-ответ потоково
         setUIState('playing');
@@ -400,7 +401,8 @@ async function sendText() {
         }
 
         const llmResponse = safeDecodeHeader(response.headers.get('LLM-Response'));
-        if (llmResponse) addMessage('assistant', llmResponse);
+        const hasGraph = response.headers.get('Has-Graph') === 'true';
+        if (llmResponse) addMessage('assistant', llmResponse, hasGraph);
 
         // Воспроизводим аудио-ответ потоково
         setUIState('playing');
@@ -457,9 +459,295 @@ async function sendText() {
     }
 }
 
+// ===== Graph Visualization =====
+
+/** Цвета нод по типу (как в Neo4j Browser) */
+const NODE_COLORS = {
+    Metabolite: '#c990c0',
+    Microbe: '#569480',
+    EnvironmentCondition: '#f0a85e',
+};
+const DEFAULT_NODE_COLOR = '#a5abb6';
+
+/**
+ * Запрашивает граф-данные с сервера.
+ * @returns {Promise<{nodes: Array, edges: Array}>}
+ */
+async function fetchGraphData() {
+    try {
+        const resp = await fetch('/graph_data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        if (!resp.ok) return { nodes: [], edges: [] };
+        return await resp.json();
+    } catch (err) {
+        console.error('Graph data fetch error:', err);
+        return { nodes: [], edges: [] };
+    }
+}
+
+/**
+ * Рендерит интерактивный граф в контейнер с помощью vis-network.
+ */
+function renderGraph(container, graphData, wrapper) {
+    if (!graphData.nodes.length) {
+        container.innerHTML = '<div class="graph-empty">Нет данных для визуализации</div>';
+        container.style.height = 'auto';
+        return;
+    }
+
+    // Подготовка данных для vis-network
+    const visNodes = new vis.DataSet(
+        graphData.nodes.map(n => ({
+            id: n.id,
+            label: n.label,
+            group: n.group,
+            color: {
+                background: n.color || DEFAULT_NODE_COLOR,
+                border: n.color || DEFAULT_NODE_COLOR,
+                highlight: {
+                    background: lightenColor(n.color || DEFAULT_NODE_COLOR, 20),
+                    border: '#ffffff',
+                },
+                hover: {
+                    background: lightenColor(n.color || DEFAULT_NODE_COLOR, 10),
+                    border: lightenColor(n.color || DEFAULT_NODE_COLOR, 30),
+                },
+            },
+            font: {
+                color: '#ffffff',
+                size: 12,
+                face: 'Inter, sans-serif',
+                strokeWidth: 3,
+                strokeColor: 'rgba(0,0,0,0.6)',
+            },
+            borderWidth: 2,
+            borderWidthSelected: 3,
+            size: 28,
+            shape: 'dot',
+            _rawData: n,
+        }))
+    );
+
+    const visEdges = new vis.DataSet(
+        graphData.edges.map((e, i) => ({
+            id: `edge-${i}`,
+            from: e.from,
+            to: e.to,
+            label: e.label,
+            font: {
+                color: '#8e8e8e',
+                size: 10,
+                face: 'Inter, sans-serif',
+                strokeWidth: 2,
+                strokeColor: 'rgba(0,0,0,0.5)',
+                align: 'top',
+            },
+            color: {
+                color: 'rgba(255,255,255,0.25)',
+                highlight: 'rgba(255,255,255,0.6)',
+                hover: 'rgba(255,255,255,0.4)',
+            },
+            width: 1.5,
+            arrows: { to: { enabled: true, scaleFactor: 0.6, type: 'arrow' } },
+            smooth: {
+                enabled: true,
+                type: 'dynamic',
+            },
+            _rawData: e,
+        }))
+    );
+
+    const options = {
+        physics: {
+            enabled: true,
+            solver: 'forceAtlas2Based',
+            forceAtlas2Based: {
+                gravitationalConstant: -100,
+                centralGravity: 0.01,
+                springLength: 200,
+                springConstant: 0.08,
+                damping: 0.4,
+                avoidOverlap: 0.5
+            },
+            stabilization: {
+                iterations: 150,
+                fit: true,
+            },
+        },
+        interaction: {
+            hover: true,
+            tooltipDelay: 200,
+            zoomView: true,
+            dragView: true,
+            multiselect: false,
+        },
+        layout: {
+            hierarchical: {
+                enabled: false
+            }
+        },
+    };
+
+    const network = new vis.Network(container, { nodes: visNodes, edges: visEdges }, options);
+
+    // Клик по ноде — показать детали
+    network.on('click', (params) => {
+        // Удаляем предыдущую панель деталей
+        const existingPanel = wrapper.querySelector('.node-details-panel');
+        if (existingPanel) existingPanel.remove();
+
+        if (params.nodes.length > 0) {
+            const nodeId = params.nodes[0];
+            const nodeData = visNodes.get(nodeId);
+            if (nodeData && nodeData._rawData) {
+                showNodeDetails(wrapper, nodeData._rawData);
+            }
+        } else if (params.edges.length > 0) {
+            const edgeId = params.edges[0];
+            const edgeData = visEdges.get(edgeId);
+            if (edgeData && edgeData._rawData) {
+                showEdgeDetails(wrapper, edgeData._rawData);
+            }
+        }
+    });
+
+    // После стабилизации — fit to view
+    network.once('stabilizationIterationsDone', () => {
+        network.fit({ animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
+    });
+}
+
+/**
+ * Показывает панель деталей ноды.
+ */
+function showNodeDetails(wrapper, nodeData) {
+    const panel = document.createElement('div');
+    panel.className = 'node-details-panel';
+
+    const color = nodeData.color || DEFAULT_NODE_COLOR;
+    const group = nodeData.group || 'Unknown';
+
+    let propsHtml = '';
+    if (nodeData.properties) {
+        const rows = Object.entries(nodeData.properties)
+            .map(([k, v]) => {
+                const val = typeof v === 'object' ? JSON.stringify(v) : String(v);
+                return `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(val)}</td></tr>`;
+            })
+            .join('');
+        propsHtml = `<table class="node-props-table">${rows}</table>`;
+    }
+
+    panel.innerHTML = `
+        <div class="node-details-header">
+            <span class="node-details-title">Node details</span>
+            <button class="node-details-close" onclick="this.closest('.node-details-panel').remove()">✕</button>
+        </div>
+        <div class="node-label-badges">
+            <span class="node-label-badge" style="border-color: ${color}; background: ${color}22;">${escapeHtml(group)}</span>
+        </div>
+        ${propsHtml}`;
+
+    wrapper.appendChild(panel);
+}
+
+/**
+ * Показывает панель деталей связи (edge).
+ */
+function showEdgeDetails(wrapper, edgeData) {
+    const panel = document.createElement('div');
+    panel.className = 'node-details-panel';
+
+    let propsHtml = '';
+    if (edgeData.properties) {
+        const rows = Object.entries(edgeData.properties)
+            .map(([k, v]) => {
+                const val = typeof v === 'object' ? JSON.stringify(v) : String(v);
+                return `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(val)}</td></tr>`;
+            })
+            .join('');
+        propsHtml = `<table class="node-props-table">${rows}</table>`;
+    }
+
+    panel.innerHTML = `
+        <div class="node-details-header">
+            <span class="node-details-title">Relationship details</span>
+            <button class="node-details-close" onclick="this.closest('.node-details-panel').remove()">✕</button>
+        </div>
+        <div class="edge-details-label">${escapeHtml(edgeData.label || 'UNKNOWN')}</div>
+        ${propsHtml}`;
+
+    wrapper.appendChild(panel);
+}
+
+/**
+ * Осветляет hex-цвет на заданный процент.
+ */
+function lightenColor(hex, percent) {
+    const num = parseInt(hex.replace('#', ''), 16);
+    const amt = Math.round(2.55 * percent);
+    const R = Math.min(255, (num >> 16) + amt);
+    const G = Math.min(255, ((num >> 8) & 0x00ff) + amt);
+    const B = Math.min(255, (num & 0x0000ff) + amt);
+    return `#${((1 << 24) | (R << 16) | (G << 8) | B).toString(16).slice(1)}`;
+}
+
+/**
+ * Добавляет блок графа к сообщению ассистента.
+ */
+async function attachGraphToMessage(contentWrapper) {
+    // Создаём wrapper для графа
+    const graphWrapper = document.createElement('div');
+    graphWrapper.className = 'graph-wrapper';
+    graphWrapper.innerHTML = '<div class="graph-loading"><div class="spinner"></div>Загрузка графа...</div>';
+    contentWrapper.appendChild(graphWrapper);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    // Запрашиваем данные
+    const graphData = await fetchGraphData();
+
+    // Убираем загрузку
+    graphWrapper.innerHTML = '';
+
+    if (!graphData.nodes.length) {
+        graphWrapper.remove();
+        return;
+    }
+
+    // Создаём контейнер для vis-network
+    const graphContainer = document.createElement('div');
+    graphContainer.className = 'graph-container';
+    graphWrapper.appendChild(graphContainer);
+
+    renderGraph(graphContainer, graphData, graphWrapper);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// ===== Graph Button (On-Demand) =====
+
+/**
+ * Добавляет кнопку «Показать граф» к сообщению ассистента.
+ * Граф загружается только по нажатию.
+ */
+function addGraphButton(contentWrapper) {
+    const btn = document.createElement('button');
+    btn.className = 'show-graph-btn';
+    btn.innerHTML = '📊 Показать граф';
+    btn.onclick = async () => {
+        btn.disabled = true;
+        btn.classList.add('loading');
+        btn.innerHTML = '<div class="spinner-small"></div> Загрузка графа...';
+        await attachGraphToMessage(contentWrapper);
+        btn.remove();
+    };
+    contentWrapper.appendChild(btn);
+}
+
 // ===== UI Helpers =====
 
-function addMessage(role, text) {
+function addMessage(role, text, hasGraph = false) {
     // Убираем welcome-сообщение при первом реальном сообщении
     const welcome = chatMessages.querySelector('.welcome-message');
     if (welcome) welcome.remove();
@@ -474,15 +762,25 @@ function addMessage(role, text) {
                 <span class="message-label">Ассистент</span>
                 <span class="message-text">${escapeHtml(text)}</span>
             </div>`;
+
+        chatMessages.appendChild(div);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+
+        // Добавляем кнопку «Показать граф» (загрузка только по клику)
+        if (hasGraph) {
+            const contentWrapper = div.querySelector('.message-content-wrapper');
+            addGraphButton(contentWrapper);
+        }
     } else if (role === 'user') {
         div.innerHTML = `<span class="message-text">${escapeHtml(text)}</span>`;
+        chatMessages.appendChild(div);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
     } else {
         // System / Errors
         div.innerHTML = `<span class="message-text">${escapeHtml(text)}</span>`;
+        chatMessages.appendChild(div);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
     }
-
-    chatMessages.appendChild(div);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
 function showThinking() {

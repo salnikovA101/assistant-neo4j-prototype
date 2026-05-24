@@ -98,11 +98,11 @@ class AppConfig(BaseSettings):
     tts: TtsConfig = Field(default_factory=TtsConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     neo4j: Neo4jConfig = Field(default_factory=Neo4jConfig)
+    run_id: str = ""
 
 
 def load_config() -> AppConfig:
     """Загружает конфиг из server/config.yaml + .env переменных."""
-
 
     config_path = Path(__file__).resolve().parent.parent / "config.yaml"
     try:

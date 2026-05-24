@@ -2,6 +2,7 @@ import logging
 from typing import Any, Callable, Dict, List
 
 from server.utils.config import AppConfig
+from server.tools.graph_filter import GraphFilterAgent
 from server.tools.graph_qa import GraphQA
 from server.utils.tracing import (
     OI_INPUT_VALUE,
@@ -36,8 +37,10 @@ class Tools:
                 f"Профиль {cypher_profile_name} не найден. Используем профиль по умолчанию."
             )
             llm_profile = getattr(config.llm.profiles, config.llm.current_profile)
-
-        self.graph_qa = GraphQA(config.neo4j, llm_profile, config.llm.history_len)
+        self.graph_qa = GraphQA(
+            config.neo4j, llm_profile, config.llm.history_len, config.run_id
+        )
+        self.graph_filter = GraphFilterAgent(config.neo4j, llm_profile, config.run_id)
 
     async def ask_database(self, question: str) -> str:
         """

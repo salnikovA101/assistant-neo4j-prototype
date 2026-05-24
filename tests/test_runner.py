@@ -238,8 +238,7 @@ TEST_CASES: List[Tuple[str, str]] = [
         " Anthocyanins for Visual Monitoring of Shrimp Freshness.pdf.",
     ),
     (
-        "Почему плотоядные животные обязаны употреблять в пищу мясо других"
-        " животных?",
+        "Почему плотоядные животные обязаны употреблять в пищу мясо других животных?",
         "Плотоядные животные едят мясо для получения определенных витаминов и"
         " питательных веществ, которые их организм не может синтезировать"
         " самостоятельно. Согласно источнику: obligate carnivores must eat animal"
@@ -266,18 +265,13 @@ async def run_tests():
                 print(f"[{idx}/{len(TEST_CASES)}] Обработка вопроса: {question}")
 
                 try:
-                    response = await client.post(
-                        API_URL, json={"text": question}
-                    )
+                    response = await client.post(API_URL, json={"text": question})
                     response.raise_for_status()
                     data = response.json()
-                    current_answer = data.get(
-                        "answer", "ОТВЕТ НЕ ПОЛУЧЕН (пусто)"
-                    )
+                    current_answer = data.get("answer", "ОТВЕТ НЕ ПОЛУЧЕН (пусто)")
                 except Exception as e:
                     current_answer = (
-                        f"ОШИБКА ПРИ ВЫПОЛНЕНИИ ЗАПРОСА:"
-                        f" {type(e).__name__}: {e}"
+                        f"ОШИБКА ПРИ ВЫПОЛНЕНИИ ЗАПРОСА: {type(e).__name__}: {e}"
                     )
 
                 elapsed = time.perf_counter() - start

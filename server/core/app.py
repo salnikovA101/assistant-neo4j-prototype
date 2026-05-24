@@ -60,7 +60,14 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Recognized-Text", "LLM-Response", "Sample-Rate", "Channels", "Sample-Width"],
+    expose_headers=[
+        "Recognized-Text",
+        "LLM-Response",
+        "Has-Graph",
+        "Sample-Rate",
+        "Channels",
+        "Sample-Width",
+    ],
 )
 
 
@@ -90,6 +97,7 @@ async def process_audio(request: Request):
         headers={
             "Recognized-Text": quote(recognized, safe=""),
             "LLM-Response": quote(answer, safe=""),
+            "Has-Graph": "true" if pipeline.has_graph else "false",
             "Sample-Rate": "24000",
             "Channels": "1",
             "Sample-Width": "2",
@@ -137,6 +145,7 @@ async def process_text(request: Request):
         media_type="audio/pcm",
         headers={
             "LLM-Response": quote(answer, safe=""),
+            "Has-Graph": "true" if pipeline.has_graph else "false",
             "Sample-Rate": "24000",
             "Channels": "1",
             "Sample-Width": "2",
@@ -170,6 +179,18 @@ async def health():
     return {"status": "ready"}
 
 
+@app.post("/graph_data")
+async def get_graph_data(request: Request):
+    """
+    Возвращает граф-данные (nodes + edges) для визуализации.
+
+    Берёт последний успешный Cypher-запрос из GraphQA
+    и извлекает полный подграф для рендеринга в UI.
+    """
+    pipeline: ServerPipeline = request.app.state.pipeline
+    graph_data = await pipeline.get_graph_data()
+    return JSONResponse(graph_data)
+
+
 # Веб-интерфейс: http://localhost:8000/ui/
 app.mount("/ui", StaticFiles(directory="server/static", html=True), name="ui")
-

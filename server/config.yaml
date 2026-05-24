@@ -1,4 +1,5 @@
 debug_mode: false
+run_id: "20260521_215854"
 
 server:
   host: "0.0.0.0"
@@ -12,7 +13,7 @@ stt:
   language: "ru"
 
 tts:
-  mode: "quality"
+  mode: "cloud"
   speed:
     silero_speaker: "baya"
     sample_rate: 24000
@@ -48,6 +49,6 @@ llm:
     other:
       provider: "openai"
       model: "google/gemini-3-flash-preview"
-      temperature: 0.3
+      temperature: 1
       max_output_tokens: 4096
       max_turns: 5

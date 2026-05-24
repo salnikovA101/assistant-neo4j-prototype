@@ -40,8 +40,7 @@ class CloudTTSProvider(BaseTTSProvider):
                     if chunk:
                         yield chunk
         except Exception as e:
-            logger.error(f"Ошибка при облачном синтезе речи: {e}")
-            raise
+            logger.warning(f"Облачный синтез речи прерван или недоступен: {e}")
 
     def unload(self) -> None:
         """
