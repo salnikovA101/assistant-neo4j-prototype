@@ -108,7 +108,7 @@
 Оригинальный Cypher (от GraphQA) + GRAPH_NODES (от LLM)
     │
     ▼ GraphFilterAgent (LLM)
-    │   Использует graph_filter/system.md.
+    │   Использует graph_filter/graph_filter_prompt.md.
     │   Опираясь на упомянутые сущности (GRAPH_NODES),
     │   модифицирует оригинальный Cypher.
     │
@@ -154,8 +154,8 @@
 
 *   **`BaseLLMProvider` / `OpenAIProvider`:** Вся работа с LLM унифицирована через OpenAI SDK. Это позволяет использовать любые совместимые API (OpenRouter, Gemini, vLLM).
 *   **Tool Call Loop:** В методе `generate_response` реализован полноценный цикл обработки вызовов инструментов (до `max_turns`). Если модель решает вызвать `ask_database`, фреймворк выполняет функцию локально и возвращает результат в контекст как `role: tool`.
-*   **`HistoryManager`:** Ограничивает контекст диалога (deque), удаляет неудачные вызовы и преобразует историю в формат сообщений OpenAI.
-*   **Промпты:** Главная поведенческая логика находится в `prompts/logic.md`. Формат ответа строго контролируется промптами из `prompts/output_quality.md` и `output_speed.md`.
+*   **HistoryManager:** Ограничивает контекст диалога (deque), удаляет неудачные вызовы и преобразует историю в формат сообщений OpenAI.
+*   **Промпты:** Главная поведенческая логика находится в `prompts/assistant_logic.md`. Формат ответа строго контролируется промптами из `prompts/output_quality.md` и `output_speed.md`.
 
 ---
 

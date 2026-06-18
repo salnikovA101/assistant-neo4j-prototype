@@ -21,7 +21,7 @@ tracer = get_tracer(__name__)
 _CYPHER_BLOCK_RE = re.compile(r"```cypher\s*\n?(.*?)```", re.DOTALL | re.IGNORECASE)
 _THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
-_PROMPT_PATH = Path("prompts/graph_filter/system.md")
+_PROMPT_PATH = Path("prompts/graph_filter/graph_filter_prompt.md")
 
 
 class GraphFilterAgent:
@@ -36,8 +36,9 @@ class GraphFilterAgent:
     в формат {nodes, edges}.
     """
 
-    def __init__(self, neo4j_config, llm_profile, run_id: str):
+    def __init__(self, neo4j_config, llm_profile, run_id: str, limit: int):
         self.run_id = run_id
+        self.limit = limit
 
         self.client = AsyncOpenAI(
             base_url=llm_profile.base_url,
@@ -45,33 +46,7 @@ class GraphFilterAgent:
         )
         self.model = llm_profile.model
 
-        self.schema = """
-            Node labels and properties:
-            - Microbe {name: STRING, leiden_community: INTEGER}
-            - Metabolite {name: STRING, leiden_community: INTEGER}
-            - EnvironmentCondition {name: STRING, leiden_community: INTEGER}
-
-            Relationship types:
-            - PRODUCES, CONSUMES, INHIBITS, STIMULATES, REQUIRES
-
-            Valid relationships (Source -> RELATION -> Target):
-            - Microbe -> PRODUCES|CONSUMES -> Metabolite|EnvironmentCondition
-            - Microbe -> INHIBITS|STIMULATES -> Microbe
-            - Microbe -> REQUIRES -> Metabolite|EnvironmentCondition
-            - Metabolite -> INHIBITS|STIMULATES|PRODUCES|CONSUMES -> Metabolite
-            - Metabolite -> INHIBITS|STIMULATES -> Microbe
-            - Metabolite -> REQUIRES -> EnvironmentCondition
-            IMPORTANT RULES: 
-            1. EnvironmentCondition is NEVER the source of any relationship.
-            2. INHIBITS and STIMULATES relationships NEVER target EnvironmentCondition.
-
-            Relationship properties (apply to all relationships):
-            - confidence: FLOAT  -- reliability score [0.0, 1.0]
-            - evidence: STRING   -- verbatim quote from source document
-            - source_file: STRING
-            - chunk_id: STRING
-            - run_id: STRING
-        """
+        # Схема загружается из файла
 
         self.viz_extractor = GraphVizExtractor(
             uri=neo4j_config.uri,
@@ -81,7 +56,8 @@ class GraphFilterAgent:
 
         try:
             self._system_tpl = _PROMPT_PATH.read_text(encoding="utf-8")
-            logger.info("GraphFilterAgent prompt loaded")
+            self.schema = Path("prompts/graph_filter/schema.md").read_text(encoding="utf-8")
+            logger.info("GraphFilterAgent prompt and schema loaded")
         except FileNotFoundError as e:
             logger.error(f"Ошибка загрузки промпта GraphFilterAgent: {e}")
             raise
@@ -114,6 +90,7 @@ class GraphFilterAgent:
                 schema=self.schema,
                 original_cypher=original_cypher,
                 run_id=self.run_id,
+                limit=self.limit,
             )
 
             user_content = (

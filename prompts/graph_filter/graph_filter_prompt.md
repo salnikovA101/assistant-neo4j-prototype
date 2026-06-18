@@ -17,11 +17,14 @@ The output will be used to render a visual graph — it must match the answer pr
 
 - **USE EXPLICIT ENTITY LIST**: The assistant's answer ends with a technical block: `GRAPH_NODES: ["Exact Node 1", "Exact Node 2"]`. You MUST use exactly these string names for your filtering. Do not translate or guess entity names.
 
-- **STRICT NODE FILTERING — CRITICAL**: When filtering the original variables, you MUST apply the name filter to **EACH** node variable independently using the `IN` operator.
-  - **WRONG**: `m1.name =~ '(?i)^(A|B)$'` (Do not use regex `=~`)
-  - **CORRECT**: `m1.name IN ['A', 'B'] AND m2.name IN ['A', 'B']` -> This strictly limits the graph ONLY to the mentioned entities.
-  - If the original query uses `OPTIONAL MATCH` with a variable (e.g., `m3`), you must allow it to be null: `AND (m3 IS NULL OR m3.name IN ['A', 'B'])`.
-  - **PATH VARIABLES**: If the original query uses a path variable (e.g., `MATCH path = (a)-[*1..3]-(b)`), you MUST filter ALL nodes within the path to prevent unmentioned intermediate nodes from leaking into the visualization. Use: `AND ALL(node IN nodes(path) WHERE node.name IN ['A', 'B', 'C'])`.
+- **STRICT NODE FILTERING (CASE-INSENSITIVE) — CRITICAL**: 
+  When filtering the original variables, you MUST apply the name filter to EACH node variable using the `IN` operator combined with Neo4j's `toLower()` function.
+  Convert all strings in your generated list to lowercase!
+  - **WRONG**: `m1.name = 'Aflatoxin B1'` or `m1.name =~ '(?i).*(Aflatoxin).*'`
+  - **CORRECT**: `toLower(m1.name) IN ['aflatoxin b1', 'lactobacillus plantarum'] AND toLower(m2.name) IN ['aflatoxin b1', 'lactobacillus plantarum']`
+  - If the original query uses `OPTIONAL MATCH` with a variable (e.g., `m3`), you must allow it to be null: `AND (m3 IS NULL OR toLower(m3.name) IN ['a', 'b'])`.
+  - **PATH VARIABLES**: If the original query uses a path variable (e.g., `MATCH path = (a)-[*1..3]-(b)`), you MUST filter ALL nodes within the path. Use: `AND ALL(node IN nodes(path) WHERE toLower(node.name) IN ['a', 'b', 'c'])`.
+  This guarantees the graph renders correctly even if case mismatches occur between the LLM output and the database.
 
 - **RETURN FULL OBJECTS**: Use `RETURN *` or return named node/relationship variables
   so that the driver returns full Node and Relationship objects (not just properties).
@@ -45,12 +48,12 @@ The output will be used to render a visual graph — it must match the answer pr
 ## Strategy
 
 1. Look at the end of the assistant's answer for the technical block: `GRAPH_NODES: [...]`.
-2. Extract this exact list of string names.
+2. Extract this exact list of string names and CONVERT THEM ALL TO LOWERCASE.
 3. Look at the original Cypher query to get the base structural `MATCH` clause.
-4. Generate a new Cypher query using the `IN` operator to strictly filter ALL node variables from the `MATCH` clause against this list of names.
-   - Example: `AND ALL(node IN nodes(path) WHERE node.name IN ['TVB-N', 'NH3', 'Anthocyanins', 'Chalcone', 'Yellowish coloration'])`
-   - Or for generic matches: `AND m1.name IN ['Node1', 'Node2'] AND m2.name IN ['Node1', 'Node2']`
-5. Do NOT use Regex (`=~`). Use exact matching with the `IN` operator or `=`.
+4. Generate a new Cypher query using `toLower(variable.name) IN [...]` to strictly filter ALL node variables from the `MATCH` clause against this lowercase list.
+   - Example: `AND ALL(node IN nodes(path) WHERE toLower(node.name) IN ['gaba', 'starter culture', 'bioavailability'])`
+   - Or for generic matches: `AND toLower(m1.name) IN ['node1', 'node2'] AND toLower(m2.name) IN ['node1', 'node2']`
+5. Do NOT use Regex (`=~`). Use exact case-insensitive matching.
 
 ---
 
@@ -86,10 +89,10 @@ WHERE r.run_id = '{run_id}'
 ```cypher
 MATCH (m:Metabolite)-[r:PRODUCES]-(c:EnvironmentCondition)
 WHERE r.run_id = '{run_id}'
-  AND m.name IN ['Trimethylamine', 'Storage temperature']
-  AND c.name IN ['Trimethylamine', 'Storage temperature']
+  AND toLower(m.name) IN ['trimethylamine', 'storage temperature']
+  AND toLower(c.name) IN ['trimethylamine', 'storage temperature']
 RETURN *
-LIMIT 50
+LIMIT {limit}
 ```
 
 ### Example 2 — multiple targets with generic relations
@@ -101,62 +104,62 @@ WHERE rel.run_id = '{run_id}'
 ```
 
 **Assistant's answer:**
-> "Pseudomonas связан с TVC и Histamine через различные связи.
-> GRAPH_NODES: ["Pseudomonas", "TVC", "Histamine"]"
+> "Lactobacillus plantarum подавляет Helicobacter pylori и продуцирует Urease.
+> GRAPH_NODES: ["Lactobacillus plantarum", "Helicobacter pylori", "Urease"]"
 
 **Generated Cypher:**
 ```cypher
 MATCH (bac:Microbe)-[rel]-(target:Metabolite)
 WHERE rel.run_id = '{run_id}'
-  AND bac.name IN ['Pseudomonas', 'TVC', 'Histamine']
-  AND target.name IN ['Pseudomonas', 'TVC', 'Histamine']
+  AND toLower(bac.name) IN ['lactobacillus plantarum', 'helicobacter pylori', 'urease']
+  AND toLower(target.name) IN ['lactobacillus plantarum', 'helicobacter pylori', 'urease']
 RETURN *
-LIMIT 50
+LIMIT {limit}
 ```
 
 ### Example 3 — strict filtering for multi-hop / OPTIONAL MATCH queries
 
 **If the Original Cypher Query was:**
 ```cypher
-MATCH (m1:Metabolite)-[r1]-(m2:Metabolite)
-OPTIONAL MATCH (m2)-[r2]-(m3:Metabolite)
+MATCH (m1:Microbe)-[r1]-(m2:Metabolite)
+OPTIONAL MATCH (m2)-[r2]-(m3)
 WHERE r1.run_id = '{run_id}'
 ```
 
 **Assistant's answer:**
-> "Аммиак взаимодействует с антоцианами, превращая их в халкон, что дает желтое окрашивание.
-> GRAPH_NODES: ["Ammonia", "Anthocyanins", "Chalcone", "Yellowish coloration"]"
+> "Стрептококк синтезирует ГАМК, что повышает биодоступность.
+> GRAPH_NODES: ["Streptococcus", "GABA", "Bioavailability"]"
 
 **Generated Cypher:**
 ```cypher
-MATCH (m1:Metabolite)-[r1]-(m2:Metabolite)
-OPTIONAL MATCH (m2)-[r2]-(m3:Metabolite)
+MATCH (m1:Microbe)-[r1]-(m2:Metabolite)
+OPTIONAL MATCH (m2)-[r2]-(m3)
 WHERE r1.run_id = '{run_id}'
   AND (r2 IS NULL OR r2.run_id = '{run_id}')
-  AND m1.name IN ['Ammonia', 'Anthocyanins', 'Chalcone', 'Yellowish coloration']
-  AND m2.name IN ['Ammonia', 'Anthocyanins', 'Chalcone', 'Yellowish coloration']
-  AND (m3 IS NULL OR m3.name IN ['Ammonia', 'Anthocyanins', 'Chalcone', 'Yellowish coloration'])
+  AND toLower(m1.name) IN ['streptococcus', 'gaba', 'bioavailability']
+  AND toLower(m2.name) IN ['streptococcus', 'gaba', 'bioavailability']
+  AND (m3 IS NULL OR toLower(m3.name) IN ['streptococcus', 'gaba', 'bioavailability'])
 RETURN *
-LIMIT 50
+LIMIT {limit}
 ```
 
 ### Example 4 — strict filtering using explicit GRAPH_NODES list for paths
 
 **If the Original Cypher Query was:**
 ```cypher
-MATCH path = (m1:Metabolite)-[*1..4]-(e:EnvironmentCondition)
+MATCH path = (s:StarterCulture|Microbe)-[*1..3]-(target)
 WHERE ALL(r IN relationships(path) WHERE r.run_id = '{run_id}')
 ```
 
 **Assistant's answer:**
-> "Текст ответа про аммиак и антоцианы...
-> GRAPH_NODES: ["TVB-N", "NH3", "Anthocyanins", "Chalcone", "Yellowish coloration"]"
+> "Закваска подавляет патогены и расщепляет бета-лактоглобулин, снижая аллергенность.
+> GRAPH_NODES: ["Starter culture", "Beta-lactoglobulin", "Allergenicity"]"
 
-**Generated Cypher (strictly using IN operator):**
+**Generated Cypher (strictly using IN operator with toLower):**
 ```cypher
-MATCH path = (m1:Metabolite)-[*1..4]-(e:EnvironmentCondition)
+MATCH path = (s:StarterCulture|Microbe)-[*1..3]-(target)
 WHERE ALL(r IN relationships(path) WHERE r.run_id = '{run_id}')
-  AND ALL(node IN nodes(path) WHERE node.name IN ['TVB-N', 'NH3', 'Anthocyanins', 'Chalcone', 'Yellowish coloration'])
+  AND ALL(node IN nodes(path) WHERE toLower(node.name) IN ['starter culture', 'beta-lactoglobulin', 'allergenicity'])
 RETURN *
-LIMIT 50
+LIMIT {limit}
 ```

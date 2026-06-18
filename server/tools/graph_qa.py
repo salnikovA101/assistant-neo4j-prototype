@@ -58,11 +58,14 @@ class GraphQA:
 
     MAX_TURNS = 3
 
-    def __init__(self, neo4j_config, llm_profile, max_len: int, run_id: str):
+    def __init__(
+        self, neo4j_config, llm_profile, max_len: int, run_id: str, limit: int
+    ):
         """
         Инициализирует подключение к Neo4j и async OpenAI клиент.
         """
         self.run_id = run_id
+        self.limit = limit
         logger.info(f"GraphQA инициализирован с run_id='{self.run_id}'")
         try:
             self.graph = SafeReadOnlyNeo4jGraph(
@@ -81,35 +84,8 @@ class GraphQA:
         )
         self.model = llm_profile.model
         # self.schema = self.graph.schema
-        # Компактная схема
-        self.schema = """
-            Node labels and properties:
-            - Microbe {name: STRING, leiden_community: INTEGER}
-            - Metabolite {name: STRING, leiden_community: INTEGER}
-            - EnvironmentCondition {name: STRING, leiden_community: INTEGER}
+        # Компактная схема загружается из файла
 
-            Relationship types:
-            - PRODUCES, CONSUMES, INHIBITS, STIMULATES, REQUIRES
-
-            Valid relationships (Source -> RELATION -> Target):
-            - Microbe -> PRODUCES|CONSUMES -> Metabolite|EnvironmentCondition
-            - Microbe -> INHIBITS|STIMULATES -> Microbe
-            - Microbe -> REQUIRES -> Metabolite|EnvironmentCondition
-            - Metabolite -> INHIBITS|STIMULATES|PRODUCES|CONSUMES -> Metabolite
-            - Metabolite -> INHIBITS|STIMULATES -> Microbe
-            - Metabolite -> REQUIRES -> EnvironmentCondition
-            IMPORTANT RULES: 
-            1. EnvironmentCondition is NEVER the source of any relationship.
-            2. INHIBITS and STIMULATES relationships NEVER target EnvironmentCondition.
-
-            Relationship properties (apply to all relationships):
-            - confidence: FLOAT  -- reliability score [0.0, 1.0]
-            - evidence: STRING   -- verbatim quote from source document
-            - source_file: STRING
-            - chunk_id: STRING
-            - run_id: STRING
-        """
-        logger.info(self.schema)
         self.successful_queries: Deque[Tuple[str, str]] = deque(maxlen=max_len)
 
         try:
@@ -119,7 +95,8 @@ class GraphQA:
             self._cypher_examples = (_PROMPTS_DIR / "cypher_examples.md").read_text(
                 encoding="utf-8"
             )
-            logger.info("Cypher prompts loaded from prompts/graph_qa/")
+            self.schema = (_PROMPTS_DIR / "schema.md").read_text(encoding="utf-8")
+            logger.info("Cypher prompts and schema loaded from prompts/graph_qa/")
         except FileNotFoundError as e:
             logger.error(f"Ошибка загрузки Cypher-промптов: {e}")
             raise
@@ -134,7 +111,9 @@ class GraphQA:
         Примеры из cypher_examples.md всегда присутствуют первыми как якорные примеры провенанса.
         История сессии дописывается следом, если есть успешные запросы.
         """
-        base_examples = self._cypher_examples.format(run_id=self.run_id)
+        base_examples = self._cypher_examples.format(
+            run_id=self.run_id, limit=self.limit
+        )
 
         if self.successful_queries:
             lines = [
@@ -174,7 +153,7 @@ class GraphQA:
             system = self._cypher_system_tpl.format(
                 schema=self.schema,
                 history=self._format_history(),
-                limit=DEFAULT_LIMIT,
+                limit=self.limit,
                 run_id=self.run_id,
             )
 

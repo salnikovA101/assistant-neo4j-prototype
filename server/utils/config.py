@@ -99,6 +99,7 @@ class AppConfig(BaseSettings):
     llm: LlmConfig = Field(default_factory=LlmConfig)
     neo4j: Neo4jConfig = Field(default_factory=Neo4jConfig)
     run_id: str = ""
+    limit: int = 50
 
 
 def load_config() -> AppConfig:

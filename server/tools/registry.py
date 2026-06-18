@@ -38,9 +38,9 @@ class Tools:
             )
             llm_profile = getattr(config.llm.profiles, config.llm.current_profile)
         self.graph_qa = GraphQA(
-            config.neo4j, llm_profile, config.llm.history_len, config.run_id
+            config.neo4j, llm_profile, config.llm.history_len, config.run_id, config.limit
         )
-        self.graph_filter = GraphFilterAgent(config.neo4j, llm_profile, config.run_id)
+        self.graph_filter = GraphFilterAgent(config.neo4j, llm_profile, config.run_id, config.limit)
 
     async def ask_database(self, question: str) -> str:
         """

@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 class PromptLoader:
     """
     Класс для загрузки и управления текстовыми промптами.
-    Загружает базовую логику (logic.md) и формат вывода для TTS (output_{mode}.md).
+    Загружает базовую логику (assistant_logic.md) и формат вывода для TTS (output_{mode}.md).
     """
 
     def __init__(self, folder_name: str, mode: TTSModes) -> None:
@@ -29,16 +29,16 @@ class PromptLoader:
             )
             return
 
-        logic_file = path / "logic.md"
+        logic_file = path / "assistant_logic.md"
         output_file_speed = path / "output_speed.md"
         output_file_quality = path / "output_quality.md"
 
         try:
             if logic_file.exists():
                 self.logic_text = logic_file.read_text(encoding="utf-8").strip()
-                logger.info("Промпт logic.md успешно загружен.")
+                logger.info("Промпт assistant_logic.md успешно загружен.")
             else:
-                logger.warning("Файл logic.md не найден.")
+                logger.warning("Файл assistant_logic.md не найден.")
 
             if self.mode == TTSModes.SPEED:
                 if output_file_speed.exists():
