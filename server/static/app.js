@@ -31,6 +31,7 @@ const stopIcon = document.getElementById('stop-icon');
 const pauseIcon = document.getElementById('pause-icon');
 const statusText = document.getElementById('db-status-text');
 const connectionDot = document.getElementById('connection-dot');
+const clearBtn = document.getElementById('clear-btn');
 
 // ===== Audio Utilities =====
 
@@ -873,11 +874,44 @@ async function checkHealth() {
     }
 }
 
+// ===== Clear Context / Reset History =====
+
+async function clearHistory() {
+    if (isProcessing) return;
+
+    // Останавливаем проигрывание и прерываем текущий запрос
+    stopPlayback();
+
+    try {
+        const response = await fetch('/clear_history', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        if (response.ok) {
+            // Очищаем историю на экране и восстанавливаем приветственный экран
+            chatMessages.innerHTML = `
+                <div class="welcome-message">
+                    <div class="welcome-logo">🧬</div>
+                    <h2>Чем я могу помочь?</h2>
+                    <p>Задайте вопрос голосом или текстом. Я проанализирую базу знаний Neo4j и предоставлю структурированный ответ с голосовой озвучкой.</p>
+                </div>`;
+            setUIState('idle');
+        } else {
+            addMessage('system', '⚠️ Не удалось сбросить историю на сервере.');
+        }
+    } catch (err) {
+        console.error('Clear history error:', err);
+        addMessage('system', '⚠️ Ошибка соединения с сервером при попытке сбросить историю.');
+    }
+}
+
 // ===== Init =====
 
 // Подключение кнопок управления микрофоном и текстом
 micBtn.addEventListener('click', toggleMic);
 sendBtn.addEventListener('click', sendText);
+clearBtn.addEventListener('click', clearHistory);
 textInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();

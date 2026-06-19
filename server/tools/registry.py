@@ -65,6 +65,10 @@ class Tools:
                 set_span_error(span, str(e))
                 raise
 
+    def clear_history(self) -> None:
+        """Очищает историю успешных Cypher-запросов."""
+        self.graph_qa.successful_queries.clear()
+
     def get_tools_list(self) -> List[Callable]:
         """
         Возвращает список всех доступных функций-инструментов.

@@ -173,6 +173,14 @@ async def process_text_test(request: Request):
     return JSONResponse({"answer": answer})
 
 
+@app.post("/clear_history")
+async def clear_history(request: Request):
+    """Сбрасывает историю чата и контекст."""
+    pipeline: ServerPipeline = request.app.state.pipeline
+    pipeline.clear_history()
+    return JSONResponse({"status": "ok"})
+
+
 @app.get("/health")
 async def health():
     """Проверка готовности сервера."""

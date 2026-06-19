@@ -66,6 +66,11 @@ class LLMManager:
                 set_span_error(span, str(e))
                 raise
 
+    def clear_history(self) -> None:
+        """Очищает историю диалога и контекст запросов к БД."""
+        self.history_manager.clear_history()
+        self.tools.clear_history()
+
     async def unload(self) -> None:
         await self.model.unload()
 

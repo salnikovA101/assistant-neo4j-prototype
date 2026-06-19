@@ -118,6 +118,42 @@ body {
     box-shadow: 0 0 6px var(--danger);
 }
 
+.header-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+#clear-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: 1px solid var(--border-color-light);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#clear-btn:hover {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--danger);
+    border-color: rgba(239, 68, 68, 0.25);
+    transform: scale(1.05);
+}
+
+#clear-btn:active {
+    transform: scale(0.95);
+}
+
+#clear-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
 /* ===== Chat Area ===== */
 #chat-messages {
     flex: 1;

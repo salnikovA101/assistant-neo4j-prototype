@@ -160,6 +160,7 @@ class GraphVizExtractor:
 
         edges_list.append(
             {
+                "id": edge_id,
                 "from": start_id,
                 "to": end_id,
                 "label": rel.type,

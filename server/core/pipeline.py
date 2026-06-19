@@ -35,6 +35,7 @@ class ServerPipeline:
         self.llm = LLMManager(config)
         self.tts = TTSManager(config.tts)
         self._last_request_has_graph = False
+        self._last_new_queries = []
         self._last_answer = ""
 
     async def startup(self) -> None:
@@ -48,6 +49,14 @@ class ServerPipeline:
         self.tts.unload()
         self.llm.tools.graph_filter.close()
         logger.info("Ресурсы освобождены")
+
+    def clear_history(self) -> None:
+        """Сброс истории диалога и контекста."""
+        self.llm.clear_history()
+        self._last_request_has_graph = False
+        self._last_new_queries = []
+        self._last_answer = ""
+        logger.info("История разговора и контекст сброшены")
 
     async def process_audio(self, wav_bytes: bytes) -> Tuple[Optional[str], str]:
         """
@@ -74,15 +83,14 @@ class ServerPipeline:
 
             try:
                 sq = self.llm.tools.graph_qa.successful_queries
-                last_before = sq[-1] if sq else None
+                sq_len_before = len(sq)
                 answer = await asyncio.wait_for(
                     self.llm.generate_response(user_text=text),
                     timeout=self.config.server.llm_timeout,
                 )
-                last_after = sq[-1] if sq else None
-                self._last_request_has_graph = (
-                    last_after is not None and last_after is not last_before
-                )
+                sq_len_after = len(sq)
+                self._last_new_queries = list(sq)[sq_len_before:sq_len_after]
+                self._last_request_has_graph = len(self._last_new_queries) > 0
                 self._last_answer = answer
                 display_answer = answer.split("GRAPH_NODES:")[0].strip()
                 logger.info(f"LLM: {display_answer}")
@@ -110,15 +118,14 @@ class ServerPipeline:
 
             try:
                 sq = self.llm.tools.graph_qa.successful_queries
-                last_before = sq[-1] if sq else None
+                sq_len_before = len(sq)
                 answer = await asyncio.wait_for(
                     self.llm.generate_response(user_text=text),
                     timeout=self.config.server.llm_timeout,
                 )
-                last_after = sq[-1] if sq else None
-                self._last_request_has_graph = (
-                    last_after is not None and last_after is not last_before
-                )
+                sq_len_after = len(sq)
+                self._last_new_queries = list(sq)[sq_len_before:sq_len_after]
+                self._last_request_has_graph = len(self._last_new_queries) > 0
                 self._last_answer = answer
                 result = answer.split("GRAPH_NODES:")
                 display_answer = result[0].strip()
@@ -175,18 +182,31 @@ class ServerPipeline:
         Returns:
             Словарь {nodes: [...], edges: [...]}.
         """
-        if not self._last_request_has_graph:
+        if not getattr(self, "_last_new_queries", None):
             logger.info(
                 "Текущий запрос не породил нового Cypher — граф не отображается"
             )
             return {"nodes": [], "edges": []}
 
-        graph_qa = self.llm.tools.graph_qa
-        last_question, last_cypher = graph_qa.successful_queries[-1]
-        logger.info(f"Визуализация графа по запросу: {last_cypher}")
+        merged_data = {"nodes": [], "edges": []}
+        seen_nodes = set()
+        seen_edges = set()
 
-        graph_data = await self.llm.tools.graph_filter.build_viz_graph(
-            assistant_answer=self._last_answer,
-            original_cypher=last_cypher,
-        )
-        return graph_data
+        for question, cypher in self._last_new_queries:
+            logger.info(f"Визуализация графа по запросу: {cypher}")
+            graph_data = await self.llm.tools.graph_filter.build_viz_graph(
+                assistant_answer=self._last_answer,
+                original_cypher=cypher,
+            )
+            
+            for node in graph_data.get("nodes", []):
+                if node["id"] not in seen_nodes:
+                    seen_nodes.add(node["id"])
+                    merged_data["nodes"].append(node)
+                    
+            for edge in graph_data.get("edges", []):
+                if edge["id"] not in seen_edges:
+                    seen_edges.add(edge["id"])
+                    merged_data["edges"].append(edge)
+
+        return merged_data
