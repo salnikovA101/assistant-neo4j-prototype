@@ -39,28 +39,49 @@ Do NOT answer the question — only generate the query.
 
 - Use ONLY relationship types and properties defined in the schema below.
 - Use **undirected relationships** (`()-[:REL]-()`) unless the direction is certain.
-- **NEVER USE UNBOUNDED PATHS**: Always specify a maximum depth for variable-length paths (e.g. `-[*1..4]-` instead of `-[*]-`) to prevent database timeouts.
+- **PATH DEPTH CAP (CRITICAL — dense graph)**:
+  - Default variable-length path: `-[*1..3]-`
+  - Absolute maximum: `-[*1..4]-` — use **only** on retry when `[*1..3]` returned empty
+  - NEVER use unbounded `-[*]-` or depths greater than 4 (`[*1..5]`, `[*1..6]`, etc.)
+  - Longer paths on this graph produce noisy, meaningless chains
+- **PREFER NEIGHBORHOOD OVER LONG PATHS**: For process, defect, dosage, temperature, or single-entity questions, prefer 1-hop patterns `MATCH (n)-[r]-(m)` before multi-hop paths.
 - Always add `LIMIT {limit}` unless the question explicitly asks for all results.
 - **ENTITY MAPPING**: Always map the user's natural language terms to the strict schema labels (you can use multiple: `(n:Microbe|StarterCulture)`):
-  - 'bacteria', 'pathogen', 'microorganism', 'yeast', 'strain' -> `Microbe`
-  - 'starter culture', 'kefir grain', 'consortium' -> `StarterCulture`
-  - 'chemical', 'acid', 'compound', 'enzyme' (urease, endopeptidase), 'protein' (casein, lactoglobulin), 'bacteriocin' -> `Metabolite`
-  - 'temperature', 'pH', 'packaging', 'storage', 'density', 'firmness' -> `EnvironmentCondition`
-  - For abstract concepts (like 'bioavailability', 'stability', 'allergenic potential', 'allergenicity') -> **omit the label entirely** e.g., `(n)`
+  - 'bacteria', 'pathogen', 'microorganism', 'yeast', 'strain', 'mesophilic', 'thermophilic' -> `Microbe`
+  - 'starter culture', 'kefir grain', 'consortium', 'starter', 'direct vat inoculation', 'DVI' -> `StarterCulture`
+  - 'chemical', 'acid', 'compound', 'enzyme' (urease, endopeptidase, rennet, chymosin), 'protein' (casein, lactoglobulin), 'bacteriocin', 'dye', 'indicator', 'agar', 'film', 'matrix', 'VOC', 'volatile', 'hydrogen sulfide', 'ammonia', 'TMA', 'trimethylamine' -> `Metabolite`
+  - 'temperature', 'pH', 'packaging', 'storage', 'density', 'firmness', 'MAP', 'modified atmosphere', 'humidity' -> `EnvironmentCondition`
+  - For abstract concepts (like 'bioavailability', 'stability', 'allergenic potential', 'allergenicity', 'freshness', 'spoilage', 'color change') -> **omit the label entirely** e.g., `(n)` or use `(n:Metabolite|EnvironmentCondition)`
   NEVER invent new node labels.
 - **TRANSLATION DICTIONARY**: For Russian requests, translate domain-specific terms correctly:
   - Творог -> `cottage cheese`, `curd` or `quark`
+  - Закваска / штамм -> `starter`, `starter culture`, `strain`
+  - Мезофильные / термофильные -> `mesophilic`, `thermophilic`
+  - Сквашивание / кислотообразование -> `acidification`, `fermentation`, `lactic acid`
+  - Сычужный фермент -> `rennet`, `chymosin`
+  - Бактериофаг -> `bacteriophage`, `phage`
+  - Ароматообразующие -> `aroma-forming`, `diacetyl`, `citrate`
+  - Биотворог / пробиотик -> `probiotic`, `bifidobacterium`, `probiotic cottage cheese`
+  - Крупитчатость / крупитчатая структура -> `grainy texture`, `grittiness`, `graininess`
+  - Сыворотка / влажность -> `whey`, `moisture`, `syneresis`
   - Ферменты (уреаза, эндопептидаза) -> `urease`, `endopeptidase`
   - Белки (бета-лактоглобулин, альфа-казеин) -> `beta-lactoglobulin` (or `β-lactoglobulin`), `alpha-casein` (or `α-casein`)
   - Бактериоцины -> `bacteriocin`
   - Аллергенный потенциал -> `allergenicity` or `allergenic potential`
   - Плотность зерна -> `curd density` or `firmness`
   - Подавлять / Супрессия -> `suppress`, `inhibit`, `reduce`
-- **MULTI-CRITERIA SEARCH**: If the user asks to "select strains" or "formulate requirements" based on MULTIPLE criteria (e.g., "suppresses H. pylori AND produces bacteriocins"), use a broad path search `MATCH path = (s:StarterCulture|Microbe)-[*1..3]-(target)` and check if the path contains ANY of the required keywords. Let the LLM filter the exact logic from the returned evidence.
+  - Индикатор свежести / умная упаковка -> `freshness indicator`, `smart packaging`, `intelligent packaging`
+  - Порча / летучие метаболиты -> `spoilage`, `volatile metabolites`, `VOC`
+  - Оливье -> `Olivier salad`, `potato salad`, `ready meal`
+  - Модифицированная газовая среда / МГС -> `modified atmosphere`, `MAP`
+  - Агар / матрица / пленка -> `agar`, `matrix`, `film`
+  - Перманганат калия -> `potassium permanganate`, `KMnO4`
+  - Сероводород / аммиак -> `hydrogen sulfide`, `H2S`, `ammonia`
+- **MULTI-CRITERIA SEARCH**: If the user asks to "select strains" or "formulate requirements" based on MULTIPLE criteria, prefer a **short** path `MATCH path = (s:StarterCulture|Microbe)-[*1..3]-(target)` with keyword filters — NOT one ultra-broad deep path. Let the outer LLM issue separate narrow questions when criteria are unrelated.
 - For name matching, prefer **case-insensitive regex WITH NODE LABELS**: `(n:Microbe) WHERE n.name =~ '(?i).*keyword.*'` to avoid full database scans.
 - **ONTOLOGY MISMATCHES & RETRIES**: Real-world concepts might be misclassified in the database (e.g., a "color change" or "spoilage process" might be stored as a `Metabolite` instead of an `EnvironmentCondition`).
-  - When querying ambiguous concepts (color, freshness, visual changes), use multiple labels `(n:Metabolite|EnvironmentCondition)` or omit the label `(n)` entirely.
-  - If your previous query returned an empty result, **RELAX THE LABELS** (use `(n)` instead of `(n:Microbe)`) in your retry attempt.
+  - When querying ambiguous concepts (color, freshness, visual changes, indicator, matrix), use multiple labels `(n:Metabolite|EnvironmentCondition)` or omit the label `(n)` entirely.
+  - If your previous query returned an empty result: (1) **RELAX THE LABELS** (use `(n)` instead of `(n:Microbe)`), (2) only then consider widening path from `[*1..3]` to `[*1..4]`.
 
 ---
 

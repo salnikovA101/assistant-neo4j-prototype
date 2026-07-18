@@ -93,6 +93,7 @@ class AppConfig(BaseSettings):
     )
 
     debug_mode: bool = False
+    audio_enabled: bool = True
     server: ServerConfig = Field(default_factory=ServerConfig)
     stt: SttConfig = Field(default_factory=SttConfig)
     tts: TtsConfig = Field(default_factory=TtsConfig)

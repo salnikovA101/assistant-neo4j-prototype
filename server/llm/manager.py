@@ -35,7 +35,11 @@ class LLMManager:
 
     def __init__(self, config: AppConfig) -> None:
         self.config = config.llm
-        self.prompt_manager = PromptLoader(self.config.prompt_folder, config.tts.mode)
+        self.prompt_manager = PromptLoader(
+            self.config.prompt_folder,
+            config.tts.mode,
+            audio_enabled=config.audio_enabled,
+        )
         self.history_manager = HistoryManager(self.config.history_len)
         self.tools = Tools(config)
         self.model: BaseLLMProvider = self._load(self.config.current_profile)

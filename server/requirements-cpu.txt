@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+openai
+openinference-instrumentation-openai
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http
+neo4j
+langchain-neo4j
+pydantic
+pydantic-settings
+PyYAML
+python-dotenv

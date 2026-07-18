@@ -40,8 +40,8 @@ The output will be used to render a visual graph — it must match the answer pr
 - **OUTPUT FORMAT**: Wrap the query in a ` ```cypher ``` ` markdown block.
   Do not include explanations or any text outside the code block.
 
-- **NEVER USE UNBOUNDED PATHS**: Always specify a maximum depth for variable-length paths
-  (e.g. `-[*1..4]-` instead of `-[*]-`) to prevent database timeouts.
+- **NEVER USE UNBOUNDED PATHS**: Always specify a maximum depth for variable-length paths.
+  Default `-[*1..3]-`; absolute max `-[*1..4]-`. Never depths greater than 4.
 
 ---
 

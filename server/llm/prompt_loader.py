@@ -9,16 +9,20 @@ logger = logging.getLogger(__name__)
 class PromptLoader:
     """
     Класс для загрузки и управления текстовыми промптами.
-    Загружает базовую логику (assistant_logic.md) и формат вывода для TTS (output_{mode}.md).
+    Загружает базовую логику (assistant_logic.md) и, при включённом аудио,
+    формат вывода для TTS (output_{mode}.md).
     """
 
-    def __init__(self, folder_name: str, mode: TTSModes) -> None:
+    def __init__(
+        self, folder_name: str, mode: TTSModes, audio_enabled: bool = True
+    ) -> None:
         """
         Инициализирует загрузчик и считывает файлы.
         """
         self.logic_text = ""
         self.output_text = ""
         self.mode = mode
+        self.audio_enabled = audio_enabled
         self._load(folder_name)
 
     def _load(self, folder_name: str) -> None:
@@ -39,6 +43,10 @@ class PromptLoader:
                 logger.info("Промпт assistant_logic.md успешно загружен.")
             else:
                 logger.warning("Файл assistant_logic.md не найден.")
+
+            if not self.audio_enabled:
+                logger.info("Аудио выключено — промпт для озвучки не загружается.")
+                return
 
             if self.mode == TTSModes.SPEED:
                 if output_file_speed.exists():
@@ -64,4 +72,6 @@ class PromptLoader:
         """
         Возвращает объединенный текст промптов.
         """
+        if not self.output_text:
+            return self.logic_text.strip()
         return f"{self.logic_text}\n\n{self.output_text}".strip()

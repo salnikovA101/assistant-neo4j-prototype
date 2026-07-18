@@ -143,10 +143,10 @@ LIMIT {limit}
 
 ### Example 9: Describe a sequential biological process (Allergen reduction)
 
-> Demonstrates: safely extracting a long variable-length path by filtering the start node and checking if ANY intermediate node matches required concepts (like proteins, enzymes, or abstract concepts without explicit labels).
+> Demonstrates: variable-length path capped at 1–3 hops (dense graph). Filter start node and check if ANY intermediate node matches required concepts.
 
 ```cypher
-MATCH path = (start_node:Microbe|StarterCulture)-[*1..4]-(end_node)
+MATCH path = (start_node:Microbe|StarterCulture)-[*1..3]-(end_node)
 WHERE ALL(r IN relationships(path) WHERE r.run_id = '{run_id}')
   AND start_node.name =~ '(?i).*(culture|lactobacillus|strain).*'
   AND ANY(n IN nodes(path) WHERE n.name =~ '(?i).*(beta-lactoglobulin|alpha-casein|endopeptidase).*')
@@ -167,7 +167,7 @@ LIMIT {limit}
 
 ### Example 10: Complex impact mechanism (Starter Culture -> Metabolite -> End Effect)
 
-> Demonstrates: finding how specific starter cultures or microbes affect the production of a metabolite (like GABA) and subsequent effects (bioavailability/stability). Uses broad node matching to catch abstract concepts.
+> Demonstrates: finding how specific starter cultures or microbes affect the production of a metabolite (like GABA) and subsequent effects (bioavailability/stability). Uses broad node matching to catch abstract concepts. Path depth ≤ 3.
 
 ```cypher
 MATCH path = (s:StarterCulture|Microbe)-[*1..3]-(end_effect)
@@ -189,7 +189,7 @@ LIMIT {limit}
 
 ### Example 11: Multi-criteria strain selection (Pathogen suppression & Enzymatic activity)
 
-> Demonstrates: finding a Microbe or Starter Culture that fulfills multiple functional requirements (e.g., inhibiting a pathogen like Helicobacter AND affecting enzymes/proteins like urease or bacteriocins). Uses an OR regex to grab all relevant paths for the LLM to analyze and synthesize recommendations.
+> Demonstrates: finding a Microbe or Starter Culture that fulfills multiple functional requirements (e.g., inhibiting a pathogen like Helicobacter AND affecting enzymes/proteins like urease or bacteriocins). Uses an OR regex to grab all relevant paths (≤3 hops) for the LLM to analyze and synthesize recommendations.
 
 ```cypher
 MATCH path = (s:StarterCulture|Microbe)-[*1..3]-(target)
@@ -204,5 +204,117 @@ RETURN
     source_file: r.source_file,
     confidence: r.confidence
   }}] AS relationship_details
+LIMIT {limit}
+```
+
+---
+
+### Example 12: Cottage cheese / curd — mesophilic & thermophilic LAB with lactic acid
+
+> Demonstrates: 1-hop neighborhood for dairy acidification / curd formation (prefer neighborhood over long paths).
+
+```cypher
+MATCH (m:Microbe|StarterCulture)-[r]-(x:Metabolite|EnvironmentCondition)
+WHERE r.run_id = '{run_id}'
+  AND m.name =~ '(?i).*(lactococcus|lactobacillus|streptococcus|mesophilic|thermophilic|starter|cremoris|bulgaricus).*'
+  AND x.name =~ '(?i).*(lactic acid|acidification|curd|cottage cheese|casein|fermentation).*'
+RETURN m.name AS culture, type(r) AS relation, x.name AS target,
+       r.evidence AS evidence, r.source_file AS source_file,
+       r.chunk_id AS chunk_id, r.confidence AS confidence
+LIMIT {limit}
+```
+
+---
+
+### Example 13: Aroma-forming cultures (diacetyl / citrate)
+
+> Demonstrates: searching aroma-related metabolites linked to dairy starters.
+
+```cypher
+MATCH (m:Microbe|StarterCulture)-[r]-(met:Metabolite)
+WHERE r.run_id = '{run_id}'
+  AND (
+    m.name =~ '(?i).*(diacetyl|leuconostoc|lactococcus|aroma|citrate).*'
+    OR met.name =~ '(?i).*(diacetyl|acetoin|citrate|aroma).*'
+  )
+RETURN m.name AS culture, type(r) AS relation, met.name AS metabolite,
+       r.evidence AS evidence, r.source_file AS source_file,
+       r.chunk_id AS chunk_id, r.confidence AS confidence
+LIMIT {limit}
+```
+
+---
+
+### Example 14: Bacteriophage and starter cultures
+
+> Demonstrates: phage-related neighborhood search for dairy starters.
+
+```cypher
+MATCH (n)-[r]-(m)
+WHERE r.run_id = '{run_id}'
+  AND (
+    n.name =~ '(?i).*(phage|bacteriophage).*'
+    OR m.name =~ '(?i).*(phage|bacteriophage).*'
+  )
+  AND (
+    n.name =~ '(?i).*(starter|lactococcus|lactobacillus|culture).*'
+    OR m.name =~ '(?i).*(starter|lactococcus|lactobacillus|culture).*'
+  )
+RETURN n.name AS source, type(r) AS relation, m.name AS target,
+       r.evidence AS evidence, r.source_file AS source_file,
+       r.chunk_id AS chunk_id, r.confidence AS confidence
+LIMIT {limit}
+```
+
+---
+
+### Example 15: Spoilage VOC markers (H2S / ammonia / TMA)
+
+> Demonstrates: freshness/spoilage metabolites with relaxed labels (ontology mismatch common).
+
+```cypher
+MATCH (n)-[r]-(m:Metabolite|EnvironmentCondition)
+WHERE r.run_id = '{run_id}'
+  AND m.name =~ '(?i).*(hydrogen sulfide|H2S|ammonia|trimethylamine|TMA|volatile|spoilage).*'
+RETURN n.name AS source, labels(n)[0] AS source_type, type(r) AS relation, m.name AS marker,
+       r.evidence AS evidence, r.source_file AS source_file,
+       r.chunk_id AS chunk_id, r.confidence AS confidence
+LIMIT {limit}
+```
+
+---
+
+### Example 16: Freshness indicator / dye / film matrix
+
+> Demonstrates: indicator chemistry and packaging matrix as Metabolite or unlabeled nodes; short path ≤3.
+
+```cypher
+MATCH path = (a)-[*1..3]-(b)
+WHERE ALL(r IN relationships(path) WHERE r.run_id = '{run_id}')
+  AND ANY(n IN nodes(path) WHERE n.name =~ '(?i).*(indicator|dye|color|agar|film|matrix|permanganate|packaging).*')
+RETURN
+  [n IN nodes(path) | {{name: n.name, labels: labels(n)}}] AS sequence_of_entities,
+  [r IN relationships(path) | {{
+    type: type(r),
+    evidence: r.evidence,
+    source_file: r.source_file,
+    chunk_id: r.chunk_id,
+    confidence: r.confidence
+  }}] AS relationship_details
+LIMIT {limit}
+```
+
+---
+
+### Example 17: MAP / packaging / storage conditions
+
+> Demonstrates: EnvironmentCondition for packaging and modified atmosphere (incoming edges only for EnvironmentCondition).
+
+```cypher
+MATCH (source:Microbe|Metabolite|StarterCulture)-[r:REQUIRES|PRODUCES|INHIBITS|STIMULATES]->(c:EnvironmentCondition)
+WHERE r.run_id = '{run_id}'
+  AND c.name =~ '(?i).*(packaging|storage|MAP|modified atmosphere|temperature|humidity).*'
+RETURN source.name AS acting_entity, labels(source)[0] AS type, type(r) AS relation, c.name AS condition,
+       r.evidence AS evidence, r.source_file AS source_file, r.chunk_id AS chunk_id
 LIMIT {limit}
 ```

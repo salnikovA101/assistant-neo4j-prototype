@@ -305,54 +305,7 @@ async function processAudioBlob(blob) {
             return;
         }
 
-        // Читаем ответ LLM из заголовка
-        const llmResponse = safeDecodeHeader(response.headers.get('LLM-Response'));
-        const hasGraph = response.headers.get('Has-Graph') === 'true';
-        if (llmResponse) addMessage('assistant', llmResponse, hasGraph);
-
-        // Воспроизводим аудио-ответ потоково
-        setUIState('playing');
-        
-        const reader = response.body.getReader();
-        let leftoverBytes = null;
-        const myController = currentAbortController;
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            let data = value;
-            if (leftoverBytes) {
-                const combined = new Uint8Array(leftoverBytes.length + data.length);
-                combined.set(leftoverBytes);
-                combined.set(data, leftoverBytes.length);
-                data = combined;
-                leftoverBytes = null;
-            }
-
-            // Выравнивание чанка по границе 2 байт (для Int16)
-            if (data.length % 2 !== 0) {
-                leftoverBytes = data.slice(data.length - 1);
-                data = data.slice(0, data.length - 1);
-            }
-
-            if (data.length > 0) {
-                const pcmChunk = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-                await playChunk(pcmChunk);
-            }
-        }
-
-        // Ожидаем проигрывание всех запланированных чанков
-        if (audioCtx && nextStartTime > audioCtx.currentTime) {
-            const delay = (nextStartTime - audioCtx.currentTime) * 1000;
-            await new Promise(resolve => setTimeout(resolve, delay));
-        }
-
-        // Если за это время не пришел новый прерывающий запрос
-        if (currentAbortController === myController) {
-            setUIState('idle');
-            currentAbortController = null;
-        }
+        await consumeProcessTextResponse(response);
     } catch (err) {
         if (err.name === 'AbortError') {
             console.log('Fetch aborted.');
@@ -401,53 +354,7 @@ async function sendText() {
             return;
         }
 
-        const llmResponse = safeDecodeHeader(response.headers.get('LLM-Response'));
-        const hasGraph = response.headers.get('Has-Graph') === 'true';
-        if (llmResponse) addMessage('assistant', llmResponse, hasGraph);
-
-        // Воспроизводим аудио-ответ потоково
-        setUIState('playing');
-        
-        const reader = response.body.getReader();
-        let leftoverBytes = null;
-        const myController = currentAbortController;
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            let data = value;
-            if (leftoverBytes) {
-                const combined = new Uint8Array(leftoverBytes.length + data.length);
-                combined.set(leftoverBytes);
-                combined.set(data, leftoverBytes.length);
-                data = combined;
-                leftoverBytes = null;
-            }
-
-            // Выравнивание чанка по границе 2 байт (для Int16)
-            if (data.length % 2 !== 0) {
-                leftoverBytes = data.slice(data.length - 1);
-                data = data.slice(0, data.length - 1);
-            }
-
-            if (data.length > 0) {
-                const pcmChunk = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-                await playChunk(pcmChunk);
-            }
-        }
-
-        // Ожидаем проигрывание всех запланированных чанков
-        if (audioCtx && nextStartTime > audioCtx.currentTime) {
-            const delay = (nextStartTime - audioCtx.currentTime) * 1000;
-            await new Promise(resolve => setTimeout(resolve, delay));
-        }
-
-        // Если за это время не пришел новый прерывающий запрос
-        if (currentAbortController === myController) {
-            setUIState('idle');
-            currentAbortController = null;
-        }
+        await consumeProcessTextResponse(response);
     } catch (err) {
         if (err.name === 'AbortError') {
             console.log('Fetch aborted.');
@@ -457,6 +364,71 @@ async function sendText() {
         removeThinking();
         addMessage('system', '⚠️ Ошибка соединения с сервером');
         setUIState('idle');
+    }
+}
+
+/**
+ * Обрабатывает ответ /process_text:
+ * - JSON (audio_enabled=false) — только текст
+ * - audio/pcm — заголовок LLM-Response + потоковое воспроизведение
+ */
+async function consumeProcessTextResponse(response) {
+    const contentType = response.headers.get('Content-Type') || '';
+    const myController = currentAbortController;
+
+    if (contentType.includes('application/json')) {
+        const data = await response.json();
+        const llmResponse = data.answer || '';
+        const hasGraph = Boolean(data.has_graph);
+        if (llmResponse) addMessage('assistant', llmResponse, hasGraph);
+        if (currentAbortController === myController) {
+            setUIState('idle');
+            currentAbortController = null;
+        }
+        return;
+    }
+
+    const llmResponse = safeDecodeHeader(response.headers.get('LLM-Response'));
+    const hasGraph = response.headers.get('Has-Graph') === 'true';
+    if (llmResponse) addMessage('assistant', llmResponse, hasGraph);
+
+    setUIState('playing');
+
+    const reader = response.body.getReader();
+    let leftoverBytes = null;
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        let data = value;
+        if (leftoverBytes) {
+            const combined = new Uint8Array(leftoverBytes.length + data.length);
+            combined.set(leftoverBytes);
+            combined.set(data, leftoverBytes.length);
+            data = combined;
+            leftoverBytes = null;
+        }
+
+        if (data.length % 2 !== 0) {
+            leftoverBytes = data.slice(data.length - 1);
+            data = data.slice(0, data.length - 1);
+        }
+
+        if (data.length > 0) {
+            const pcmChunk = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+            await playChunk(pcmChunk);
+        }
+    }
+
+    if (audioCtx && nextStartTime > audioCtx.currentTime) {
+        const delay = (nextStartTime - audioCtx.currentTime) * 1000;
+        await new Promise(resolve => setTimeout(resolve, delay));
+    }
+
+    if (currentAbortController === myController) {
+        setUIState('idle');
+        currentAbortController = null;
     }
 }
 
@@ -748,6 +720,58 @@ function addGraphButton(contentWrapper) {
 
 // ===== UI Helpers =====
 
+function renderMarkdown(text) {
+    if (typeof marked === 'undefined') {
+        return escapeHtml(text);
+    }
+    const raw = marked.parse(text, { breaks: true, gfm: true });
+    if (typeof DOMPurify !== 'undefined') {
+        return DOMPurify.sanitize(raw);
+    }
+    return raw;
+}
+
+function addCopyButton(wrapper, plainText) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'copy-btn';
+    btn.title = 'Скопировать ответ';
+    btn.setAttribute('aria-label', 'Скопировать ответ');
+    btn.innerHTML = `
+        <svg class="copy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+        </svg>
+        <svg class="check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+            <polyline points="20 6 9 17 4 12"></polyline>
+        </svg>
+        <span class="copy-label">Копировать</span>`;
+
+    btn.addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(plainText);
+            btn.classList.add('copied');
+            btn.querySelector('.copy-icon').style.display = 'none';
+            btn.querySelector('.check-icon').style.display = 'block';
+            btn.querySelector('.copy-label').textContent = 'Скопировано';
+            setTimeout(() => {
+                btn.classList.remove('copied');
+                btn.querySelector('.copy-icon').style.display = 'block';
+                btn.querySelector('.check-icon').style.display = 'none';
+                btn.querySelector('.copy-label').textContent = 'Копировать';
+            }, 1600);
+        } catch (err) {
+            console.error('Clipboard error:', err);
+            btn.querySelector('.copy-label').textContent = 'Ошибка';
+            setTimeout(() => {
+                btn.querySelector('.copy-label').textContent = 'Копировать';
+            }, 1600);
+        }
+    });
+
+    wrapper.appendChild(btn);
+}
+
 function addMessage(role, text, hasGraph = false) {
     // Убираем welcome-сообщение при первом реальном сообщении
     const welcome = chatMessages.querySelector('.welcome-message');
@@ -760,16 +784,20 @@ function addMessage(role, text, hasGraph = false) {
         div.innerHTML = `
             <div class="assistant-avatar">🧬</div>
             <div class="message-content-wrapper">
-                <span class="message-label">Ассистент</span>
-                <span class="message-text">${escapeHtml(text)}</span>
+                <div class="message-header">
+                    <span class="message-label">Ассистент</span>
+                </div>
+                <div class="message-text markdown-body">${renderMarkdown(text)}</div>
             </div>`;
 
         chatMessages.appendChild(div);
         chatMessages.scrollTop = chatMessages.scrollHeight;
 
+        const contentWrapper = div.querySelector('.message-content-wrapper');
+        addCopyButton(contentWrapper, text);
+
         // Добавляем кнопку «Показать граф» (загрузка только по клику)
         if (hasGraph) {
-            const contentWrapper = div.querySelector('.message-content-wrapper');
             addGraphButton(contentWrapper);
         }
     } else if (role === 'user') {

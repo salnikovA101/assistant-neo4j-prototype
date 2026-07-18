@@ -6,7 +6,6 @@ from fastapi import Request
 
 from server.utils.config import AppConfig
 from server.llm.manager import LLMManager
-from server.stt.provider import STTProvider
 from server.utils.tracing import (
     OI_INPUT_VALUE,
     OI_SPAN_KIND,
@@ -15,7 +14,6 @@ from server.utils.tracing import (
     set_span_error,
     set_span_ok,
 )
-from server.tts.manager import TTSManager
 
 logger = logging.getLogger(__name__)
 tracer = get_tracer(__name__)
@@ -23,17 +21,26 @@ tracer = get_tracer(__name__)
 
 class ServerPipeline:
     """
-    Серверный пайплайн обработки: STT → LLM → TTS.
+    Серверный пайплайн обработки: (STT) → LLM → (TTS).
 
-    Заменяет core/assistant.py — без sounddevice, keyboard, threading.
-    Принимает данные по HTTP, возвращает PCM-чанки.
+    При audio_enabled=false работает только как текстовый бэкенд (LLM + Neo4j).
     """
 
     def __init__(self, config: AppConfig) -> None:
         self.config = config
-        self.stt = STTProvider(config.stt)
         self.llm = LLMManager(config)
-        self.tts = TTSManager(config.tts)
+        self.stt = None
+        self.tts = None
+
+        if config.audio_enabled:
+            from server.stt.provider import STTProvider
+            from server.tts.manager import TTSManager
+
+            self.stt = STTProvider(config.stt)
+            self.tts = TTSManager(config.tts)
+        else:
+            logger.info("Аудио отключено (audio_enabled=false): STT/TTS не загружаются")
+
         self._last_request_has_graph = False
         self._last_new_queries = []
         self._last_answer = ""
@@ -46,7 +53,8 @@ class ServerPipeline:
     async def shutdown(self) -> None:
         """Освобождение ресурсов при остановке сервера."""
         await self.llm.unload()
-        self.tts.unload()
+        if self.tts is not None:
+            self.tts.unload()
         self.llm.tools.graph_filter.close()
         logger.info("Ресурсы освобождены")
 
@@ -68,6 +76,9 @@ class ServerPipeline:
         Returns:
             Tuple[recognized_text, llm_answer]
         """
+        if self.stt is None:
+            raise RuntimeError("STT отключён (audio_enabled=false)")
+
         with tracer.start_as_current_span("process_audio") as span:
             span.set_attribute(OI_SPAN_KIND, OISpanKind.CHAIN)
             span.set_attribute(
@@ -153,6 +164,9 @@ class ServerPipeline:
         Yields:
             bytes: PCM-чанки.
         """
+        if self.tts is None:
+            raise RuntimeError("TTS отключён (audio_enabled=false)")
+
         with tracer.start_as_current_span("synthesize") as span:
             span.set_attribute(OI_SPAN_KIND, OISpanKind.TOOL)
             span.set_attribute(OI_INPUT_VALUE, text)

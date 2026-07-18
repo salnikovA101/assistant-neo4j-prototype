@@ -45,7 +45,10 @@ async def lifespan(app: FastAPI):
     await pipeline.startup()
 
     app.state.pipeline = pipeline
-    logger.info("Voice Assistant Server готов!")
+    if config.audio_enabled:
+        logger.info("Voice Assistant Server готов!")
+    else:
+        logger.info("Text backend готов (STT/TTS отключены)!")
 
     yield
 
@@ -71,6 +74,13 @@ app.add_middleware(
 )
 
 
+def _audio_disabled_response() -> JSONResponse:
+    return JSONResponse(
+        {"error": "Аудио отключено (audio_enabled=false). Используйте /process_text_test"},
+        status_code=503,
+    )
+
+
 @app.post("/process")
 async def process_audio(request: Request):
     """
@@ -81,6 +91,9 @@ async def process_audio(request: Request):
     - LLM-Response: URL-encoded ответ LLM
     """
     pipeline: ServerPipeline = request.app.state.pipeline
+    if not pipeline.config.audio_enabled:
+        return _audio_disabled_response()
+
     wav_bytes = await request.body()
 
     if not wav_bytes:
@@ -112,6 +125,9 @@ async def stt_only(request: Request):
     Используется веб-клиентом для мгновенного отображения результата STT.
     """
     pipeline: ServerPipeline = request.app.state.pipeline
+    if not pipeline.config.audio_enabled or pipeline.stt is None:
+        return _audio_disabled_response()
+
     wav_bytes = await request.body()
 
     if not wav_bytes:
@@ -127,9 +143,8 @@ async def stt_only(request: Request):
 @app.post("/process_text")
 async def process_text(request: Request):
     """
-    Принимает текст JSON, возвращает стрим PCM-чанков.
-
-    Request body: {"text": "вопрос пользователя"}
+    Принимает текст JSON.
+    При audio_enabled=true — стрим PCM; иначе — JSON {"answer": "..."} (как /process_text_test).
     """
     pipeline: ServerPipeline = request.app.state.pipeline
     data = await request.json()
@@ -139,6 +154,9 @@ async def process_text(request: Request):
         return JSONResponse({"error": "Пустой текст"}, status_code=400)
 
     answer = await pipeline.process_text(text)
+
+    if not pipeline.config.audio_enabled:
+        return JSONResponse({"answer": answer, "has_graph": pipeline.has_graph})
 
     return StreamingResponse(
         pipeline.synthesize(answer, request),

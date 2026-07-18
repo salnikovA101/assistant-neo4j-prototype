@@ -1,5 +1,6 @@
 debug_mode: false
-run_id: "20260619_084840"
+audio_enabled: false
+run_id: "full_corpus_20260713"
 limit: 30
 
 server:
@@ -8,9 +9,9 @@ server:
   llm_timeout: 300
 
 stt:
-  model: "large-v3-turbo"
-  device: "cuda"
-  compute_type: "int8_bfloat16"
+  model: "base"
+  device: "cpu"
+  compute_type: "int8"
   language: "ru"
 
 tts:
@@ -50,7 +51,7 @@ llm:
     other:
       provider: "openai"
       # model: "google/gemini-3-flash-preview" # Нет размышления, время ответа ~10 сек
-      model: "minimax/minimax-m3:nitro" # Есть размышление, время ответа ~1 мин
+      model: "z-ai/glm-5.2" # Есть размышление, время ответа ~1 мин
       temperature: 0.7
-      max_output_tokens: 999999
+      max_output_tokens: 16384
       max_turns: 5
