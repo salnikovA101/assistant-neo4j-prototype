@@ -39,7 +39,8 @@ tts:
 llm:
   current_profile: "other"
   cypher_profile: "other"
-  history_len: 6
+  tool_profile: "other"
+  history_len: 30
   prompt_folder: "prompts"
   profiles:
     gemini:
@@ -52,6 +53,7 @@ llm:
       provider: "openai"
       # model: "google/gemini-3-flash-preview" # Нет размышления, время ответа ~10 сек
       model: "z-ai/glm-5.2" # Есть размышление, время ответа ~1 мин
-      temperature: 0.7
+      temperature: 0.3
       max_output_tokens: 16384
       max_turns: 5
+      think: true

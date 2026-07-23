@@ -47,15 +47,24 @@ class ServerPipeline:
 
     async def startup(self) -> None:
         """Прогрев всех моделей при старте сервера."""
+        from server.core.db import init_driver
+
+        neo4j_config = self.config.neo4j
+        init_driver(neo4j_config.uri, neo4j_config.user, neo4j_config.password)
+        logger.info("Neo4j driver инициализирован")
+
         await self.llm.warmup()
         logger.info("ServerPipeline готов")
 
     async def shutdown(self) -> None:
         """Освобождение ресурсов при остановке сервера."""
+        from server.core.db import close_driver
+
         await self.llm.unload()
         if self.tts is not None:
             self.tts.unload()
         self.llm.tools.graph_filter.close()
+        await close_driver()
         logger.info("Ресурсы освобождены")
 
     def clear_history(self) -> None:

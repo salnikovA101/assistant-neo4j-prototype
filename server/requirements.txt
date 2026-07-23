@@ -13,4 +13,6 @@ pydantic
 pydantic-settings
 PyYAML
 python-dotenv
+httpx
+networkx
 numpy

@@ -35,6 +35,8 @@ class LlmProfiles(BaseModel):
 class LlmConfig(BaseModel):
     current_profile: str = "other"
     cypher_profile: str = "other"
+    # Used by V4 Stage1 / ask_subgraph nested LLM calls; defaults to cypher_profile if unset in yaml
+    tool_profile: str = "other"
     history_len: int = 6
     prompt_folder: str = "prompts"
     profiles: LlmProfiles = Field(default_factory=LlmProfiles)
