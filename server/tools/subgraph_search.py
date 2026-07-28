@@ -58,17 +58,29 @@ class SubgraphSearchAgent:
                 if not paths:
                     res_str = "No relevant information found in the graph for this query."
                 else:
-                    lines = ["### Retrieved graph paths"]
+                    lines = [
+                        "### Retrieved graph paths",
+                        "",
+                        "Cite claims as [1], [2], ... mapped to ### Источники ([n] source_file). "
+                        "Do not cite [path N] indices.",
+                        "",
+                    ]
                     for idx, path in enumerate(paths, 1):
                         text = (path.get("serialized_text") or "").strip()
                         if not text:
                             continue
-                        lines.append(f"{idx}. {text}")
+                        lines.append(f"[path {idx}]")
+                        lines.append(text)
+                        lines.append("")
 
-                    if len(lines) == 1:
+                    # Drop trailing blank line for cleanliness
+                    while lines and lines[-1] == "":
+                        lines.pop()
+
+                    if len(lines) <= 4:
                         res_str = "No relevant relationships found."
                     else:
-                        res_str = "\n\n".join(lines)
+                        res_str = "\n".join(lines)
 
                 set_span_ok(span, res_str)
                 return res_str

@@ -10,71 +10,72 @@ def format_label(labels: list[str]) -> str:
     l = found[0] if found else (labels[0] if labels else "Entity")
 
     if l == 'StarterCulture':
-        return 'starter culture'
+        return 'StarterCulture'
     elif l == 'EnvironmentCondition':
-        return 'environment condition'
-    return l.lower()
+        return 'EnvironmentCondition'
+    return l
+
+
+def _node_header(label: str, name: str) -> str:
+    return f"{label}: {name}"
+
 
 def serialize_path(path_obj: dict) -> str:
     """
-    Serializes a single path object into a string for LLM reranking.
-    Expected output for single edge:
-    'microbe name relates to metabolite name: evidence text, next metabolite name ...'
-    Expected output for multiple edges:
-    'microbe name [produces: evidence 1 | consumes: evidence 2] metabolite name'
+    Serialize a path into structured hop blocks with evidence + source_file per edge.
+
+    Example:
+        Microbe: Lactococcus lactis
+          -[:PRODUCES]-> Metabolite: diacetyl
+          evidence: LAB produce diacetyl...
+          source_file: PMC123.pdf
     """
     nodes = path_obj.get("nodes", [])
-    rels = path_obj.get("relationships", []) # Now this is a list of lists of relationships
+    rels = path_obj.get("relationships", [])  # list of lists of relationships
 
     if not nodes or not rels:
         return ""
 
-    parts = []
+    lines: list[str] = []
 
     for i, hop_rels in enumerate(rels):
+        if i + 1 >= len(nodes):
+            break
+
         source_node = nodes[i]
-        target_node = nodes[i+1]
+        target_node = nodes[i + 1]
 
-        # Get labels safely and format them
-        s_labels = source_node.get("labels", [])
-        t_labels = target_node.get("labels", [])
-
-        s_label = format_label(s_labels)
-        t_label = format_label(t_labels)
-
+        s_label = format_label(source_node.get("labels", []))
+        t_label = format_label(target_node.get("labels", []))
         s_name = source_node.get("name", "Unknown")
         t_name = target_node.get("name", "Unknown")
 
-        unique_edges = []
-        seen_evidence = set()
+        if i == 0:
+            lines.append(_node_header(s_label, s_name))
+
+        seen: set[tuple[str, str]] = set()
+        emitted = False
 
         for rel in hop_rels:
-            ev = rel.get("evidence", "").strip()
-            ev_lower = ev.lower()
+            ev = (rel.get("evidence") or "").strip()
+            src = (rel.get("source_file") or "").strip()
+            key = (ev.lower(), src.lower())
+            if key in seen:
+                continue
+            seen.add(key)
 
-            # Deduplicate by evidence text (if evidence exists)
-            if not ev or ev_lower not in seen_evidence:
-                if ev:
-                    seen_evidence.add(ev_lower)
+            r_type = rel.get("type", "RELATES_TO")
+            lines.append(f"  -[:{r_type}]-> {_node_header(t_label, t_name)}")
+            lines.append(f"  evidence: {ev}" if ev else "  evidence:")
+            lines.append(f"  source_file: {src}" if src else "  source_file:")
+            emitted = True
 
-                r_type = rel.get("type", "RELATES_TO").lower().replace("_", " ")
-                if ev:
-                    unique_edges.append(f"{r_type} {ev}")
-                else:
-                    unique_edges.append(f"{r_type}")
+        if not emitted:
+            lines.append(f"  -[:RELATES_TO]-> {_node_header(t_label, t_name)}")
+            lines.append("  evidence:")
+            lines.append("  source_file:")
 
-        if unique_edges:
-            edge_str = " also ".join(unique_edges)
-            hop_str = f"{s_label} {s_name} {edge_str} {t_label} {t_name}"
-        else:
-            hop_str = f"{s_label} {s_name} relates to {t_label} {t_name}"
-
-        if i == 0:
-            parts.append(hop_str)
-        else:
-            parts.append(f"next {hop_str}")
-
-    return ", ".join(parts).strip()
+    return "\n".join(lines).strip()
 
 
 async def rerank_paths(original_query: str, paths: list[dict], batch_size: int = 4) -> list[dict]:

@@ -59,7 +59,7 @@ class Tools:
         """
         Queries the knowledge graph database in natural language.
         Use for ANY question about entities, relationships, properties, or paths in the graph.
-        Returns structured data including provenance: evidence (verbatim quote), source_file, chunk_id.
+        Returns structured data including provenance: evidence (verbatim quote), source_file.
 
         Args:
             question (str): Natural language question to the database.
@@ -82,6 +82,8 @@ class Tools:
         """
         Runs the V4 multi-stage graph retrieval pipeline for scientific questions.
         Prefer this for mechanisms, pathways, and multi-hop evidence synthesis.
+        Each hop includes evidence and source_file. Cite user-facing claims as [n]
+        mapped to ### Источники ([n] source_file); never cite [path N] indices.
 
         Args:
             question (str): User's natural language question (English).
@@ -130,7 +132,10 @@ class Tools:
                         "(1) decomposes into declarative scientific statements, "
                         "(2) embeds and finds vector anchors, "
                         "(3) GDS projection + PPR filter, "
-                        "(4) prize-coverage paths with evidence. "
+                        "(4) prize-coverage paths with evidence + source_file per edge. "
+                        "Return format: [path N] blocks with hop evidence and source_file. "
+                        "In the user answer cite as [1], [2], ... and list "
+                        "### Источники with [n] source_file.pdf — never cite path indices. "
                         "CRITICAL — question phrasing: "
                         "Pass ONE natural English scientific question about entities/mechanisms "
                         "(how X relates to Y). The pipeline embeds declarative facts — "

@@ -581,7 +581,8 @@ ORDER BY path_obj.path_index, i
 WITH path_obj, ordered_nodes, collect([rel IN hop_rels | {
     type: type(rel),
     rel_id: elementId(rel),
-    evidence: coalesce(rel.evidence, '')
+    evidence: coalesce(rel.evidence, ''),
+    source_file: coalesce(rel.source_file, '')
 }]) AS ordered_rels
 
 RETURN path_obj.totalCost AS totalCost, ordered_nodes AS nodes, ordered_rels AS relationships
