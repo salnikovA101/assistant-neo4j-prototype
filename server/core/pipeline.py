@@ -6,6 +6,7 @@ from fastapi import Request
 
 from server.utils.config import AppConfig
 from server.llm.manager import LLMManager
+from server.llm.stream_events import StreamEvent
 from server.utils.tracing import (
     OI_INPUT_VALUE,
     OI_SPAN_KIND,
@@ -155,6 +156,60 @@ class ServerPipeline:
                 self._last_request_has_graph = False
                 set_span_error(span, str(e))
                 raise
+
+    async def process_text_stream(
+        self, text: str, request: Optional[Request] = None
+    ) -> AsyncGenerator[StreamEvent, None]:
+        """
+        Stream LLM events (thinking / tools / content / done) for text input.
+        """
+        with tracer.start_as_current_span("process_text_stream") as span:
+            span.set_attribute(OI_SPAN_KIND, OISpanKind.CHAIN)
+            span.set_attribute(OI_INPUT_VALUE, text)
+            logger.info(f"Текст (stream): {text}")
+
+            sq = self.llm.tools.graph_qa.successful_queries
+            sq_len_before = len(sq)
+            asked_subgraph = False
+            final_content = ""
+
+            try:
+                async for event in self.llm.generate_response_stream(user_text=text):
+                    if request and await request.is_disconnected():
+                        logger.info("Клиент отключился — остановка LLM stream")
+                        break
+
+                    if event.type == "tool_call" and event.data.get("name") == "ask_subgraph":
+                        asked_subgraph = True
+                    if event.type == "tool_result" and event.data.get("name") == "ask_subgraph":
+                        if event.data.get("ok"):
+                            asked_subgraph = True
+                    if event.type == "done":
+                        final_content = event.data.get("final_content") or final_content
+                        sq_len_after = len(sq)
+                        self._last_new_queries = list(sq)[sq_len_before:sq_len_after]
+                        self._last_request_has_graph = (
+                            len(self._last_new_queries) > 0 or asked_subgraph
+                        )
+                        self._last_answer = final_content
+                        event = StreamEvent(
+                            "done",
+                            {
+                                "final_content": final_content,
+                                "has_graph": self._last_request_has_graph,
+                            },
+                        )
+                        set_span_ok(span, final_content)
+                        logger.info(f"LLM (stream): {final_content}")
+                    elif event.type == "error":
+                        self._last_request_has_graph = False
+                        set_span_error(span, event.data.get("message", "error"))
+
+                    yield event
+            except Exception as e:
+                self._last_request_has_graph = False
+                set_span_error(span, str(e))
+                yield StreamEvent("error", {"message": str(e)})
 
     async def synthesize(
         self, text: str, request: Optional[Request] = None

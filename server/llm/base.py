@@ -5,10 +5,18 @@ import logging
 import re
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 from openai import AsyncOpenAI
 
+from server.llm.stream_events import (
+    ContentThinkSplitter,
+    StreamEvent,
+    ToolCallAssembler,
+    build_assistant_replay,
+    normalize_chunk,
+    preview_tool_result,
+)
 from server.utils.config import OpenAIProfile
 
 logger = logging.getLogger(__name__)
@@ -182,21 +190,49 @@ class BaseLLMProvider(ABC):
         """
         Генерирует текстовый ответ на основе входных данных.
 
-        Args:
-            user_text: Текст запроса пользователя.
-            image_bytes: Опциональное изображение.
-            prompt: Системный промпт.
-            history: История диалога в формате OpenAI messages.
-            tools: Список инструментов в формате OpenAI tool schema.
-            tool_map: Карта {имя_функции: callable} для вызова инструментов.
-
-        Returns:
-            Текстовый ответ модели (think-теги всегда убираются из вывода).
+        Collects generate_response_stream events and returns final content.
         """
+        final = ""
         try:
-            start = time.perf_counter()
-            messages: List[Dict[str, Any]] = []
+            async for event in self.generate_response_stream(
+                user_text=user_text,
+                image_bytes=image_bytes,
+                prompt=prompt,
+                history=history,
+                tools=tools,
+                tool_map=tool_map,
+            ):
+                if event.type == "content":
+                    final += event.data.get("delta") or ""
+                elif event.type == "error":
+                    return f"Ошибка: {event.data.get('message', 'unknown')}"
+                elif event.type == "done":
+                    # Prefer assembled final_content if present.
+                    if event.data.get("final_content") is not None:
+                        final = event.data["final_content"]
+            return final
+        except Exception as e:
+            logger.error(f"[{self.__class__.__name__}] Ошибка generate_response: {e}")
+            return f"Ошибка: {e}"
 
+    async def generate_response_stream(
+        self,
+        user_text: str,
+        image_bytes: Optional[bytes] = None,
+        prompt: str = "",
+        history: Optional[List[Any]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_map: Optional[Dict[str, Callable]] = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """
+        Stream thinking / tool_call / tool_result / content events for one user turn.
+        Yields a final done event with final_content (think tags stripped).
+        """
+        start = time.perf_counter()
+        messages: List[Dict[str, Any]] = []
+        final_content_parts: List[str] = []
+
+        try:
             system_prompt = _with_think_token(prompt, self.profile)
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
@@ -214,98 +250,208 @@ class BaseLLMProvider(ABC):
                 )
             messages.append({"role": "user", "content": content})
 
-            # Reasoning kwargs are reused on every tool-loop iteration so
-            # thinking stays enabled after tool results (not only pre-tool).
             kwargs: Dict[str, Any] = {
                 "model": self.profile.model,
                 "messages": messages,
                 "temperature": self.profile.temperature,
                 "max_tokens": self.profile.max_output_tokens,
+                "stream": True,
                 **_reasoning_kwargs(self.profile),
             }
             if tools:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = "auto"
 
-            response = await self.client.chat.completions.create(**kwargs)
-            logger.debug(response)
-            message = response.choices[0].message
-            self._log_reasoning_usage("turn0", response)
-
             turns = 0
             max_turns = max(1, int(self.profile.max_turns))
-            while message.tool_calls and turns < max_turns:
+            label = "turn0"
+
+            while True:
+                assembler = ToolCallAssembler()
+                splitter = ContentThinkSplitter(self.profile)
+                content_acc = ""
+                reasoning_parts: List[str] = []
+                usage_holder: Any = None
+
+                stream = await self._create_chat_stream(kwargs)
+                async for chunk in stream:
+                    usage_holder = getattr(chunk, "usage", None) or usage_holder
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    norm = normalize_chunk(delta, splitter)
+                    if norm.thinking:
+                        reasoning_parts.append(norm.thinking)
+                        yield StreamEvent("thinking", {"delta": norm.thinking})
+                    if norm.content:
+                        content_acc += norm.content
+                        final_content_parts.append(norm.content)
+                        yield StreamEvent("content", {"delta": norm.content})
+                    if norm.tool_call_deltas:
+                        assembler.push(norm.tool_call_deltas)
+
+                # Flush any held content from the think-tag splitter.
+                flush_think, flush_content = splitter.flush()
+                if flush_think:
+                    reasoning_parts.append(flush_think)
+                    yield StreamEvent("thinking", {"delta": flush_think})
+                if flush_content:
+                    content_acc += flush_content
+                    final_content_parts.append(flush_content)
+                    yield StreamEvent("content", {"delta": flush_content})
+
+                self._log_stream_usage(label, usage_holder, reasoning_parts)
+
+                tool_calls = assembler.finish()
+                if not tool_calls or turns >= max_turns:
+                    if tool_calls and turns >= max_turns:
+                        logger.warning(
+                            "LLM still requested tools after budget exhausted "
+                            "(turns=%s max_turns=%s); returning partial content",
+                            turns,
+                            max_turns,
+                        )
+                    break
+
                 turns += 1
+                label = f"turn{turns}"
                 logger.debug(f"Tool loop turn {turns}/{max_turns}")
-                messages.append(_assistant_message_dict(message, self.profile))
+
+                # Replay assistant turn (with reasoning) then execute tools.
+                # Content emitted during a tool-calling turn is usually empty;
+                # do not treat it as final answer — drop from final_content_parts
+                # for this turn's content only (already appended). Revert those
+                # tokens from the user-facing final answer.
+                if content_acc:
+                    # Remove this turn's content from final answer assembly:
+                    # tool-call turns should not pollute the final reply.
+                    joined = "".join(final_content_parts)
+                    if joined.endswith(content_acc):
+                        final_content_parts = [joined[: -len(content_acc)]] if joined[: -len(content_acc)] else []
+                    else:
+                        # Fallback: rebuild without last content_acc occurrence.
+                        final_content_parts = [joined.replace(content_acc, "", 1)]
+
+                messages.append(
+                    build_assistant_replay(
+                        content=content_acc or None,
+                        tool_calls=tool_calls,
+                        reasoning_parts=reasoning_parts,
+                        profile=self.profile,
+                    )
+                )
                 budget_footer = _tool_budget_footer(turns, max_turns)
 
-                for tc in message.tool_calls:
-                    fn = tool_map.get(tc.function.name) if tool_map else None
+                for tc in tool_calls:
                     try:
-                        args = json.loads(tc.function.arguments)
+                        args = json.loads(tc.arguments) if tc.arguments else {}
                     except json.JSONDecodeError:
                         args = {}
+                    if not isinstance(args, dict):
+                        args = {}
 
-                    if fn:
-                        logger.debug(
-                            f"Вызов инструмента '{tc.function.name}', args={args}"
-                        )
+                    yield StreamEvent(
+                        "tool_call",
+                        {
+                            "id": tc.id,
+                            "name": tc.name,
+                            "arguments": args if args else tc.arguments,
+                        },
+                    )
+
+                    fn = tool_map.get(tc.name) if tool_map else None
+                    ok = True
+                    display_result = ""
+                    try:
+                        if not fn:
+                            raise KeyError(f"function '{tc.name}' not found")
+                        logger.debug(f"Вызов инструмента '{tc.name}', args={args}")
                         if asyncio.iscoroutinefunction(fn):
                             result = await fn(**args)
                         else:
                             result = await asyncio.to_thread(fn, **args)
-                        payload = f"{str(result).rstrip()}{budget_footer}"
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc.id,
-                                "content": _tool_result_content(payload, self.profile),
-                            }
-                        )
-                    else:
+                        display_result = str(result).rstrip()
+                        payload = f"{display_result}{budget_footer}"
+                    except Exception as tool_err:
+                        ok = False
                         logger.error(
-                            f"Инструмент '{tc.function.name}' не найден в tool_map"
+                            "Инструмент '%s' ошибка: %s", tc.name, tool_err
                         )
-                        payload = (
-                            f"Error: function '{tc.function.name}' not found."
-                            f"{budget_footer}"
-                        )
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc.id,
-                                "content": _tool_result_content(payload, self.profile),
-                            }
-                        )
+                        display_result = f"Error: {tool_err}"
+                        payload = f"{display_result}{budget_footer}"
+
+                    yield StreamEvent(
+                        "tool_result",
+                        {
+                            "id": tc.id,
+                            "name": tc.name,
+                            "ok": ok,
+                            # Full tool output for UI (small scrollable window).
+                            "result": display_result,
+                            # Backward-compatible short preview.
+                            "preview": preview_tool_result(display_result),
+                        },
+                    )
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": _tool_result_content(payload, self.profile),
+                        }
+                    )
 
                 kwargs["messages"] = messages
-                # Last allowed tool round: forbid further tool calls hard.
                 kwargs["tool_choice"] = "none" if turns >= max_turns else "auto"
-                response = await self.client.chat.completions.create(**kwargs)
-                logger.debug(response)
-                message = response.choices[0].message
-                self._log_reasoning_usage(f"turn{turns}", response)
 
-            if message.tool_calls:
-                logger.warning(
-                    "LLM still requested tools after budget exhausted "
-                    "(turns=%s max_turns=%s); returning empty/partial content",
-                    turns,
-                    max_turns,
-                )
-
-            text = message.content or ""
+            text = "".join(final_content_parts)
             text = _THINK_TAG_RE.sub("", text).strip()
 
             logger.debug(
                 f"[{self.__class__.__name__}] Ответ за {time.perf_counter() - start:.2f}s"
             )
-            return text
+            yield StreamEvent(
+                "done",
+                {"final_content": text, "has_graph": False},
+            )
 
         except Exception as e:
-            logger.error(f"[{self.__class__.__name__}] Ошибка generate_response: {e}")
-            return f"Ошибка: {e}"
+            logger.error(
+                f"[{self.__class__.__name__}] Ошибка generate_response_stream: {e}"
+            )
+            yield StreamEvent("error", {"message": str(e)})
+
+    async def _create_chat_stream(self, kwargs: Dict[str, Any]):
+        """
+        Create a streaming completion. Prefer stream_options.include_usage when
+        supported; fall back without it for Ollama / older gateways.
+        """
+        with_usage = {**kwargs, "stream_options": {"include_usage": True}}
+        try:
+            return await self.client.chat.completions.create(**with_usage)
+        except Exception as e:
+            msg = str(e).lower()
+            if "stream_options" in msg or "include_usage" in msg or "unexpected" in msg:
+                logger.debug("Retrying stream without stream_options: %s", e)
+                return await self.client.chat.completions.create(**kwargs)
+            # Some servers reject unknown fields with a generic 400 — retry once.
+            try:
+                return await self.client.chat.completions.create(**kwargs)
+            except Exception:
+                raise e
+
+    def _log_stream_usage(
+        self, label: str, usage: Any, reasoning_parts: List[str]
+    ) -> None:
+        details = getattr(usage, "completion_tokens_details", None) if usage else None
+        reasoning_tokens = (
+            getattr(details, "reasoning_tokens", None) if details else None
+        )
+        logger.info(
+            "LLM %s reasoning_tokens=%s has_reasoning_content=%s",
+            label,
+            reasoning_tokens,
+            bool("".join(reasoning_parts)),
+        )
 
     def _log_reasoning_usage(self, label: str, response: Any) -> None:
         usage = getattr(response, "usage", None)

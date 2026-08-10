@@ -1,4 +1,5 @@
 import logging
+from typing import AsyncIterator
 
 from server.utils.config import AppConfig
 from server.utils.constants import LLMProviderType
@@ -6,7 +7,9 @@ from server.llm.base import BaseLLMProvider
 from server.llm.history_manager import HistoryManager
 from server.llm.prompt_loader import PromptLoader
 from server.llm.providers.openai_provider import OpenAIProvider
+from server.llm.stream_events import StreamEvent
 from server.tools.registry import Tools
+from server.tools.source_registry import render_citations
 from server.utils.tracing import (
     OI_INPUT_VALUE,
     OI_SPAN_KIND,
@@ -50,25 +53,70 @@ class LLMManager:
             span.set_attribute(OI_INPUT_VALUE, user_text)
             span.set_attribute("user_text", user_text[:200])
 
-            prompt = self.prompt_manager.get_system_prompt()
-            history = self.history_manager.get_history()
-            logger.debug(prompt)
-            logger.debug(history)
-
             try:
-                text = await self.model.generate_response(
-                    user_text=user_text,
-                    prompt=prompt,
-                    history=history,
-                    tools=self.tools.get_openai_tools(),
-                    tool_map=self.tools.get_tool_map(),
-                )
-                self.history_manager.add_entry(user_text, text)
+                text = ""
+                async for event in self.generate_response_stream(user_text):
+                    if event.type == "done":
+                        text = event.data.get("final_content") or text
+                    elif event.type == "error":
+                        msg = event.data.get("message", "unknown")
+                        set_span_error(span, msg)
+                        return f"Ошибка: {msg}"
                 set_span_ok(span, text)
                 return text
             except Exception as e:
                 set_span_error(span, str(e))
                 raise
+
+    async def generate_response_stream(
+        self, user_text: str
+    ) -> AsyncIterator[StreamEvent]:
+        """
+        Stream assistant events. History is updated only after a successful done
+        with non-empty final_content (not on abort/error).
+        """
+        with tracer.start_as_current_span("generate_response_stream") as span:
+            span.set_attribute(OI_SPAN_KIND, OISpanKind.CHAIN)
+            span.set_attribute(OI_INPUT_VALUE, user_text)
+            span.set_attribute("user_text", user_text[:200])
+
+            prompt = self.prompt_manager.get_system_prompt()
+            history = self.history_manager.get_history()
+            logger.debug(prompt)
+            logger.debug(history)
+
+            final_content = ""
+            try:
+                async for event in self.model.generate_response_stream(
+                    user_text=user_text,
+                    prompt=prompt,
+                    history=history,
+                    tools=self.tools.get_openai_tools(),
+                    tool_map=self.tools.get_tool_map(),
+                ):
+                    if event.type == "done":
+                        final_content = (
+                            event.data.get("final_content") or final_content
+                        )
+                        # History keeps raw (source:N); user/SSE get [n] + ### Источники
+                        self.history_manager.add_entry(user_text, final_content)
+                        display = render_citations(
+                            final_content, self.tools.source_registry
+                        )
+                        event = StreamEvent(
+                            "done",
+                            {
+                                **event.data,
+                                "final_content": display,
+                            },
+                        )
+                        set_span_ok(span, display)
+                    elif event.type == "error":
+                        set_span_error(span, event.data.get("message", "error"))
+                    yield event
+            except Exception as e:
+                set_span_error(span, str(e))
+                yield StreamEvent("error", {"message": str(e)})
 
     def clear_history(self) -> None:
         """Очищает историю диалога и контекст запросов к БД."""

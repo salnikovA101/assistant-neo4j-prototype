@@ -327,44 +327,349 @@ async function sendText() {
     addMessage('user', text);
     textInput.value = '';
     setUIState('processing');
-    showThinking();
 
     // Перед отправкой нового запроса прерываем предыдущее воспроизведение
     stopPlayback();
     currentAbortController = new AbortController();
 
     try {
-        const response = await fetch('/process_text', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text }),
-            signal: currentAbortController.signal
-        });
-
-        removeThinking();
-
-        if (!response.ok) {
-            let errMsg = 'Ошибка сервера';
-            try {
-                const errData = await response.json();
-                errMsg = errData.error || errMsg;
-            } catch (_) {}
-            addMessage('system', `⚠️ ${errMsg}`);
-            setUIState('idle');
-            return;
-        }
-
-        await consumeProcessTextResponse(response);
+        await consumeProcessTextStream(text, currentAbortController.signal);
     } catch (err) {
         if (err.name === 'AbortError') {
             console.log('Fetch aborted.');
             return;
         }
         console.error('Send text error:', err);
-        removeThinking();
         addMessage('system', '⚠️ Ошибка соединения с сервером');
         setUIState('idle');
     }
+}
+
+/**
+ * SSE: thinking / tool_call / tool_result / content / done / error
+ */
+async function consumeProcessTextStream(text, signal) {
+    const myController = currentAbortController;
+    const response = await fetch('/process_text_stream', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Accept: 'text/event-stream',
+        },
+        body: JSON.stringify({ text }),
+        signal,
+    });
+
+    if (!response.ok) {
+        let errMsg = 'Ошибка сервера';
+        try {
+            const errData = await response.json();
+            errMsg = errData.error || errMsg;
+        } catch (_) {}
+        addMessage('system', `⚠️ ${errMsg}`);
+        setUIState('idle');
+        return;
+    }
+
+    const shell = createAssistantStreamShell();
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const scheduleMarkdown = throttle(() => {
+        shell.answerEl.innerHTML = renderMarkdown(shell.answerText);
+        scrollChatIfPinned();
+    }, 50);
+
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            let sep;
+            while ((sep = buffer.indexOf('\n\n')) !== -1) {
+                const rawEvent = buffer.slice(0, sep);
+                buffer = buffer.slice(sep + 2);
+                const parsed = parseSseEvent(rawEvent);
+                if (!parsed) continue;
+
+                const { event, data } = parsed;
+
+                if (event === 'thinking') {
+                    const delta = data.delta || '';
+                    if (!delta) continue;
+                    ensureProcessTrace(shell);
+                    ensureThinkingBlock(shell);
+                    shell.thinkingText += delta;
+                    shell.thinkingBody.textContent = shell.thinkingText;
+                    shell.thinkingBody.scrollTop = shell.thinkingBody.scrollHeight;
+                    if (!shell.answerStarted) {
+                        setProcessTraceLabel(shell, 'Working…');
+                    }
+                } else if (event === 'tool_call') {
+                    ensureProcessTrace(shell);
+                    beginToolStep(shell);
+                    upsertToolCard(shell, data, 'running');
+                    if (!shell.answerStarted) {
+                        setProcessTraceLabel(shell, 'Working…');
+                    }
+                } else if (event === 'tool_result') {
+                    ensureProcessTrace(shell);
+                    upsertToolCard(
+                        shell,
+                        data,
+                        data.ok === false ? 'error' : 'done'
+                    );
+                } else if (event === 'content') {
+                    const delta = data.delta || '';
+                    if (!delta) continue;
+                    collapseProcessTraceForAnswer(shell);
+                    shell.answerText += delta;
+                    shell.answerEl.classList.add('streaming');
+                    scheduleMarkdown();
+                } else if (event === 'done') {
+                    shell.answerEl.classList.remove('streaming');
+                    if (shell.processTrace && !shell.answerStarted) {
+                        // No content streamed (e.g. empty) — still collapse with timer.
+                        collapseProcessTraceForAnswer(shell);
+                    } else if (shell.processTrace && shell.answerStarted) {
+                        // Refresh elapsed at end.
+                        const secs = Math.max(
+                            1,
+                            Math.round((Date.now() - shell.startedAt) / 1000)
+                        );
+                        setProcessTraceLabel(shell, `Worked for ${secs}s`);
+                    }
+                    if (data.final_content != null && data.final_content !== '') {
+                        shell.answerText = data.final_content;
+                    }
+                    shell.answerEl.innerHTML = renderMarkdown(shell.answerText);
+                    addCopyButton(shell.contentWrapper, shell.answerText);
+                    // LEGACY: graph button disabled — ask_subgraph path has no Cypher viz yet.
+                    scrollChatIfPinned();
+                } else if (event === 'error') {
+                    shell.answerEl.classList.remove('streaming');
+                    if (shell.processTrace) {
+                        collapseProcessTraceForAnswer(shell);
+                    }
+                    addMessage('system', `⚠️ ${data.message || 'Ошибка стрима'}`);
+                }
+            }
+        }
+    } finally {
+        shell.answerEl.classList.remove('streaming');
+        if (currentAbortController === myController) {
+            setUIState('idle');
+            currentAbortController = null;
+        }
+    }
+}
+
+function parseSseEvent(raw) {
+    let event = 'message';
+    const dataLines = [];
+    for (const line of raw.split('\n')) {
+        if (line.startsWith('event:')) {
+            event = line.slice(6).trim();
+        } else if (line.startsWith('data:')) {
+            dataLines.push(line.slice(5).trim());
+        }
+    }
+    if (!dataLines.length) return null;
+    try {
+        return { event, data: JSON.parse(dataLines.join('\n')) };
+    } catch (_) {
+        return { event, data: { delta: dataLines.join('\n') } };
+    }
+}
+
+/** Scroll chat only if the user is already near the bottom (don't yank while reading). */
+function scrollChatIfPinned() {
+    const el = chatMessages;
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (dist < 120) {
+        el.scrollTop = el.scrollHeight;
+    }
+}
+
+function createAssistantStreamShell() {
+    const welcome = chatMessages.querySelector('.welcome-message');
+    if (welcome) welcome.remove();
+
+    const div = document.createElement('div');
+    div.className = 'message assistant';
+    div.innerHTML = `
+        <div class="assistant-avatar">🧬</div>
+        <div class="message-content-wrapper">
+            <div class="message-header">
+                <span class="message-label">Ассистент</span>
+            </div>
+            <div class="message-text markdown-body"></div>
+        </div>`;
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    const contentWrapper = div.querySelector('.message-content-wrapper');
+    return {
+        root: div,
+        contentWrapper,
+        answerEl: contentWrapper.querySelector('.message-text'),
+        answerText: '',
+        thinkingText: '',
+        thinkingDetails: null,
+        thinkingBody: null,
+        thinkingCount: 0,
+        needNewThinking: true,
+        processTrace: null,
+        processBody: null,
+        processLabel: null,
+        toolCards: {},
+        startedAt: Date.now(),
+        answerStarted: false,
+    };
+}
+
+function ensureProcessTrace(shell) {
+    if (shell.processTrace) return;
+    const details = document.createElement('details');
+    details.className = 'process-trace';
+    // Collapsed by default; never force-open on new steps.
+    details.open = false;
+    details.innerHTML = `
+        <summary class="process-trace-summary">
+            <span class="chevron"></span>
+            <span class="process-trace-label">Working…</span>
+        </summary>
+        <div class="process-trace-body"></div>`;
+    shell.contentWrapper.insertBefore(details, shell.answerEl);
+    shell.processTrace = details;
+    shell.processBody = details.querySelector('.process-trace-body');
+    shell.processLabel = details.querySelector('.process-trace-label');
+}
+
+function setProcessTraceLabel(shell, text) {
+    if (shell.processLabel) {
+        shell.processLabel.textContent = text;
+    }
+}
+
+function collapseProcessTraceForAnswer(shell) {
+    if (!shell.processTrace || shell.answerStarted) return;
+    shell.answerStarted = true;
+    const secs = Math.max(1, Math.round((Date.now() - shell.startedAt) / 1000));
+    setProcessTraceLabel(shell, `Worked for ${secs}s`);
+    // Stay collapsed (or keep whatever the user chose).
+    shell.processTrace.open = false;
+}
+
+/** After a tool step, the next reasoning goes into a fresh Thinking block. */
+function beginToolStep(shell) {
+    if (shell.thinkingDetails) {
+        shell.thinkingDetails.open = false;
+    }
+    shell.needNewThinking = true;
+    shell.thinkingDetails = null;
+    shell.thinkingBody = null;
+    shell.thinkingText = '';
+}
+
+function ensureThinkingBlock(shell) {
+    ensureProcessTrace(shell);
+    if (!shell.needNewThinking && shell.thinkingDetails) return;
+
+    shell.thinkingCount += 1;
+    const details = document.createElement('details');
+    details.className = 'stream-thinking';
+    details.open = true;
+    const label =
+        shell.thinkingCount === 1 ? 'Thinking' : `Thinking ${shell.thinkingCount}`;
+    details.innerHTML = `
+        <summary><span class="chevron"></span><span>${label}</span></summary>
+        <pre class="stream-thinking-body"></pre>`;
+    shell.processBody.appendChild(details);
+    shell.thinkingDetails = details;
+    shell.thinkingBody = details.querySelector('.stream-thinking-body');
+    shell.thinkingText = '';
+    shell.needNewThinking = false;
+}
+
+function upsertToolCard(shell, data, status) {
+    ensureProcessTrace(shell);
+    const id = data.id || data.name || 'tool';
+
+    let card = shell.toolCards[id];
+    if (!card) {
+        // Close current thinking; next think after this tool is a new block.
+        beginToolStep(shell);
+        card = document.createElement('details');
+        card.className = 'tool-card';
+        card.open = true; // expand while running
+        card.dataset.toolId = id;
+        card.innerHTML = `
+            <summary class="tool-card-header">
+                <span class="tool-card-summary-left">
+                    <span class="chevron"></span>
+                    <span class="tool-card-name"></span>
+                </span>
+                <span class="tool-card-status"></span>
+            </summary>
+            <div class="tool-card-body">
+                <pre class="tool-card-args"></pre>
+                <pre class="tool-card-result" style="display:none"></pre>
+            </div>`;
+        shell.processBody.appendChild(card);
+        shell.toolCards[id] = card;
+    }
+
+    card.querySelector('.tool-card-name').textContent = data.name || id;
+    const statusEl = card.querySelector('.tool-card-status');
+    statusEl.className = `tool-card-status ${status}`;
+    statusEl.textContent =
+        status === 'running' ? 'running' : status === 'error' ? 'error' : 'done';
+
+    if (data.arguments !== undefined) {
+        const argsEl = card.querySelector('.tool-card-args');
+        argsEl.textContent =
+            typeof data.arguments === 'string'
+                ? data.arguments
+                : JSON.stringify(data.arguments, null, 2);
+    }
+
+    const resultText = data.result != null ? data.result : data.preview;
+    if (resultText !== undefined && resultText !== null) {
+        const resultEl = card.querySelector('.tool-card-result');
+        resultEl.style.display = 'block';
+        resultEl.textContent = resultText;
+        resultEl.scrollTop = 0;
+    }
+
+    // Collapse when finished so the trace stays compact; user can re-open.
+    if (status === 'done' || status === 'error') {
+        card.open = false;
+    }
+}
+
+function throttle(fn, ms) {
+    let last = 0;
+    let timer = null;
+    return () => {
+        const now = Date.now();
+        const run = () => {
+            last = Date.now();
+            timer = null;
+            fn();
+        };
+        if (now - last >= ms) {
+            if (timer) {
+                clearTimeout(timer);
+                timer = null;
+            }
+            run();
+        } else if (!timer) {
+            timer = setTimeout(run, ms - (now - last));
+        }
+    };
 }
 
 /**
@@ -701,21 +1006,11 @@ async function attachGraphToMessage(contentWrapper) {
 // ===== Graph Button (On-Demand) =====
 
 /**
- * Добавляет кнопку «Показать граф» к сообщению ассистента.
- * Граф загружается только по нажатию.
+ * LEGACY: «Показать граф» — не используется с ask_subgraph (нет Cypher для viz).
+ * Оставлен no-op, чтобы не показывать сломанную кнопку.
  */
-function addGraphButton(contentWrapper) {
-    const btn = document.createElement('button');
-    btn.className = 'show-graph-btn';
-    btn.innerHTML = '📊 Показать граф';
-    btn.onclick = async () => {
-        btn.disabled = true;
-        btn.classList.add('loading');
-        btn.innerHTML = '<div class="spinner-small"></div> Загрузка графа...';
-        await attachGraphToMessage(contentWrapper);
-        btn.remove();
-    };
-    contentWrapper.appendChild(btn);
+function addGraphButton(_contentWrapper) {
+    return;
 }
 
 // ===== UI Helpers =====
@@ -796,7 +1091,7 @@ function addMessage(role, text, hasGraph = false) {
         const contentWrapper = div.querySelector('.message-content-wrapper');
         addCopyButton(contentWrapper, text);
 
-        // Добавляем кнопку «Показать граф» (загрузка только по клику)
+        // LEGACY: graph button disabled (addGraphButton is a no-op).
         if (hasGraph) {
             addGraphButton(contentWrapper);
         }

@@ -4,6 +4,7 @@ from typing import Any, Callable, Dict, List
 from server.utils.config import AppConfig
 from server.tools.graph_filter import GraphFilterAgent
 from server.tools.graph_qa import GraphQA
+from server.tools.source_registry import SourceRegistry
 from server.tools.subgraph_search import SubgraphSearchAgent
 from server.utils.tracing import (
     OI_INPUT_VALUE,
@@ -50,7 +51,12 @@ class Tools:
         self.graph_qa = GraphQA(
             config.neo4j, llm_profile, config.llm.history_len, config.run_id, config.limit
         )
-        self.subgraph_search = SubgraphSearchAgent(tool_llm_profile, config.run_id)
+        self.source_registry = SourceRegistry()
+        self.subgraph_search = SubgraphSearchAgent(
+            tool_llm_profile,
+            config.run_id,
+            source_registry=self.source_registry,
+        )
         self.graph_filter = GraphFilterAgent(
             config.neo4j, llm_profile, config.run_id, config.limit
         )
@@ -93,9 +99,9 @@ class Tools:
 
         Returns UNIT blocks: SPINE = main directed edge path; FANS @Hub = extra
         facts about a hub node (fan leaves are NOT linked to each other).
-        Each edge: Label: A -[REL: "evidence"]-> Label: B (source_file.pdf; conf=0-1).
-        Answer only from these chains; cite [n] and end with ### Источники;
-        state remaining GAPS honestly.
+        Each edge: Label: A -[REL: "evidence"]-> Label: B (source:N; conf=0-1).
+        Answer only from these chains; cite as (source:N); do NOT write [n] or
+        ### Источники (server rewrites citations for the user). State GAPS honestly.
 
         Args:
             subquestions: 1–6 English declarative statements (light HyDE ok; no '?').
@@ -129,8 +135,9 @@ class Tools:
                 raise
 
     def clear_history(self) -> None:
-        """Очищает историю успешных Cypher-запросов."""
+        """Очищает историю успешных Cypher-запросов и сессионный source-реестр."""
         self.graph_qa.successful_queries.clear()
+        self.source_registry.clear()
 
     def get_tools_list(self) -> List[Callable]:
         """
@@ -164,12 +171,13 @@ class Tools:
                         "remain after call 1: 1–3 narrow statements naming the missing "
                         "information (need not re-decompose the original question). "
                         "RETURNS: UNIT blocks. SPINE = main directed path of edges "
-                        "Label: A -[REL: \"verbatim evidence\"]-> Label: B (source_file.pdf; conf=0-1). "
+                        "Label: A -[REL: \"verbatim evidence\"]-> Label: B (source:N; conf=0-1). "
                         "FANS @Hub = extra facts about a hub node; fan leaves are NOT linked "
                         "to each other — never infer Leaf1→Leaf2 from a shared hub. "
                         "Answer ONLY from these chains: never transfer properties between "
-                        "entities, cite every fact as [n] and end with ### Источники listing "
-                        "[n] source_file.pdf, then honestly list GAPS (what the DB did not cover). "
+                        "entities; cite every fact as (source:N) or (source:1; source:2) "
+                        "copying ids from edges. Do NOT write [n], PDF names, or ### Источники "
+                        "(server adds those for the user). List GAPS honestly. "
                         "If the user asks for a confidence score, derive it from the per-edge "
                         "conf of the edges behind the claim and state the method; never invent it."
                     ),

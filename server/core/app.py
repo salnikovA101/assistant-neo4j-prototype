@@ -171,6 +171,35 @@ async def process_text(request: Request):
     )
 
 
+@app.post("/process_text_stream")
+async def process_text_stream(request: Request):
+    """
+    SSE stream of assistant events: thinking, tool_call, tool_result, content, done, error.
+
+    Request body: {"text": "вопрос пользователя"}
+    """
+    pipeline: ServerPipeline = request.app.state.pipeline
+    data = await request.json()
+    text = data.get("text", "").strip()
+
+    if not text:
+        return JSONResponse({"error": "Пустой текст"}, status_code=400)
+
+    async def event_generator():
+        async for event in pipeline.process_text_stream(text, request):
+            yield event.to_sse()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.post("/process_text_test")
 async def process_text_test(request: Request):
     """

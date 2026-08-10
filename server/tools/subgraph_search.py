@@ -2,6 +2,11 @@ import logging
 from typing import Any, Sequence
 
 from server.core.db import get_driver
+from server.tools.source_registry import (
+    SourceRegistry,
+    collect_source_files,
+    remap_filenames_to_source_ids,
+)
 from server.utils.tracing import (
     OI_INPUT_VALUE,
     OI_SPAN_KIND,
@@ -22,14 +27,18 @@ def _normalize_effort(effort: str | None) -> str:
     return "medium"
 
 
-def _format_accepted_chains(accepted: Sequence[dict[str, Any]]) -> str:
+def _format_accepted_chains(
+    accepted: Sequence[dict[str, Any]],
+    registry: SourceRegistry | None = None,
+) -> str:
     lines = [
         "### Retrieved evidence chains",
         "",
-        "Edge format: Label: A -[REL: \"verbatim evidence\"]-> Label: B (source_file.pdf; conf=0-1). "
+        "Edge format: Label: A -[REL: \"verbatim evidence\"]-> Label: B (source:N; conf=0-1). "
         "SPINE = main path (read top-down); FANS @Hub = extra hub facts, leaves NOT linked "
-        "to each other. Cite claims as [1], [2], ... mapped to ### Источники ([n] source_file); "
-        "never cite UNIT indices as bibliography. Answer only from these chains; list GAPS honestly.",
+        "to each other. Cite claims as (source:N) or (source:1; source:2) — copy ids from "
+        "edges; never invent ids; never write [n] or ### Источники (server adds those). "
+        "Never cite UNIT indices as bibliography. Answer only from these chains; list GAPS honestly.",
         "",
     ]
     n = 0
@@ -37,6 +46,10 @@ def _format_accepted_chains(accepted: Sequence[dict[str, Any]]) -> str:
         text = (item.get("text") or "").strip()
         if not text:
             continue
+        if registry is not None:
+            for sf in collect_source_files([item]):
+                registry.register(sf)
+            text = remap_filenames_to_source_ids(text, registry)
         n += 1
         # Renumber UNIT label for citation-friendly display
         if text.startswith("UNIT "):
@@ -66,9 +79,15 @@ class SubgraphSearchAgent:
     Decomposition and effort selection are done by the assistant LLM.
     """
 
-    def __init__(self, llm_profile=None, run_id: str = ""):
+    def __init__(
+        self,
+        llm_profile=None,
+        run_id: str = "",
+        source_registry: SourceRegistry | None = None,
+    ):
         self.run_id = run_id
         self.llm_profile = llm_profile
+        self.source_registry = source_registry if source_registry is not None else SourceRegistry()
         logger.info("SubgraphSearchAgent initialized run_id=%r", self.run_id)
 
     async def query(
@@ -104,7 +123,7 @@ class SubgraphSearchAgent:
                     effort=effort_n,
                 )
                 accepted = result.get("accepted") or []
-                res_str = _format_accepted_chains(accepted)
+                res_str = _format_accepted_chains(accepted, self.source_registry)
                 set_span_ok(span, res_str)
                 return res_str
             except Exception as e:
