@@ -1,5 +1,7 @@
 import logging
+from typing import Any, Sequence
 
+from server.core.db import get_driver
 from server.utils.tracing import (
     OI_INPUT_VALUE,
     OI_SPAN_KIND,
@@ -12,81 +14,101 @@ from server.utils.tracing import (
 logger = logging.getLogger(__name__)
 tracer = get_tracer(__name__)
 
-# How many ranked paths to expose to the LLM agent
-DEFAULT_TOP_K = 50
+
+def _normalize_effort(effort: str | None) -> str:
+    e = (effort or "medium").strip().lower()
+    if e in {"low", "medium", "high"}:
+        return e
+    return "medium"
 
 
-def _prize_key(path: dict) -> float:
-    prize = path.get("prize_sum")
-    if prize is not None:
-        try:
-            return float(prize)
-        except (TypeError, ValueError):
-            pass
-    try:
-        return -float(path.get("totalCost", 0.0) or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
+def _format_accepted_chains(accepted: Sequence[dict[str, Any]]) -> str:
+    lines = [
+        "### Retrieved evidence chains",
+        "",
+        "Edge format: Label: A -[REL: \"verbatim evidence\"]-> Label: B (source_file.pdf; conf=0-1). "
+        "SPINE = main path (read top-down); FANS @Hub = extra hub facts, leaves NOT linked "
+        "to each other. Cite claims as [1], [2], ... mapped to ### Источники ([n] source_file); "
+        "never cite UNIT indices as bibliography. Answer only from these chains; list GAPS honestly.",
+        "",
+    ]
+    n = 0
+    for item in accepted:
+        text = (item.get("text") or "").strip()
+        if not text:
+            continue
+        n += 1
+        # Renumber UNIT label for citation-friendly display
+        if text.startswith("UNIT "):
+            rest = text.split("\n", 1)
+            body = rest[1] if len(rest) > 1 else ""
+            score_part = ""
+            head = rest[0]
+            if "(score=" in head:
+                score_part = "  " + head[head.index("(score=") :]
+            text = f"UNIT [{n}]{score_part}\n{body}".rstrip()
+        else:
+            text = f"UNIT [{n}]\n{text}"
+        lines.append(text)
+        lines.append("")
+
+    while lines and lines[-1] == "":
+        lines.pop()
+
+    if n == 0:
+        return "No relevant chains found in the graph for these subquestions."
+    return "\n".join(lines)
 
 
 class SubgraphSearchAgent:
     """
-    Агент для поиска подграфов.
-    Вызывает V4 pipeline (stages 1–6) и возвращает сериализованные пути.
+    Runs the graph retrieval pipeline and returns accepted evidence chains.
+    Decomposition and effort selection are done by the assistant LLM.
     """
 
-    def __init__(self, llm_profile, run_id: str, top_k: int = DEFAULT_TOP_K):
+    def __init__(self, llm_profile=None, run_id: str = ""):
         self.run_id = run_id
-        self.top_k = top_k
-        logger.info(f"SubgraphSearchAgent инициализирован с run_id='{self.run_id}'")
-        self.model = llm_profile.model
-        from server.algorithm.pipeline import create_default_pipeline
+        self.llm_profile = llm_profile
+        logger.info("SubgraphSearchAgent initialized run_id=%r", self.run_id)
 
-        self.pipeline = create_default_pipeline(llm_profile)
+    async def query(
+        self,
+        subquestions: list[str] | None = None,
+        effort: str = "medium",
+    ) -> str:
+        """Run pipeline for assistant-supplied subquestions + effort."""
+        sqs = [str(s).strip() for s in (subquestions or []) if str(s).strip()]
+        effort_n = _normalize_effort(effort)
 
-    async def query(self, question: str) -> str:
-        """Основной метод инструмента."""
         with tracer.start_as_current_span("subgraph_search_query") as span:
             span.set_attribute(OI_SPAN_KIND, OISpanKind.TOOL)
-            span.set_attribute(OI_INPUT_VALUE, question)
-            span.set_attribute("question", question)
+            span.set_attribute(OI_INPUT_VALUE, " | ".join(sqs)[:500])
+            span.set_attribute("effort", effort_n)
+            span.set_attribute("n_subquestions", len(sqs))
+
+            if not sqs:
+                err = "ask_subgraph requires a non-empty subquestions list."
+                set_span_error(span, err)
+                return err
 
             try:
-                paths = await self.pipeline.run(question=question, top_k=self.top_k)
-                paths = sorted(paths, key=_prize_key, reverse=True)
+                from server.algorithm.pipeline import run
 
-                if not paths:
-                    res_str = "No relevant information found in the graph for this query."
-                else:
-                    lines = [
-                        "### Retrieved graph paths",
-                        "",
-                        "Cite claims as [1], [2], ... mapped to ### Источники ([n] source_file). "
-                        "Do not cite [path N] indices.",
-                        "",
-                    ]
-                    for idx, path in enumerate(paths, 1):
-                        text = (path.get("serialized_text") or "").strip()
-                        if not text:
-                            continue
-                        lines.append(f"[path {idx}]")
-                        lines.append(text)
-                        lines.append("")
-
-                    # Drop trailing blank line for cleanliness
-                    while lines and lines[-1] == "":
-                        lines.pop()
-
-                    if len(lines) <= 4:
-                        res_str = "No relevant relationships found."
-                    else:
-                        res_str = "\n".join(lines)
-
+                driver = get_driver()
+                payload = [
+                    {"id": f"sq{i+1}", "text": text} for i, text in enumerate(sqs)
+                ]
+                result = await run(
+                    driver,
+                    subquestions=payload,
+                    effort=effort_n,
+                )
+                accepted = result.get("accepted") or []
+                res_str = _format_accepted_chains(accepted)
                 set_span_ok(span, res_str)
                 return res_str
-
             except Exception as e:
-                logger.error(f"Ошибка в SubgraphSearchAgent: {e}")
-                err_msg = f"Произошла ошибка при поиске подграфов: {e}"
+                logger.exception("SubgraphSearchAgent failed")
+                err_msg = f"Error in ask_subgraph: {e}"
                 set_span_error(span, err_msg)
                 return err_msg

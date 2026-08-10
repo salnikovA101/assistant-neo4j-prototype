@@ -8,6 +8,10 @@ services:
     env_file: .env
     environment:
       - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006
+      # Host Ettin CE (scripts/serve_ettin_reranker.py --host 0.0.0.0 --port 7997)
+      - RERANK_URL=http://host.docker.internal:7997
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./server/config.yaml:/app/server/config.yaml:ro
       - ./prompts:/app/prompts:ro

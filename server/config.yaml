@@ -6,7 +6,7 @@ limit: 30
 server:
   host: "0.0.0.0"
   port: 8000
-  llm_timeout: 300
+  llm_timeout: 3000
 
 stt:
   model: "base"
@@ -36,6 +36,15 @@ tts:
     model: "openai/gpt-4o-mini-tts-2025-12-15"
     voice: "alloy"
 
+# Graph retrieval embeddings (must match Neo4j vector index dimensions).
+# Algorithm knobs (L, effort K, rerank_url, …) live only in server/algorithm/params.py.
+graph_embeddings:
+  backend: "openrouter"
+  model: "nvidia/nemotron-3-embed-1b:free"
+  base_url: "https://openrouter.ai/api/v1"
+  max_client_batch_size: 32
+  max_input_chars: 8192
+
 llm:
   current_profile: "other"
   cypher_profile: "other"
@@ -48,12 +57,25 @@ llm:
       model: "gemini-3.1-flash-lite"
       temperature: 0.7
       max_output_tokens: 4096
-      max_turns: 5
+      max_turns: 2
     other:
       provider: "openai"
       # model: "google/gemini-3-flash-preview" # Нет размышления, время ответа ~10 сек
-      model: "z-ai/glm-5.2" # Есть размышление, время ответа ~1 мин
+      model: "qwen/qwen3.6-27b" # Есть размышление, время ответа ~1 мин
       temperature: 0.1
       max_output_tokens: 16384
-      max_turns: 5
+      max_turns: 2
       think: true
+      think_effort: "high"
+    lm_studio:
+      provider: "openai"
+      model: "google/gemma-4-12b-qat"
+      base_url: "http://host.docker.internal:1234/v1"
+      temperature: 0.1
+      max_output_tokens: 16384
+      max_turns: 2
+      think: true
+      # Gemma: без этого токена в system думает только до tool call, после — reasoning_tokens=0
+      think_token: "<|think|>"
+      # LM Studio Gemma accepts only on/off (not high/medium); 'on' avoids the fallback warning path
+      think_effort: "on"

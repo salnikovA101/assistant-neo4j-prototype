@@ -24,3 +24,8 @@ Thumbs.db
 
 other
 *.json
+docs/
+logs/
+scripts/
+reports/
+.env.ragas-testing

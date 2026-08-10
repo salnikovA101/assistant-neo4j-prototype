@@ -6,13 +6,24 @@ import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from server.utils.constants import LLMProviderType, TTSModes
+from server.utils.constants import EmbeddingBackend, LLMProviderType, TTSModes
 
 
 class Neo4jConfig(BaseModel):
     uri: str = "bolt://localhost:7687"
     user: str = "neo4j"
     password: str = "password123"
+
+
+class GraphEmbeddingsConfig(BaseModel):
+    """Embeddings for Neo4j vector search (must match index dimensions)."""
+
+    backend: EmbeddingBackend = EmbeddingBackend.OPENROUTER
+    model: str = "nvidia/nemotron-3-embed-1b:free"
+    base_url: str = "https://openrouter.ai/api/v1"
+    api_key: str = ""
+    max_client_batch_size: int = 32
+    max_input_chars: int = 8192
 
 
 class OpenAIProfile(BaseModel):
@@ -23,19 +34,25 @@ class OpenAIProfile(BaseModel):
     temperature: float = 0.7
     max_output_tokens: int = 4096
     context_length: int = 4096
-    max_turns: int = 5
+    max_turns: int = 2
     think: bool = False
+    # Gemma/LM Studio: inject into system message so thinking stays on after tool results.
+    # Empty for DeepSeek/OpenRouter (they use reasoning API params instead).
+    think_token: str = ""
+    # OpenRouter/DeepSeek/OpenAI effort when think=true: low|medium|high|max
+    think_effort: str = "high"
 
 
 class LlmProfiles(BaseModel):
     gemini: OpenAIProfile = Field(default_factory=OpenAIProfile)
     other: OpenAIProfile = Field(default_factory=OpenAIProfile)
+    lm_studio: OpenAIProfile = Field(default_factory=OpenAIProfile)
 
 
 class LlmConfig(BaseModel):
     current_profile: str = "other"
     cypher_profile: str = "other"
-    # Used by V4 Stage1 / ask_subgraph nested LLM calls; defaults to cypher_profile if unset in yaml
+    # Used by S6 unit judge (and tools that need a nested LLM)
     tool_profile: str = "other"
     history_len: int = 6
     prompt_folder: str = "prompts"
@@ -91,7 +108,10 @@ class ServerConfig(BaseModel):
 
 class AppConfig(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", env_nested_delimiter="__"
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_nested_delimiter="__",
+        extra="ignore",
     )
 
     debug_mode: bool = False
@@ -101,6 +121,7 @@ class AppConfig(BaseSettings):
     tts: TtsConfig = Field(default_factory=TtsConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     neo4j: Neo4jConfig = Field(default_factory=Neo4jConfig)
+    graph_embeddings: GraphEmbeddingsConfig = Field(default_factory=GraphEmbeddingsConfig)
     run_id: str = ""
     limit: int = 50
 

@@ -112,7 +112,7 @@ class ServerPipeline:
                 self._last_new_queries = list(sq)[sq_len_before:sq_len_after]
                 self._last_request_has_graph = len(self._last_new_queries) > 0
                 self._last_answer = answer
-                display_answer = answer.split("GRAPH_NODES:")[0].strip()
+                display_answer = answer.strip()
                 logger.info(f"LLM: {display_answer}")
                 set_span_ok(span, display_answer)
                 return text, display_answer
@@ -147,12 +147,8 @@ class ServerPipeline:
                 self._last_new_queries = list(sq)[sq_len_before:sq_len_after]
                 self._last_request_has_graph = len(self._last_new_queries) > 0
                 self._last_answer = answer
-                result = answer.split("GRAPH_NODES:")
-                display_answer = result[0].strip()
-                nodes = None
-                if len(result) > 1:
-                    nodes = result[1].strip()
-                logger.info(f"LLM: {display_answer}\n{nodes}")
+                display_answer = answer.strip()
+                logger.info(f"LLM: {display_answer}")
                 set_span_ok(span, display_answer)
                 return display_answer
             except Exception as e:
