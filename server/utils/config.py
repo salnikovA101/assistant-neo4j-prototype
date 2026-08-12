@@ -47,6 +47,7 @@ class LlmProfiles(BaseModel):
     gemini: OpenAIProfile = Field(default_factory=OpenAIProfile)
     other: OpenAIProfile = Field(default_factory=OpenAIProfile)
     lm_studio: OpenAIProfile = Field(default_factory=OpenAIProfile)
+    ollama: OpenAIProfile = Field(default_factory=OpenAIProfile)
 
 
 class LlmConfig(BaseModel):

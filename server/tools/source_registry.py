@@ -39,23 +39,77 @@ class SourceRegistry:
         return list(self._file_to_id.keys())
 
 
+# (source:1), (source:1; source:3), (source 1), mixed whitespace
+_SOURCE_GROUP_RE = re.compile(
+    r"\(\s*source\s*:?\s*\d+(?:\s*;\s*source\s*:?\s*\d+)*\s*\)",
+    flags=re.IGNORECASE,
+)
+_SOURCE_ID_RE = re.compile(r"source\s*:?\s*(\d+)", flags=re.IGNORECASE)
+
+_ISTOCHNIKI_SECTION_RE = re.compile(
+    r"(?ms)^[ \t]*###[ \t]*Источники[ \t]*\n.*?(?=^[ \t]*###[ \t]+\S|\Z)"
+)
+
+
 def collect_source_files(accepted: Iterable[dict]) -> list[str]:
     """Unique source_file values from accepted chain dicts (edges + fans)."""
     seen: set[str] = set()
     out: list[str] = []
     for item in accepted:
-        for edge in item.get("edges") or []:
-            sf = (edge.get("source_file") or "").strip()
-            if sf and sf not in seen:
+        for sf in _iter_chain_source_files(item):
+            if sf not in seen:
                 seen.add(sf)
                 out.append(sf)
-        fans = item.get("fans") or {}
-        for flist in fans.values():
-            for edge in flist or []:
-                sf = (edge.get("source_file") or "").strip()
-                if sf and sf not in seen:
-                    seen.add(sf)
-                    out.append(sf)
+    return out
+
+
+def _iter_chain_source_files(chain: dict) -> Iterable[str]:
+    for edge in chain.get("edges") or []:
+        if not isinstance(edge, dict):
+            continue
+        sf = (edge.get("source_file") or "").strip()
+        if sf:
+            yield sf
+    fans = chain.get("fans") or {}
+    for flist in fans.values():
+        for edge in flist or []:
+            if not isinstance(edge, dict):
+                continue
+            sf = (edge.get("source_file") or "").strip()
+            if sf:
+                yield sf
+
+
+def extract_cited_source_files(text: str, registry: SourceRegistry) -> list[str]:
+    """
+    Unique source_file values cited as (source:N) in the raw answer,
+    in first-seen order. Unknown session ids are ignored.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw_id in _SOURCE_ID_RE.findall(text or ""):
+        fname = registry.resolve(int(raw_id))
+        if not fname or fname in seen:
+            continue
+        seen.add(fname)
+        out.append(fname)
+    return out
+
+
+def filter_chains_by_source_files(
+    chains: Iterable[dict],
+    cited_files: Iterable[str],
+) -> list[dict]:
+    """Keep chains that share at least one source_file with cited_files."""
+    wanted = {(f or "").strip() for f in cited_files if (f or "").strip()}
+    if not wanted:
+        return []
+    out: list[dict] = []
+    for chain in chains:
+        if not isinstance(chain, dict):
+            continue
+        if any(sf in wanted for sf in _iter_chain_source_files(chain)):
+            out.append(chain)
     return out
 
 
@@ -72,18 +126,6 @@ def remap_filenames_to_source_ids(text: str, registry: SourceRegistry) -> str:
             continue
         out = out.replace(fname, f"source:{sid}")
     return out
-
-
-# (source:1), (source:1; source:3), (source 1), mixed whitespace
-_SOURCE_GROUP_RE = re.compile(
-    r"\(\s*source\s*:?\s*\d+(?:\s*;\s*source\s*:?\s*\d+)*\s*\)",
-    flags=re.IGNORECASE,
-)
-_SOURCE_ID_RE = re.compile(r"source\s*:?\s*(\d+)", flags=re.IGNORECASE)
-
-_ISTOCHNIKI_SECTION_RE = re.compile(
-    r"(?ms)^[ \t]*###[ \t]*Источники[ \t]*\n.*?(?=^[ \t]*###[ \t]+\S|\Z)"
-)
 
 
 def render_citations(text: str, registry: SourceRegistry) -> str:

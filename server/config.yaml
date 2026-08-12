@@ -46,9 +46,9 @@ graph_embeddings:
   max_input_chars: 8192
 
 llm:
-  current_profile: "other"
+  current_profile: "ollama"
   cypher_profile: "other"
-  tool_profile: "other"
+  tool_profile: "ollama"
   history_len: 30
   prompt_folder: "prompts"
   profiles:
@@ -60,7 +60,7 @@ llm:
       max_turns: 2
     other:
       provider: "openai"
-      model: "qwen/qwen3.6-27b" #Локально
+      model: "z-ai/glm-5.2" #Локально
       # model: "deepseek/deepseek-v4-flash-0731"
       temperature: 0.1
       max_output_tokens: 16384
@@ -79,3 +79,12 @@ llm:
       think_token: "<|think|>"
       # LM Studio Gemma accepts only on/off (not high/medium); 'on' avoids the fallback warning path
       think_effort: "on"
+    ollama:
+      provider: "openai"
+      model: "gemma4:31b-cloud"
+      base_url: "https://ollama.com/v1"
+      temperature: 0.1
+      max_output_tokens: 16384
+      max_turns: 2
+      think: true
+      think_effort: "high"

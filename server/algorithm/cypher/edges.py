@@ -47,6 +47,29 @@ RETURN elementId(r) AS rid,
 """
 
 
+# Read-only hydration for UI graph; intentionally selects no embedding fields.
+FETCH_VIZ_BY_EDGE_IDS = f"""
+UNWIND $ids AS rid
+MATCH (a)-[r]->(b)
+WHERE elementId(r) = rid
+RETURN elementId(r) AS id,
+       type(r) AS type,
+       elementId(a) AS from_id,
+       elementId(b) AS to_id,
+       coalesce(a.name, '') AS from_name,
+       coalesce(b.name, '') AS to_name,
+       coalesce([l IN labels(a) WHERE l IN {_PRIMARY_LABEL_CYPHER}][0], '') AS from_label,
+       coalesce([l IN labels(b) WHERE l IN {_PRIMARY_LABEL_CYPHER}][0], '') AS to_label,
+       a.leiden_community AS from_community,
+       b.leiden_community AS to_community,
+       coalesce(r.evidence, '') AS evidence,
+       coalesce(r.chunk_id, '') AS chunk_id,
+       coalesce(r.source_file, '') AS source_file,
+       coalesce(r.confidence, 1.0) AS confidence,
+       coalesce(r.run_id, '') AS run_id
+"""
+
+
 # Induced bridges on endpoints, ranked by cosine(evidence_emb, $sqVec), LIMIT in DB.
 INDUCED_BRIDGES_BY_SIM = f"""
 UNWIND $node_ids AS nid
@@ -120,6 +143,25 @@ async def fetch_edge_evidence(driver: AsyncDriver, element_ids: Iterable[str]) -
     out: dict[str, dict[str, Any]] = {}
     for p in parts:
         out.update(p)
+    return out
+
+
+async def fetch_viz_edges(driver: AsyncDriver, element_ids: Iterable[str]) -> list[dict[str, Any]]:
+    ids = list({i for i in element_ids if i})
+    if not ids:
+        return []
+    batch_size = 400
+    chunks = [ids[i : i + batch_size] for i in range(0, len(ids), batch_size)]
+
+    async def _one(chunk: list[str]) -> list[dict[str, Any]]:
+        async with driver.session() as session:
+            result = await session.run(FETCH_VIZ_BY_EDGE_IDS, ids=chunk)
+            return [dict(r) async for r in result]
+
+    parts = await asyncio.gather(*[_one(c) for c in chunks])
+    out: list[dict[str, Any]] = []
+    for p in parts:
+        out.extend(p)
     return out
 
 

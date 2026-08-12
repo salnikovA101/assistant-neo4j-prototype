@@ -104,3 +104,21 @@ def test_preview_truncates():
     assert preview_tool_result("abc", limit=10) == "abc"
     assert preview_tool_result("x" * 20, limit=10).endswith("…")
     assert len(preview_tool_result("x" * 20, limit=10)) == 10
+
+
+def test_graph_highlight_sse_serializes():
+    from server.llm.stream_events import StreamEvent
+
+    event = StreamEvent(
+        "graph_highlight",
+        {
+            "graph_run_id": "gr_abc",
+            "tokens": [{"id": "t1", "text": "kefir", "color": "#f59e0b"}],
+            "note": "Смотри рёбра про kefir",
+        },
+    )
+    sse = event.to_sse()
+    assert sse.startswith("event: graph_highlight\n")
+    assert '"graph_run_id": "gr_abc"' in sse
+    assert '"text": "kefir"' in sse
+    assert sse.endswith("\n\n")

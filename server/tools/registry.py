@@ -2,7 +2,6 @@ import logging
 from typing import Any, Callable, Dict, List
 
 from server.utils.config import AppConfig
-from server.tools.graph_filter import GraphFilterAgent
 from server.tools.graph_qa import GraphQA
 from server.tools.source_registry import SourceRegistry
 from server.tools.subgraph_search import SubgraphSearchAgent
@@ -56,9 +55,6 @@ class Tools:
             tool_llm_profile,
             config.run_id,
             source_registry=self.source_registry,
-        )
-        self.graph_filter = GraphFilterAgent(
-            config.neo4j, llm_profile, config.run_id, config.limit
         )
 
     async def ask_database(self, question: str) -> str:

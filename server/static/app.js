@@ -1,9 +1,11 @@
 /**
- * Neo4j Voice Assistant — Web Client (Minimal ChatGPT Style)
+ * Neo4j Assistant — Web Client (Minimal ChatGPT Style)
  *
  * Логика: Toggle-микрофон (с паузой при воспроизведении), текстовый ввод, отправка на сервер,
  * потоковое воспроизведение PCM int16 24kHz ответа через Web Audio API с поддержкой Barge-in.
  */
+
+const ASSISTANT_ICON = '<img src="icon.svg" alt="" width="32" height="32">';
 
 // ===== State =====
 let isRecording = false;
@@ -428,6 +430,21 @@ async function consumeProcessTextStream(text, signal) {
                     shell.answerText += delta;
                     shell.answerEl.classList.add('streaming');
                     scheduleMarkdown();
+                } else if (event === 'graph_highlight') {
+                    const runId = data.graph_run_id ? String(data.graph_run_id) : '';
+                    if (!runId) continue;
+                    const tokens = Array.isArray(data.tokens)
+                        ? data.tokens.map((t, i) => ({
+                              id: t.id || `ext_${i}`,
+                              text: String(t.text || t.edgeId || '').trim(),
+                              color: t.color || GRAPH_TOKEN_PALETTE[i % GRAPH_TOKEN_PALETTE.length],
+                              edgeId: t.edgeId || null,
+                          })).filter((t) => t.edgeId || t.text.length >= 2)
+                        : [];
+                    applyExternalGraphSpec(runId, {
+                        tokens,
+                        note: data.note || '',
+                    });
                 } else if (event === 'done') {
                     shell.answerEl.classList.remove('streaming');
                     if (shell.processTrace && !shell.answerStarted) {
@@ -446,7 +463,7 @@ async function consumeProcessTextStream(text, signal) {
                     }
                     shell.answerEl.innerHTML = renderMarkdown(shell.answerText);
                     addCopyButton(shell.contentWrapper, shell.answerText);
-                    // LEGACY: graph button disabled — ask_subgraph path has no Cypher viz yet.
+                    addGraphButton(shell.contentWrapper, graphMetaFromDone(data));
                     scrollChatIfPinned();
                 } else if (event === 'error') {
                     shell.answerEl.classList.remove('streaming');
@@ -500,7 +517,7 @@ function createAssistantStreamShell() {
     const div = document.createElement('div');
     div.className = 'message assistant';
     div.innerHTML = `
-        <div class="assistant-avatar">🧬</div>
+        <div class="assistant-avatar">${ASSISTANT_ICON}</div>
         <div class="message-content-wrapper">
             <div class="message-header">
                 <span class="message-label">Ассистент</span>
@@ -684,8 +701,7 @@ async function consumeProcessTextResponse(response) {
     if (contentType.includes('application/json')) {
         const data = await response.json();
         const llmResponse = data.answer || '';
-        const hasGraph = Boolean(data.has_graph);
-        if (llmResponse) addMessage('assistant', llmResponse, hasGraph);
+        if (llmResponse) addMessage('assistant', llmResponse);
         if (currentAbortController === myController) {
             setUIState('idle');
             currentAbortController = null;
@@ -694,8 +710,7 @@ async function consumeProcessTextResponse(response) {
     }
 
     const llmResponse = safeDecodeHeader(response.headers.get('LLM-Response'));
-    const hasGraph = response.headers.get('Has-Graph') === 'true';
-    if (llmResponse) addMessage('assistant', llmResponse, hasGraph);
+    if (llmResponse) addMessage('assistant', llmResponse);
 
     setUIState('playing');
 
@@ -737,280 +752,869 @@ async function consumeProcessTextResponse(response) {
     }
 }
 
-// ===== Graph Visualization =====
+// ===== Chain Graph Modal =====
 
-/** Цвета нод по типу (как в Neo4j Browser) */
-const NODE_COLORS = {
+const GRAPH_NODE_COLORS = {
     Metabolite: '#c990c0',
     Microbe: '#569480',
+    StarterCulture: '#4c8dff',
     EnvironmentCondition: '#f0a85e',
 };
-const DEFAULT_NODE_COLOR = '#a5abb6';
+const GRAPH_DEFAULT_NODE_COLOR = '#a5abb6';
+const GRAPH_TOKEN_PALETTE = [
+    '#f59e0b',
+    '#34d399',
+    '#60a5fa',
+    '#f472b6',
+    '#a78bfa',
+    '#fb7185',
+];
+const graphPayloadCache = new Map();
+const pendingHighlights = new Map();
+let graphModal = null;
+let graphTokenSeq = 0;
 
-/**
- * Запрашивает граф-данные с сервера.
- * @returns {Promise<{nodes: Array, edges: Array}>}
- */
-async function fetchGraphData() {
-    try {
-        const resp = await fetch('/graph_data', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+function graphMetaFromDone(data) {
+    const runId = data && data.graph_run_id ? String(data.graph_run_id) : '';
+    const chainCount = Number(data && data.graph_chain_count) || 0;
+    if (!runId || chainCount < 1) return null;
+    return { runId, chainCount };
+}
+
+async function fetchGraphViz(runId) {
+    if (graphPayloadCache.has(runId)) {
+        return graphPayloadCache.get(runId);
+    }
+
+    const resp = await fetch('/graph_viz', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ graph_run_id: runId }),
+    });
+    const payload = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+        throw new Error(payload.error || 'Не удалось загрузить граф');
+    }
+    graphPayloadCache.set(runId, payload);
+    return payload;
+}
+
+function addGraphButton(contentWrapper, graphMeta) {
+    if (!graphMeta || !graphMeta.runId) return;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'show-graph-btn';
+    btn.dataset.graphRunId = graphMeta.runId;
+    btn.innerHTML = `
+        <span class="spinner-small" style="display:none"></span>
+        <span class="show-graph-label">Показать граф${graphMeta.chainCount > 1 ? ` (${graphMeta.chainCount})` : ''}</span>`;
+    btn.addEventListener('click', () => openGraphModal(graphMeta, btn));
+    contentWrapper.appendChild(btn);
+}
+
+// ----- Pure edge search engine -----
+
+function normalizeQuery(s) {
+    return String(s || '').trim().toLowerCase();
+}
+
+function buildEdgeSearchIndex(payload) {
+    const nodeCaptions = new Map();
+    for (const view of (payload && payload.views) || []) {
+        for (const node of view.nodes || []) {
+            if (!nodeCaptions.has(node.id)) {
+                nodeCaptions.set(node.id, node.caption || node.label || node.id);
+            }
+        }
+    }
+    for (const node of ((payload && payload.all && payload.all.nodes) || [])) {
+        if (!nodeCaptions.has(node.id)) {
+            nodeCaptions.set(node.id, node.caption || node.label || node.id);
+        }
+    }
+
+    const byId = new Map();
+    const consider = (edge) => {
+        if (!edge || !edge.id) return;
+        const props = edge.properties || {};
+        const fromCaption = nodeCaptions.get(edge.from) || edge.from || '';
+        const toCaption = nodeCaptions.get(edge.to) || edge.to || '';
+        const evidence = String(props.evidence || '');
+        const sourceFile = String(props.source_file || '');
+        const label = String(edge.label || '');
+        const chainIds = Array.isArray(edge.chain_ids) ? edge.chain_ids.slice() : [];
+        const existing = byId.get(edge.id);
+        if (existing) {
+            for (const cid of chainIds) {
+                if (!existing.chainIds.includes(cid)) existing.chainIds.push(cid);
+            }
+            return;
+        }
+        const haystack = normalizeQuery(
+            [evidence, label, fromCaption, toCaption, sourceFile].join(' ')
+        );
+        byId.set(edge.id, {
+            edgeId: edge.id,
+            haystack,
+            chainIds,
+            label,
+            fromCaption,
+            toCaption,
+            evidenceSnippet: evidence.length > 90 ? evidence.slice(0, 87) + '…' : evidence,
+            from: edge.from,
+            to: edge.to,
         });
-        if (!resp.ok) return { nodes: [], edges: [] };
-        return await resp.json();
-    } catch (err) {
-        console.error('Graph data fetch error:', err);
-        return { nodes: [], edges: [] };
+    };
+
+    for (const edge of ((payload && payload.all && payload.all.edges) || [])) {
+        consider(edge);
+    }
+    for (const view of (payload && payload.views) || []) {
+        for (const edge of view.edges || []) consider(edge);
+    }
+    return Array.from(byId.values());
+}
+
+function emptyMatchBucket() {
+    return { edgeIds: new Set(), nodeIds: new Set(), perToken: new Map() };
+}
+
+function matchTokens(payload, tokens) {
+    const index = buildEdgeSearchIndex(payload);
+    const byEdgeId = new Map(index.map((item) => [item.edgeId, item]));
+    const perView = new Map();
+    const all = emptyMatchBucket();
+
+    for (const view of (payload && payload.views) || []) {
+        perView.set(view.id, emptyMatchBucket());
+    }
+
+    const active = (tokens || []).filter((t) => {
+        if (t.edgeId) return true;
+        return normalizeQuery(t.text).length >= 2;
+    });
+    if (!active.length) {
+        return { perView, all, active: false };
+    }
+
+    const addMatch = (token, item) => {
+        if (!item) return;
+        all.edgeIds.add(item.edgeId);
+        if (item.from) all.nodeIds.add(item.from);
+        if (item.to) all.nodeIds.add(item.to);
+        if (!all.perToken.has(token.id)) all.perToken.set(token.id, new Set());
+        all.perToken.get(token.id).add(item.edgeId);
+
+        for (const chainId of item.chainIds) {
+            let bucket = perView.get(chainId);
+            if (!bucket) {
+                bucket = emptyMatchBucket();
+                perView.set(chainId, bucket);
+            }
+            bucket.edgeIds.add(item.edgeId);
+            if (item.from) bucket.nodeIds.add(item.from);
+            if (item.to) bucket.nodeIds.add(item.to);
+            if (!bucket.perToken.has(token.id)) bucket.perToken.set(token.id, new Set());
+            bucket.perToken.get(token.id).add(item.edgeId);
+        }
+    };
+
+    for (const token of active) {
+        if (token.edgeId) {
+            addMatch(token, byEdgeId.get(token.edgeId));
+            continue;
+        }
+        const q = normalizeQuery(token.text);
+        for (const item of index) {
+            if (!item.haystack.includes(q)) continue;
+            addMatch(token, item);
+        }
+    }
+
+    return { perView, all, active: true };
+}
+
+function suggestEdges(index, query, limit) {
+    const q = normalizeQuery(query);
+    if (q.length < 2) return [];
+    const max = limit || 8;
+    const out = [];
+    for (const item of index) {
+        if (!item.haystack.includes(q)) continue;
+        out.push(item);
+        if (out.length >= max) break;
+    }
+    return out;
+}
+
+function nextTokenColor(tokens) {
+    return GRAPH_TOKEN_PALETTE[tokens.length % GRAPH_TOKEN_PALETTE.length];
+}
+
+function edgeTokenLabel(item) {
+    if (!item) return 'edge';
+    const title = `${item.fromCaption} -[${item.label}]-> ${item.toCaption}`;
+    return title.length > 48 ? title.slice(0, 45) + '…' : title;
+}
+
+function makeToken(opts, tokens) {
+    graphTokenSeq += 1;
+    const text = String((opts && opts.text) || '').trim();
+    return {
+        id: `tok_${graphTokenSeq}`,
+        text,
+        color: nextTokenColor(tokens || []),
+        edgeId: (opts && opts.edgeId) || null,
+    };
+}
+
+function visibleViewsForModal(modal) {
+    const views = (modal.payload && modal.payload.views) || [];
+    if (!modal.matches || !modal.matches.active) return views;
+    return views.filter((view) => {
+        const bucket = modal.matches.perView.get(view.id);
+        return bucket && bucket.edgeIds.size > 0;
+    });
+}
+
+function currentMatchBucket(modal) {
+    if (!modal.matches || !modal.matches.active) return null;
+    if (modal.viewIndex === -1) return modal.matches.all;
+    const views = (modal.payload && modal.payload.views) || [];
+    const view = views[modal.viewIndex];
+    if (!view) return modal.matches.all;
+    return modal.matches.perView.get(view.id) || emptyMatchBucket();
+}
+
+function firstTokenColorForEdge(modal, edgeId) {
+    const tokens = (modal.spec && modal.spec.tokens) || [];
+    const bucket = currentMatchBucket(modal);
+    if (!bucket) return GRAPH_TOKEN_PALETTE[0];
+    for (const token of tokens) {
+        const set = bucket.perToken.get(token.id);
+        if (set && set.has(edgeId)) return token.color;
+    }
+    return GRAPH_TOKEN_PALETTE[0];
+}
+
+function ensureGraphModal() {
+    if (graphModal) return graphModal;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'graph-modal-overlay';
+    overlay.innerHTML = `
+        <div class="graph-modal" role="dialog" aria-modal="true" aria-label="Граф цепочек">
+            <div class="graph-modal-header">
+                <div>
+                    <div class="graph-modal-title">Граф цепочек</div>
+                    <div class="graph-modal-subtitle"></div>
+                </div>
+                <button class="graph-modal-close" type="button" aria-label="Закрыть">×</button>
+            </div>
+            <div class="graph-modal-search">
+                <div class="graph-modal-chips"></div>
+                <input class="graph-modal-search-input" type="search" placeholder="Поиск по evidence / рёбрам…" autocomplete="off" spellcheck="false">
+                <div class="graph-modal-suggest" style="display:none"></div>
+            </div>
+            <div class="graph-modal-note" style="display:none"></div>
+            <div class="graph-modal-toolbar">
+                <button class="graph-modal-nav" type="button" data-nav="prev" aria-label="Предыдущая цепь">‹</button>
+                <button class="graph-modal-all" type="button">Весь граф</button>
+                <button class="graph-modal-nav" type="button" data-nav="next" aria-label="Следующая цепь">›</button>
+            </div>
+            <div class="graph-modal-canvas-wrap">
+                <div class="graph-modal-canvas"></div>
+                <div class="graph-modal-empty" style="display:none"></div>
+            </div>
+            <div class="graph-modal-details node-details-panel" style="display:none"></div>
+        </div>`;
+
+    document.body.appendChild(overlay);
+
+    graphModal = {
+        overlay,
+        canvas: overlay.querySelector('.graph-modal-canvas'),
+        empty: overlay.querySelector('.graph-modal-empty'),
+        details: overlay.querySelector('.graph-modal-details'),
+        subtitle: overlay.querySelector('.graph-modal-subtitle'),
+        allBtn: overlay.querySelector('.graph-modal-all'),
+        navBtns: overlay.querySelectorAll('.graph-modal-nav'),
+        chipsEl: overlay.querySelector('.graph-modal-chips'),
+        searchInput: overlay.querySelector('.graph-modal-search-input'),
+        suggestEl: overlay.querySelector('.graph-modal-suggest'),
+        noteEl: overlay.querySelector('.graph-modal-note'),
+        network: null,
+        payload: null,
+        runId: null,
+        viewIndex: -1,
+        searchIndex: [],
+        spec: { tokens: [], note: '' },
+        matches: null,
+        suggestTimer: null,
+        focusEdgeId: null,
+    };
+
+    overlay.addEventListener('click', (event) => {
+        if (event.target === overlay) closeGraphModal();
+    });
+    overlay.querySelector('.graph-modal-close').addEventListener('click', closeGraphModal);
+    graphModal.allBtn.addEventListener('click', () => {
+        if (!graphModal.payload) return;
+        graphModal.viewIndex = -1;
+        renderGraphView();
+    });
+    graphModal.navBtns.forEach((btn) => {
+        btn.addEventListener('click', () => {
+            stepGraphView(btn.dataset.nav === 'next' ? 1 : -1);
+        });
+    });
+
+    graphModal.searchInput.addEventListener('input', () => {
+        clearTimeout(graphModal.suggestTimer);
+        graphModal.suggestTimer = setTimeout(() => renderGraphSuggestions(), 120);
+    });
+    graphModal.searchInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            const text = graphModal.searchInput.value.trim();
+            if (text.length >= 2) {
+                pinGraphTextToken(text);
+                graphModal.searchInput.value = '';
+                hideGraphSuggestions();
+            }
+        } else if (event.key === 'Backspace' && !graphModal.searchInput.value) {
+            const tokens = graphModal.spec.tokens;
+            if (tokens.length) {
+                event.preventDefault();
+                removeGraphToken(tokens[tokens.length - 1].id);
+            }
+        } else if (event.key === 'Escape') {
+            if (graphModal.suggestEl.style.display !== 'none') {
+                event.preventDefault();
+                event.stopPropagation();
+                hideGraphSuggestions();
+            }
+        }
+    });
+    graphModal.searchInput.addEventListener('blur', () => {
+        setTimeout(() => hideGraphSuggestions(), 150);
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && graphModal.overlay.classList.contains('open')) {
+            if (graphModal.suggestEl.style.display !== 'none') {
+                hideGraphSuggestions();
+                return;
+            }
+            closeGraphModal();
+        }
+    });
+
+    return graphModal;
+}
+
+function renderGraphChips() {
+    const modal = ensureGraphModal();
+    modal.chipsEl.innerHTML = '';
+    for (const token of modal.spec.tokens) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'graph-modal-chip';
+        chip.innerHTML = `
+            <span class="graph-modal-chip-dot" style="background:${token.color}"></span>
+            <span class="graph-modal-chip-text">${escapeHtml(token.text)}</span>
+            <span class="graph-modal-chip-x" aria-hidden="true">×</span>`;
+        chip.title = 'Убрать фильтр';
+        chip.addEventListener('click', () => removeGraphToken(token.id));
+        modal.chipsEl.appendChild(chip);
     }
 }
 
-/**
- * Рендерит интерактивный граф в контейнер с помощью vis-network.
- */
-function renderGraph(container, graphData, wrapper) {
-    if (!graphData.nodes.length) {
-        container.innerHTML = '<div class="graph-empty">Нет данных для визуализации</div>';
-        container.style.height = 'auto';
+function renderGraphNote() {
+    const modal = ensureGraphModal();
+    const note = (modal.spec && modal.spec.note) || '';
+    if (!note) {
+        modal.noteEl.style.display = 'none';
+        modal.noteEl.textContent = '';
+        return;
+    }
+    modal.noteEl.style.display = 'block';
+    modal.noteEl.textContent = note;
+}
+
+function hideGraphSuggestions() {
+    const modal = ensureGraphModal();
+    modal.suggestEl.style.display = 'none';
+    modal.suggestEl.innerHTML = '';
+}
+
+function renderGraphSuggestions() {
+    const modal = ensureGraphModal();
+    const query = modal.searchInput.value.trim();
+    if (!modal.payload || normalizeQuery(query).length < 2) {
+        hideGraphSuggestions();
+        return;
+    }
+    const items = suggestEdges(modal.searchIndex, query, 8);
+    if (!items.length) {
+        modal.suggestEl.style.display = 'block';
+        modal.suggestEl.innerHTML = '<div class="graph-modal-suggest-empty">Нет совпадений</div>';
+        return;
+    }
+    modal.suggestEl.style.display = 'block';
+    modal.suggestEl.innerHTML = items.map((item) => {
+        const chains = (item.chainIds || []).join(', ');
+        return `
+            <button type="button" class="graph-modal-suggest-item" data-edge-id="${escapeHtml(item.edgeId)}">
+                <div class="graph-modal-suggest-title">${escapeHtml(item.fromCaption)} -[${escapeHtml(item.label)}]-> ${escapeHtml(item.toCaption)}</div>
+                <div class="graph-modal-suggest-meta">${escapeHtml(item.evidenceSnippet || '')}${chains ? ` · ${escapeHtml(chains)}` : ''}</div>
+            </button>`;
+    }).join('');
+    modal.suggestEl.querySelectorAll('.graph-modal-suggest-item').forEach((btn) => {
+        btn.addEventListener('mousedown', (event) => {
+            event.preventDefault();
+            const edgeId = btn.dataset.edgeId;
+            const item = modal.searchIndex.find((x) => x.edgeId === edgeId);
+            pinGraphEdgeToken(item || { edgeId, fromCaption: '?', label: 'REL', toCaption: '?' });
+            modal.searchInput.value = '';
+            hideGraphSuggestions();
+        });
+    });
+}
+
+function pinGraphTextToken(text) {
+    const modal = ensureGraphModal();
+    const normalized = normalizeQuery(text);
+    if (normalized.length < 2) return;
+    const exists = modal.spec.tokens.some(
+        (t) => !t.edgeId && normalizeQuery(t.text) === normalized
+    );
+    if (!exists) {
+        modal.spec.tokens.push(makeToken({ text }, modal.spec.tokens));
+    }
+    applyGraphSpec(modal.spec);
+}
+
+function pinGraphEdgeToken(item) {
+    const modal = ensureGraphModal();
+    if (!item || !item.edgeId) return;
+    const exists = modal.spec.tokens.some((t) => t.edgeId === item.edgeId);
+    if (!exists) {
+        modal.spec.tokens.push(
+            makeToken(
+                { text: edgeTokenLabel(item), edgeId: item.edgeId },
+                modal.spec.tokens
+            )
+        );
+    }
+    modal.focusEdgeId = item.edgeId;
+    applyGraphSpec(modal.spec);
+}
+
+function removeGraphToken(tokenId) {
+    const modal = ensureGraphModal();
+    modal.spec.tokens = modal.spec.tokens.filter((t) => t.id !== tokenId);
+    applyGraphSpec(modal.spec);
+}
+
+function applyGraphSpec(spec) {
+    const modal = ensureGraphModal();
+    modal.spec = {
+        tokens: Array.isArray(spec && spec.tokens) ? spec.tokens.slice() : [],
+        note: (spec && spec.note) || '',
+    };
+    renderGraphChips();
+    renderGraphNote();
+
+    if (!modal.payload) {
+        modal.matches = null;
         return;
     }
 
-    // Подготовка данных для vis-network
-    const visNodes = new vis.DataSet(
-        graphData.nodes.map(n => ({
-            id: n.id,
-            label: n.label,
-            group: n.group,
+    modal.matches = matchTokens(modal.payload, modal.spec.tokens);
+    const visible = visibleViewsForModal(modal);
+
+    if (modal.viewIndex !== -1) {
+        const current = (modal.payload.views || [])[modal.viewIndex];
+        const stillVisible = current && visible.some((v) => v.id === current.id);
+        if (!stillVisible) {
+            if (visible.length === 1) modal.viewIndex = (modal.payload.views || []).indexOf(visible[0]);
+            else if (visible.length) {
+                const first = visible[0];
+                modal.viewIndex = (modal.payload.views || []).findIndex((v) => v.id === first.id);
+            } else {
+                modal.viewIndex = -1;
+            }
+        }
+    }
+
+    renderGraphView();
+}
+
+function applyExternalGraphSpec(runId, spec) {
+    if (!runId || !spec) return;
+    pendingHighlights.set(runId, {
+        tokens: Array.isArray(spec.tokens) ? spec.tokens.slice() : [],
+        note: spec.note || '',
+    });
+    const modal = ensureGraphModal();
+    if (modal.overlay.classList.contains('open') && modal.runId === runId) {
+        const pending = pendingHighlights.get(runId);
+        pendingHighlights.delete(runId);
+        applyGraphSpec(pending);
+        return;
+    }
+    openGraphModal({ runId, chainCount: 0 }, null);
+}
+
+async function openGraphModal(graphMeta, btn) {
+    const modal = ensureGraphModal();
+    const label = btn ? btn.querySelector('.show-graph-label') : null;
+    const spinner = btn ? btn.querySelector('.spinner-small') : null;
+
+    if (btn) btn.disabled = true;
+    if (spinner) spinner.style.display = 'inline-block';
+    if (label) label.textContent = 'Загрузка...';
+
+    modal.overlay.classList.add('open');
+    document.body.classList.add('graph-modal-open');
+    setGraphModalMessage('Загрузка графа...', true);
+
+    try {
+        const payload = await fetchGraphViz(graphMeta.runId);
+        modal.payload = payload;
+        modal.runId = graphMeta.runId;
+        modal.searchIndex = buildEdgeSearchIndex(payload);
+        modal.viewIndex = payload.views && payload.views.length === 1 ? 0 : -1;
+
+        const pending = pendingHighlights.get(graphMeta.runId);
+        if (pending) {
+            pendingHighlights.delete(graphMeta.runId);
+            applyGraphSpec(pending);
+        } else {
+            applyGraphSpec(modal.spec);
+        }
+    } catch (err) {
+        console.error('Graph viz error:', err);
+        setGraphModalMessage(err.message || 'Не удалось загрузить граф', false);
+    } finally {
+        if (btn) btn.disabled = false;
+        if (spinner) spinner.style.display = 'none';
+        if (label) {
+            const count = graphMeta.chainCount || ((modal.payload && modal.payload.views) || []).length;
+            label.textContent = `Показать граф${count > 1 ? ` (${count})` : ''}`;
+        }
+    }
+}
+
+function closeGraphModal() {
+    if (!graphModal) return;
+    hideGraphSuggestions();
+    graphModal.overlay.classList.remove('open');
+    document.body.classList.remove('graph-modal-open');
+    if (graphModal.network) {
+        graphModal.network.destroy();
+        graphModal.network = null;
+    }
+}
+
+function setGraphModalMessage(text, loading) {
+    const modal = ensureGraphModal();
+    if (modal.network) {
+        modal.network.destroy();
+        modal.network = null;
+    }
+    modal.canvas.innerHTML = '';
+    modal.details.style.display = 'none';
+    modal.empty.style.display = 'flex';
+    modal.empty.innerHTML = loading
+        ? '<span class="spinner-small"></span><span>' + escapeHtml(text) + '</span>'
+        : escapeHtml(text);
+    updateGraphToolbar();
+}
+
+function currentGraphView() {
+    const modal = ensureGraphModal();
+    if (!modal.payload) return null;
+    if (modal.viewIndex === -1) return modal.payload.all;
+    return (modal.payload.views || [])[modal.viewIndex] || null;
+}
+
+function stepGraphView(delta) {
+    const modal = ensureGraphModal();
+    const visible = visibleViewsForModal(modal);
+    if (!visible.length) {
+        modal.viewIndex = -1;
+        renderGraphView();
+        return;
+    }
+
+    // Order: all (-1) then each visible view.
+    const order = [-1].concat(
+        visible.map((v) => (modal.payload.views || []).findIndex((x) => x.id === v.id))
+    );
+    let pos = order.indexOf(modal.viewIndex);
+    if (pos < 0) pos = 0;
+    const nextPos = (pos + delta + order.length) % order.length;
+    modal.viewIndex = order[nextPos];
+    renderGraphView();
+}
+
+function updateGraphToolbar() {
+    const modal = ensureGraphModal();
+    const allViews = (modal.payload && modal.payload.views) || [];
+    const visible = visibleViewsForModal(modal);
+    const chainCount = visible.length;
+    const filtering = Boolean(modal.matches && modal.matches.active);
+
+    if (!modal.payload) {
+        modal.subtitle.textContent = '';
+        modal.allBtn.classList.remove('active');
+        modal.navBtns.forEach((btn) => { btn.disabled = true; });
+        return;
+    }
+
+    let matchCount = 0;
+    if (filtering) {
+        const bucket = currentMatchBucket(modal);
+        matchCount = bucket ? bucket.edgeIds.size : 0;
+    }
+
+    if (modal.viewIndex === -1) {
+        const suffix = filtering
+            ? ` · совпадений: ${matchCount} · цепей: ${chainCount}/${allViews.length}`
+            : ` · ${allViews.length}`;
+        modal.subtitle.textContent = `Все цепи${suffix}`;
+        modal.allBtn.classList.add('active');
+    } else {
+        const view = allViews[modal.viewIndex];
+        const visiblePos = visible.findIndex((v) => view && v.id === view.id) + 1;
+        const posLabel = filtering && visiblePos > 0
+            ? `${visiblePos} из ${chainCount}`
+            : `${modal.viewIndex + 1} из ${allViews.length}`;
+        const matchPart = filtering ? ` · совпадений: ${matchCount}` : '';
+        modal.subtitle.textContent = `${view ? view.label : 'Цепь'} ${posLabel}${matchPart} · score ${Number((view && view.score) || 0).toFixed(3)}`;
+        modal.allBtn.classList.remove('active');
+    }
+    modal.navBtns.forEach((btn) => { btn.disabled = allViews.length < 1; });
+}
+
+function renderGraphView() {
+    const modal = ensureGraphModal();
+    const view = currentGraphView();
+    updateGraphToolbar();
+
+    if (!view || !view.nodes || !view.nodes.length) {
+        setGraphModalMessage(
+            (modal.matches && modal.matches.active)
+                ? 'Нет цепей с совпадениями'
+                : 'Нет данных для визуализации',
+            false
+        );
+        return;
+    }
+
+    modal.empty.style.display = 'none';
+    modal.details.style.display = 'none';
+    modal.canvas.innerHTML = '';
+
+    if (modal.network) {
+        modal.network.destroy();
+        modal.network = null;
+    }
+
+    const bucket = currentMatchBucket(modal);
+    const filtering = Boolean(bucket && modal.matches && modal.matches.active);
+
+    const visNodes = new vis.DataSet(view.nodes.map((node) => {
+        const color = node.color || GRAPH_NODE_COLORS[node.group] || GRAPH_DEFAULT_NODE_COLOR;
+        const caption = node.caption || node.label || node.id;
+        const matched = filtering && bucket.nodeIds.has(node.id);
+        let borderColor = color;
+        let borderWidth = 2;
+        if (matched) {
+            // Prefer color of first token that touches any incident matched edge.
+            borderColor = GRAPH_TOKEN_PALETTE[0];
+            for (const edge of view.edges || []) {
+                if ((edge.from === node.id || edge.to === node.id) && bucket.edgeIds.has(edge.id)) {
+                    borderColor = firstTokenColorForEdge(modal, edge.id);
+                    break;
+                }
+            }
+            borderWidth = 4;
+        } else if (filtering) {
+            borderWidth = 1;
+        }
+        return {
+            id: node.id,
+            label: caption,
+            group: node.group,
+            title: `${node.group || 'Node'}: ${caption}`,
             color: {
-                background: n.color || DEFAULT_NODE_COLOR,
-                border: n.color || DEFAULT_NODE_COLOR,
-                highlight: {
-                    background: lightenColor(n.color || DEFAULT_NODE_COLOR, 20),
-                    border: '#ffffff',
-                },
-                hover: {
-                    background: lightenColor(n.color || DEFAULT_NODE_COLOR, 10),
-                    border: lightenColor(n.color || DEFAULT_NODE_COLOR, 30),
-                },
+                background: color,
+                border: borderColor,
+                highlight: { background: color, border: '#ffffff' },
             },
             font: {
-                color: '#ffffff',
+                color: filtering && !matched ? 'rgba(255,255,255,0.35)' : '#ffffff',
                 size: 12,
                 face: 'Inter, sans-serif',
                 strokeWidth: 3,
-                strokeColor: 'rgba(0,0,0,0.6)',
+                strokeColor: 'rgba(0,0,0,0.65)',
             },
-            borderWidth: 2,
+            borderWidth,
             borderWidthSelected: 3,
-            size: 28,
+            size: matched ? 30 : 26,
+            opacity: filtering && !matched ? 0.35 : 1,
             shape: 'dot',
-            _rawData: n,
-        }))
-    );
+            _rawData: node,
+        };
+    }));
 
-    const visEdges = new vis.DataSet(
-        graphData.edges.map((e, i) => ({
-            id: `edge-${i}`,
-            from: e.from,
-            to: e.to,
-            label: e.label,
+    const visEdges = new vis.DataSet(view.edges.map((edge) => {
+        const isSpine = edge.role === 'spine';
+        const chains = (edge.chain_ids || []).join(', ');
+        const evidence = edge.properties && edge.properties.evidence ? edge.properties.evidence : '';
+        const matched = filtering && bucket.edgeIds.has(edge.id);
+        const chipColor = matched ? firstTokenColorForEdge(modal, edge.id) : null;
+
+        let edgeColor;
+        let width;
+        let label = edge.label;
+        if (filtering && matched) {
+            edgeColor = chipColor;
+            width = 4;
+        } else if (filtering) {
+            edgeColor = 'rgba(255,255,255,0.06)';
+            width = 1;
+            label = '';
+        } else {
+            edgeColor = isSpine ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.22)';
+            width = isSpine ? 3 : 1.4;
+        }
+
+        return {
+            id: edge.id,
+            from: edge.from,
+            to: edge.to,
+            label,
+            title: `${edge.label} · ${chains}${evidence ? `\n${evidence}` : ''}`,
+            dashes: !isSpine && !matched,
+            width,
+            color: {
+                color: edgeColor,
+                highlight: matched ? chipColor : 'rgba(255,255,255,0.85)',
+                hover: matched ? chipColor : 'rgba(255,255,255,0.55)',
+            },
             font: {
-                color: '#8e8e8e',
+                color: matched ? '#e5e7eb' : '#9a9a9a',
                 size: 10,
                 face: 'Inter, sans-serif',
                 strokeWidth: 2,
                 strokeColor: 'rgba(0,0,0,0.5)',
                 align: 'top',
             },
-            color: {
-                color: 'rgba(255,255,255,0.25)',
-                highlight: 'rgba(255,255,255,0.6)',
-                hover: 'rgba(255,255,255,0.4)',
-            },
-            width: 1.5,
-            arrows: { to: { enabled: true, scaleFactor: 0.6, type: 'arrow' } },
-            smooth: {
-                enabled: true,
-                type: 'dynamic',
-            },
-            _rawData: e,
-        }))
-    );
+            arrows: { to: { enabled: true, scaleFactor: 0.55, type: 'arrow' } },
+            smooth: { enabled: true, type: 'dynamic' },
+            _rawData: edge,
+        };
+    }));
 
-    const options = {
+    modal.network = new vis.Network(modal.canvas, { nodes: visNodes, edges: visEdges }, {
         physics: {
             enabled: true,
             solver: 'forceAtlas2Based',
             forceAtlas2Based: {
-                gravitationalConstant: -100,
+                gravitationalConstant: -90,
                 centralGravity: 0.01,
-                springLength: 200,
+                springLength: 180,
                 springConstant: 0.08,
                 damping: 0.4,
-                avoidOverlap: 0.5
+                avoidOverlap: 0.6,
             },
-            stabilization: {
-                iterations: 150,
-                fit: true,
-            },
+            stabilization: { iterations: 150, fit: true },
         },
         interaction: {
             hover: true,
-            tooltipDelay: 200,
+            tooltipDelay: 150,
             zoomView: true,
             dragView: true,
             multiselect: false,
         },
-        layout: {
-            hierarchical: {
-                enabled: false
-            }
-        },
-    };
+        layout: { hierarchical: { enabled: false } },
+    });
 
-    const network = new vis.Network(container, { nodes: visNodes, edges: visEdges }, options);
-
-    // Клик по ноде — показать детали
-    network.on('click', (params) => {
-        // Удаляем предыдущую панель деталей
-        const existingPanel = wrapper.querySelector('.node-details-panel');
-        if (existingPanel) existingPanel.remove();
-
+    modal.network.on('click', (params) => {
         if (params.nodes.length > 0) {
-            const nodeId = params.nodes[0];
-            const nodeData = visNodes.get(nodeId);
-            if (nodeData && nodeData._rawData) {
-                showNodeDetails(wrapper, nodeData._rawData);
-            }
+            const node = visNodes.get(params.nodes[0]);
+            if (node && node._rawData) showGraphDetails('node', node._rawData);
         } else if (params.edges.length > 0) {
-            const edgeId = params.edges[0];
-            const edgeData = visEdges.get(edgeId);
-            if (edgeData && edgeData._rawData) {
-                showEdgeDetails(wrapper, edgeData._rawData);
-            }
+            const edge = visEdges.get(params.edges[0]);
+            if (edge && edge._rawData) showGraphDetails('edge', edge._rawData);
         }
     });
 
-    // После стабилизации — fit to view
-    network.once('stabilizationIterationsDone', () => {
-        network.fit({ animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
+    modal.network.once('stabilizationIterationsDone', () => {
+        const focusId = modal.focusEdgeId;
+        modal.focusEdgeId = null;
+        if (focusId) {
+            const edge = visEdges.get(focusId);
+            if (edge) {
+                const focusNode = edge.from || edge.to;
+                if (focusNode) {
+                    modal.network.focus(focusNode, {
+                        scale: 1.25,
+                        animation: { duration: 350, easingFunction: 'easeInOutQuad' },
+                    });
+                }
+                modal.network.selectEdges([focusId]);
+                if (edge._rawData) showGraphDetails('edge', edge._rawData);
+                return;
+            }
+        }
+        modal.network.fit({ animation: { duration: 350, easingFunction: 'easeInOutQuad' } });
     });
 }
 
-/**
- * Показывает панель деталей ноды.
- */
-function showNodeDetails(wrapper, nodeData) {
-    const panel = document.createElement('div');
-    panel.className = 'node-details-panel';
+function graphPropsTable(properties) {
+    const rows = Object.entries(properties || {})
+        .filter(([, value]) => value !== null && value !== undefined && value !== '')
+        .map(([key, value]) => {
+            const rendered = typeof value === 'object' ? JSON.stringify(value) : String(value);
+            return `<tr><td>${escapeHtml(key)}</td><td>${escapeHtml(rendered)}</td></tr>`;
+        })
+        .join('');
+    return rows ? `<table class="node-props-table">${rows}</table>` : '';
+}
 
-    const color = nodeData.color || DEFAULT_NODE_COLOR;
-    const group = nodeData.group || 'Unknown';
+function showGraphDetails(kind, data) {
+    const modal = ensureGraphModal();
+    const details = modal.details;
+    const isNode = kind === 'node';
+    const color = isNode ? (data.color || GRAPH_DEFAULT_NODE_COLOR) : '#8e8e8e';
+    const title = isNode ? (data.caption || data.label || 'Node') : (data.label || 'Relationship');
+    const properties = { ...(data.properties || {}) };
 
-    let propsHtml = '';
-    if (nodeData.properties) {
-        const rows = Object.entries(nodeData.properties)
-            .map(([k, v]) => {
-                const val = typeof v === 'object' ? JSON.stringify(v) : String(v);
-                return `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(val)}</td></tr>`;
-            })
-            .join('');
-        propsHtml = `<table class="node-props-table">${rows}</table>`;
+    if (!isNode) {
+        properties.role = data.role || '';
+        properties.chain_ids = (data.chain_ids || []).join(', ');
     }
 
-    panel.innerHTML = `
+    details.innerHTML = `
         <div class="node-details-header">
-            <span class="node-details-title">Node details</span>
-            <button class="node-details-close" onclick="this.closest('.node-details-panel').remove()">✕</button>
+            <span class="node-details-title">${escapeHtml(title)}</span>
+            <button class="node-details-close" type="button" aria-label="Закрыть">×</button>
         </div>
         <div class="node-label-badges">
-            <span class="node-label-badge" style="border-color: ${color}; background: ${color}22;">${escapeHtml(group)}</span>
+            <span class="node-label-badge" style="border-color: ${color}; background: ${color}22;">${escapeHtml(isNode ? (data.group || 'Node') : (data.label || 'REL'))}</span>
+            ${!isNode && data.role ? `<span class="node-label-badge graph-role-badge">${escapeHtml(data.role)}</span>` : ''}
         </div>
-        ${propsHtml}`;
-
-    wrapper.appendChild(panel);
-}
-
-/**
- * Показывает панель деталей связи (edge).
- */
-function showEdgeDetails(wrapper, edgeData) {
-    const panel = document.createElement('div');
-    panel.className = 'node-details-panel';
-
-    let propsHtml = '';
-    if (edgeData.properties) {
-        const rows = Object.entries(edgeData.properties)
-            .map(([k, v]) => {
-                const val = typeof v === 'object' ? JSON.stringify(v) : String(v);
-                return `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(val)}</td></tr>`;
-            })
-            .join('');
-        propsHtml = `<table class="node-props-table">${rows}</table>`;
-    }
-
-    panel.innerHTML = `
-        <div class="node-details-header">
-            <span class="node-details-title">Relationship details</span>
-            <button class="node-details-close" onclick="this.closest('.node-details-panel').remove()">✕</button>
-        </div>
-        <div class="edge-details-label">${escapeHtml(edgeData.label || 'UNKNOWN')}</div>
-        ${propsHtml}`;
-
-    wrapper.appendChild(panel);
-}
-
-/**
- * Осветляет hex-цвет на заданный процент.
- */
-function lightenColor(hex, percent) {
-    const num = parseInt(hex.replace('#', ''), 16);
-    const amt = Math.round(2.55 * percent);
-    const R = Math.min(255, (num >> 16) + amt);
-    const G = Math.min(255, ((num >> 8) & 0x00ff) + amt);
-    const B = Math.min(255, (num & 0x0000ff) + amt);
-    return `#${((1 << 24) | (R << 16) | (G << 8) | B).toString(16).slice(1)}`;
-}
-
-/**
- * Добавляет блок графа к сообщению ассистента.
- */
-async function attachGraphToMessage(contentWrapper) {
-    // Создаём wrapper для графа
-    const graphWrapper = document.createElement('div');
-    graphWrapper.className = 'graph-wrapper';
-    graphWrapper.innerHTML = '<div class="graph-loading"><div class="spinner"></div>Загрузка графа...</div>';
-    contentWrapper.appendChild(graphWrapper);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-
-    // Запрашиваем данные
-    const graphData = await fetchGraphData();
-
-    // Убираем загрузку
-    graphWrapper.innerHTML = '';
-
-    if (!graphData.nodes.length) {
-        graphWrapper.remove();
-        return;
-    }
-
-    // Создаём контейнер для vis-network
-    const graphContainer = document.createElement('div');
-    graphContainer.className = 'graph-container';
-    graphWrapper.appendChild(graphContainer);
-
-    renderGraph(graphContainer, graphData, graphWrapper);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-// ===== Graph Button (On-Demand) =====
-
-/**
- * LEGACY: «Показать граф» — не используется с ask_subgraph (нет Cypher для viz).
- * Оставлен no-op, чтобы не показывать сломанную кнопку.
- */
-function addGraphButton(_contentWrapper) {
-    return;
+        ${graphPropsTable(properties)}`;
+    details.style.display = 'block';
+    details.querySelector('.node-details-close').addEventListener('click', () => {
+        details.style.display = 'none';
+    });
 }
 
 // ===== UI Helpers =====
@@ -1067,7 +1671,7 @@ function addCopyButton(wrapper, plainText) {
     wrapper.appendChild(btn);
 }
 
-function addMessage(role, text, hasGraph = false) {
+function addMessage(role, text, graphMeta = null) {
     // Убираем welcome-сообщение при первом реальном сообщении
     const welcome = chatMessages.querySelector('.welcome-message');
     if (welcome) welcome.remove();
@@ -1077,7 +1681,7 @@ function addMessage(role, text, hasGraph = false) {
 
     if (role === 'assistant') {
         div.innerHTML = `
-            <div class="assistant-avatar">🧬</div>
+            <div class="assistant-avatar">${ASSISTANT_ICON}</div>
             <div class="message-content-wrapper">
                 <div class="message-header">
                     <span class="message-label">Ассистент</span>
@@ -1090,11 +1694,7 @@ function addMessage(role, text, hasGraph = false) {
 
         const contentWrapper = div.querySelector('.message-content-wrapper');
         addCopyButton(contentWrapper, text);
-
-        // LEGACY: graph button disabled (addGraphButton is a no-op).
-        if (hasGraph) {
-            addGraphButton(contentWrapper);
-        }
+        addGraphButton(contentWrapper, graphMeta);
     } else if (role === 'user') {
         div.innerHTML = `<span class="message-text">${escapeHtml(text)}</span>`;
         chatMessages.appendChild(div);
@@ -1115,7 +1715,7 @@ function showThinking() {
     div.className = 'thinking';
     div.id = 'thinking-indicator';
     div.innerHTML = `
-        <div class="assistant-avatar">🧬</div>
+        <div class="assistant-avatar">${ASSISTANT_ICON}</div>
         <div class="thinking-dots">
             <span></span><span></span><span></span>
         </div>`;
@@ -1215,7 +1815,7 @@ async function clearHistory() {
             // Очищаем историю на экране и восстанавливаем приветственный экран
             chatMessages.innerHTML = `
                 <div class="welcome-message">
-                    <div class="welcome-logo">🧬</div>
+                    <div class="welcome-logo"><img src="icon.svg" alt="" width="40" height="40"></div>
                     <h2>Чем я могу помочь?</h2>
                     <p>Задайте вопрос голосом или текстом. Я проанализирую базу знаний Neo4j и предоставлю структурированный ответ с голосовой озвучкой.</p>
                 </div>`;

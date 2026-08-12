@@ -9,7 +9,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from server.utils.config import load_config
+from server.core.db import get_driver
+from server.core.graph_runs import graph_run_store
 from server.core.pipeline import ServerPipeline
+from server.tools.graph_viz import build_graph_viz_payload
 from server.utils.tracing import init_tracing
 
 logging.basicConfig(
@@ -234,17 +237,20 @@ async def health():
     return {"status": "ready"}
 
 
-@app.post("/graph_data")
-async def get_graph_data(request: Request):
-    """
-    Возвращает граф-данные (nodes + edges) для визуализации.
+@app.post("/graph_viz")
+async def get_graph_viz(request: Request):
+    """Hydrate accepted chains for the lightweight graph modal. No LLM calls."""
+    data = await request.json()
+    run_id = str(data.get("graph_run_id") or "")
+    chains = graph_run_store.get(run_id)
+    if chains is None:
+        return JSONResponse(
+            {"error": "Graph run not found or expired"},
+            status_code=404,
+        )
 
-    Берёт последний успешный Cypher-запрос из GraphQA
-    и извлекает полный подграф для рендеринга в UI.
-    """
-    pipeline: ServerPipeline = request.app.state.pipeline
-    graph_data = await pipeline.get_graph_data()
-    return JSONResponse(graph_data)
+    payload = await build_graph_viz_payload(get_driver(), chains)
+    return JSONResponse(payload)
 
 
 # Веб-интерфейс: http://localhost:8000/ui/

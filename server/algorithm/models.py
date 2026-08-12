@@ -139,6 +139,7 @@ class EdgeRecord:
     def to_dict_edge(self) -> dict[str, Any]:
         return {
             "edge_key": self.edge_key,
+            "element_id": self.element_id,
             "type": self.rel_type,
             "start": self.start_name,
             "end": self.end_name,
@@ -150,6 +151,7 @@ class EdgeRecord:
             "chunk_id": self.chunk_id,
             "source_file": self.source_file,
             "sim": round(self.sim, 4),
+            "confidence": round(self.confidence, 4),
             "source": self.source,
         }
 

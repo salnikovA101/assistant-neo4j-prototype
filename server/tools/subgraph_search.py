@@ -2,6 +2,7 @@ import logging
 from typing import Any, Sequence
 
 from server.core.db import get_driver
+from server.core.graph_runs import record_accepted_chains
 from server.tools.source_registry import (
     SourceRegistry,
     collect_source_files,
@@ -123,6 +124,7 @@ class SubgraphSearchAgent:
                     effort=effort_n,
                 )
                 accepted = result.get("accepted") or []
+                record_accepted_chains(accepted)
                 res_str = _format_accepted_chains(accepted, self.source_registry)
                 set_span_ok(span, res_str)
                 return res_str

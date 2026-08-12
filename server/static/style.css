@@ -200,7 +200,6 @@ body {
 }
 
 .welcome-logo {
-    font-size: 40px;
     width: 68px;
     height: 68px;
     border-radius: 50%;
@@ -211,6 +210,13 @@ body {
     justify-content: center;
     margin-bottom: 8px;
     box-shadow: var(--shadow);
+    overflow: hidden;
+}
+
+.welcome-logo img {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
 }
 
 .welcome-message h2 {
@@ -261,13 +267,18 @@ body {
     height: 32px;
     min-width: 32px;
     border-radius: 50%;
-    background: var(--accent-green);
-    color: white;
+    background: transparent;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 16px;
-    box-shadow: 0 2px 8px rgba(16, 163, 127, 0.3);
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(1, 139, 255, 0.35);
+}
+
+.assistant-avatar img {
+    width: 100%;
+    height: 100%;
+    display: block;
 }
 
 .message.assistant .message-content-wrapper {
@@ -941,80 +952,294 @@ body {
     animation: spin 0.8s linear infinite;
 }
 
-/* ===== Graph Visualization ===== */
-.graph-wrapper {
-    width: 100%;
-    margin-top: 12px;
-    border-radius: var(--radius-md);
+/* ===== Chain Graph Modal ===== */
+body.graph-modal-open {
+    overflow: hidden;
+}
+
+.graph-modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(8, 8, 16, 0.72);
+    backdrop-filter: blur(8px);
+}
+
+.graph-modal-overlay.open {
+    display: flex;
+}
+
+.graph-modal {
+    width: min(1100px, 94vw);
+    height: min(760px, 88vh);
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
     border: 1px solid var(--border-color);
-    background: #1a1a2e;
-    animation: messageIn 0.4s ease;
+    border-radius: var(--radius-lg);
+    background: #151526;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+    animation: messageIn 0.25s ease;
 }
 
-.graph-container {
-    width: 100%;
-    height: 550px;
+.graph-modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px 18px 12px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.graph-modal-title {
+    color: var(--text-primary);
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.graph-modal-subtitle {
+    margin-top: 4px;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.graph-modal-close {
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+}
+
+.graph-modal-close:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.09);
+}
+
+.graph-modal-search {
     position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--border-color);
+    background: rgba(255, 255, 255, 0.02);
 }
 
-.graph-loading {
+.graph-modal-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.graph-modal-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 8px 0 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-primary);
+    font-family: var(--font);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.graph-modal-chip:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.graph-modal-chip-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.graph-modal-chip-x {
+    opacity: 0.7;
+    font-size: 14px;
+    line-height: 1;
+}
+
+.graph-modal-search-input {
+    flex: 1;
+    min-width: 160px;
+    height: 34px;
+    padding: 0 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: rgba(0, 0, 0, 0.25);
+    color: var(--text-primary);
+    font-family: var(--font);
+    font-size: 13px;
+    outline: none;
+}
+
+.graph-modal-search-input:focus {
+    border-color: rgba(255, 255, 255, 0.28);
+}
+
+.graph-modal-suggest {
+    position: absolute;
+    left: 18px;
+    right: 18px;
+    top: calc(100% - 2px);
+    z-index: 5;
+    max-height: 240px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: #1b1b30;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.graph-modal-suggest-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 10px 12px;
+    border: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    background: transparent;
+    color: var(--text-primary);
+    font-family: var(--font);
+    cursor: pointer;
+}
+
+.graph-modal-suggest-item:last-child {
+    border-bottom: none;
+}
+
+.graph-modal-suggest-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.graph-modal-suggest-title {
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.graph-modal-suggest-meta {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.35;
+}
+
+.graph-modal-suggest-empty {
+    padding: 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.graph-modal-note {
+    padding: 8px 18px;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.4;
+    background: rgba(96, 165, 250, 0.08);
+}
+
+.graph-modal-toolbar {
+    display: grid;
+    grid-template-columns: 44px 1fr 44px;
+    gap: 10px;
+    align-items: center;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.graph-modal-nav,
+.graph-modal-all {
+    height: 34px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+    font-family: var(--font);
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.graph-modal-nav {
+    font-size: 22px;
+    line-height: 1;
+}
+
+.graph-modal-all {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.graph-modal-nav:hover,
+.graph-modal-all:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.graph-modal-nav:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.graph-modal-all.active {
+    color: #06281f;
+    background: var(--accent-green);
+    border-color: var(--accent-green);
+}
+
+.graph-modal-canvas-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    background: #101020;
+}
+
+.graph-modal-canvas {
+    position: absolute;
+    inset: 0;
+}
+
+.graph-modal-empty {
+    position: absolute;
+    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 120px;
     gap: 10px;
     color: var(--text-muted);
     font-size: 13px;
+    padding: 24px;
+    text-align: center;
 }
 
-.graph-loading .spinner {
-    width: 18px;
-    height: 18px;
-    border: 2px solid var(--border-color);
-    border-top-color: var(--accent-green);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-}
-
-.graph-empty {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 80px;
-    color: var(--text-muted);
-    font-size: 13px;
-}
-
-/* Node Details Panel (appears on click) */
-.node-details-panel {
-    background: rgba(30, 30, 50, 0.95);
-    backdrop-filter: blur(12px);
+.graph-modal-details {
     border-top: 1px solid var(--border-color);
-    padding: 16px 20px;
-    animation: slideUp 0.25s ease;
-    max-height: 280px;
+    background: rgba(30, 30, 50, 0.96);
+    padding: 14px 18px;
+    max-height: 220px;
     overflow-y: auto;
-}
-
-.node-details-panel::-webkit-scrollbar {
-    width: 6px;
-}
-
-.node-details-panel::-webkit-scrollbar-track {
-    background: transparent;
-}
-
-.node-details-panel::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 3px;
+    animation: slideUp 0.2s ease;
 }
 
 .node-details-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
 }
 
 .node-details-title {
@@ -1035,7 +1260,6 @@ body {
     align-items: center;
     justify-content: center;
     font-size: 14px;
-    transition: all 0.15s;
 }
 
 .node-details-close:hover {
@@ -1046,7 +1270,7 @@ body {
 .node-label-badges {
     display: flex;
     gap: 6px;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
     flex-wrap: wrap;
 }
 
@@ -1059,6 +1283,12 @@ body {
     font-weight: 600;
     color: #fff;
     border: 1.5px solid;
+}
+
+.graph-role-badge {
+    color: var(--text-primary);
+    border-color: rgba(255, 255, 255, 0.18);
+    background: rgba(255, 255, 255, 0.08);
 }
 
 .node-props-table {
@@ -1083,30 +1313,41 @@ body {
 .node-props-table td:first-child {
     color: var(--text-secondary);
     font-weight: 500;
-    width: 140px;
-    min-width: 100px;
+    width: 150px;
+    min-width: 110px;
     padding-right: 16px;
 }
 
 .node-props-table td:last-child {
     color: var(--text-primary);
-    word-break: break-all;
+    word-break: break-word;
     font-family: 'SF Mono', 'Fira Code', monospace;
     font-size: 11px;
 }
 
-/* Edge details variant */
-.edge-details-label {
-    display: inline-flex;
-    align-items: center;
-    padding: 3px 10px;
-    border-radius: 12px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-primary);
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    margin-bottom: 12px;
+@media (max-width: 768px) {
+    .graph-modal-overlay {
+        padding: 10px;
+    }
+
+    .graph-modal {
+        width: 100%;
+        height: 92vh;
+    }
+
+    .graph-modal-toolbar {
+        grid-template-columns: 40px 1fr 40px;
+        padding: 10px 12px;
+    }
+
+    .graph-modal-details {
+        max-height: 180px;
+    }
+
+    .node-props-table td:first-child {
+        width: 110px;
+        min-width: 90px;
+    }
 }
 
 /* ===== Graph Animations ===== */
@@ -1136,10 +1377,6 @@ body {
 
     .message.user .message-text {
         max-width: 90%;
-    }
-
-    .graph-container {
-        height: 280px;
     }
 
     .node-details-panel {

@@ -9,7 +9,7 @@ from server.llm.prompt_loader import PromptLoader
 from server.llm.providers.openai_provider import OpenAIProvider
 from server.llm.stream_events import StreamEvent
 from server.tools.registry import Tools
-from server.tools.source_registry import render_citations
+from server.tools.source_registry import extract_cited_source_files, render_citations
 from server.utils.tracing import (
     OI_INPUT_VALUE,
     OI_SPAN_KIND,
@@ -100,6 +100,9 @@ class LLMManager:
                         )
                         # History keeps raw (source:N); user/SSE get [n] + ### Источники
                         self.history_manager.add_entry(user_text, final_content)
+                        cited = extract_cited_source_files(
+                            final_content, self.tools.source_registry
+                        )
                         display = render_citations(
                             final_content, self.tools.source_registry
                         )
@@ -108,6 +111,7 @@ class LLMManager:
                             {
                                 **event.data,
                                 "final_content": display,
+                                "cited_source_files": cited,
                             },
                         )
                         set_span_ok(span, display)

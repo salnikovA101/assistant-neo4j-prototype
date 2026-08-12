@@ -7,6 +7,13 @@ from fastapi import Request
 from server.utils.config import AppConfig
 from server.llm.manager import LLMManager
 from server.llm.stream_events import StreamEvent
+from server.core.graph_runs import (
+    current_graph_collector,
+    graph_run_store,
+    new_graph_collector,
+    reset_graph_collector,
+)
+from server.tools.source_registry import filter_chains_by_source_files
 from server.utils.tracing import (
     OI_INPUT_VALUE,
     OI_SPAN_KIND,
@@ -64,7 +71,6 @@ class ServerPipeline:
         await self.llm.unload()
         if self.tts is not None:
             self.tts.unload()
-        self.llm.tools.graph_filter.close()
         await close_driver()
         logger.info("Ресурсы освобождены")
 
@@ -170,8 +176,8 @@ class ServerPipeline:
 
             sq = self.llm.tools.graph_qa.successful_queries
             sq_len_before = len(sq)
-            asked_subgraph = False
             final_content = ""
+            collector_token = new_graph_collector()
 
             try:
                 async for event in self.llm.generate_response_stream(user_text=text):
@@ -179,17 +185,21 @@ class ServerPipeline:
                         logger.info("Клиент отключился — остановка LLM stream")
                         break
 
-                    if event.type == "tool_call" and event.data.get("name") == "ask_subgraph":
-                        asked_subgraph = True
-                    if event.type == "tool_result" and event.data.get("name") == "ask_subgraph":
-                        if event.data.get("ok"):
-                            asked_subgraph = True
                     if event.type == "done":
                         final_content = event.data.get("final_content") or final_content
                         sq_len_after = len(sq)
                         self._last_new_queries = list(sq)[sq_len_before:sq_len_after]
+                        cited = event.data.get("cited_source_files") or []
+                        graph_chains = filter_chains_by_source_files(
+                            current_graph_collector() or [],
+                            cited,
+                        )
+                        graph_run_id = (
+                            graph_run_store.put(graph_chains) if graph_chains else ""
+                        )
+                        graph_chain_count = len(graph_chains) if graph_run_id else 0
                         self._last_request_has_graph = (
-                            len(self._last_new_queries) > 0 or asked_subgraph
+                            bool(graph_run_id) or len(self._last_new_queries) > 0
                         )
                         self._last_answer = final_content
                         event = StreamEvent(
@@ -197,6 +207,8 @@ class ServerPipeline:
                             {
                                 "final_content": final_content,
                                 "has_graph": self._last_request_has_graph,
+                                "graph_run_id": graph_run_id,
+                                "graph_chain_count": graph_chain_count,
                             },
                         )
                         set_span_ok(span, final_content)
@@ -210,6 +222,8 @@ class ServerPipeline:
                 self._last_request_has_graph = False
                 set_span_error(span, str(e))
                 yield StreamEvent("error", {"message": str(e)})
+            finally:
+                reset_graph_collector(collector_token)
 
     async def synthesize(
         self, text: str, request: Optional[Request] = None
@@ -246,41 +260,3 @@ class ServerPipeline:
         """Показывает, был ли сгенерирован граф в последнем ответе."""
         return self._last_request_has_graph
 
-    async def get_graph_data(self) -> Dict[str, List[Dict[str, Any]]]:
-        """
-        Извлекает данные графа для визуализации по последнему успешному Cypher-запросу.
-
-        Возвращает пустой граф, если текущий запрос не породил нового
-        успешного Cypher (чтобы не показывать устаревший граф от прошлого вопроса).
-
-        Returns:
-            Словарь {nodes: [...], edges: [...]}.
-        """
-        if not getattr(self, "_last_new_queries", None):
-            logger.info(
-                "Текущий запрос не породил нового Cypher — граф не отображается"
-            )
-            return {"nodes": [], "edges": []}
-
-        merged_data = {"nodes": [], "edges": []}
-        seen_nodes = set()
-        seen_edges = set()
-
-        for question, cypher in self._last_new_queries:
-            logger.info(f"Визуализация графа по запросу: {cypher}")
-            graph_data = await self.llm.tools.graph_filter.build_viz_graph(
-                assistant_answer=self._last_answer,
-                original_cypher=cypher,
-            )
-            
-            for node in graph_data.get("nodes", []):
-                if node["id"] not in seen_nodes:
-                    seen_nodes.add(node["id"])
-                    merged_data["nodes"].append(node)
-                    
-            for edge in graph_data.get("edges", []):
-                if edge["id"] not in seen_edges:
-                    seen_edges.add(edge["id"])
-                    merged_data["edges"].append(edge)
-
-        return merged_data

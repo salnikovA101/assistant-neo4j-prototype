@@ -1,217 +1,225 @@
-"""
-Извлечение данных графа (nodes + edges) из Neo4j для визуализации.
+"""Accepted-chain graph payloads for the UI. Read-only Neo4j hydration, no LLM."""
 
-Переиспользует последний успешный Cypher-запрос из GraphQA,
-перезапуская его через raw driver для получения полных Node/Relationship объектов.
-"""
+from __future__ import annotations
 
-import logging
-import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Iterable
 
-from neo4j import GraphDatabase
+from neo4j import AsyncDriver
 
-logger = logging.getLogger(__name__)
+from server.algorithm.cypher.edges import fetch_viz_edges
 
-_MATCH_RE = re.compile(
-    r"(MATCH\s+.*?)(?=\s+RETURN\b)",
-    re.DOTALL | re.IGNORECASE,
-)
-
-_NODE_COLORS: Dict[str, str] = {
+NODE_COLORS: dict[str, str] = {
     "Metabolite": "#c990c0",
     "Microbe": "#569480",
+    "StarterCulture": "#4c8dff",
     "EnvironmentCondition": "#f0a85e",
 }
-_DEFAULT_COLOR = "#a5abb6"
+DEFAULT_NODE_COLOR = "#a5abb6"
 
 
-class GraphVizExtractor:
-    """
-    Извлекает подграф из Neo4j для визуализации в UI.
+def _first(*values: Any) -> Any:
+    for value in values:
+        if value is not None and value != "":
+            return value
+    return None
 
-    Работает на основе последнего успешного Cypher-запроса из GraphQA:
-    1. Берёт MATCH-часть из оригинального запроса.
-    2. Перезапускает с `RETURN *`, чтобы получить полные Node/Relationship объекты.
-    3. Парсит результат в структуру {nodes: [...], edges: [...]}.
-    """
 
-    def __init__(self, uri: str, user: str, password: str):
-        self._driver = GraphDatabase.driver(uri, auth=(user, password))
-        logger.info("GraphVizExtractor инициализирован")
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
-    def close(self):
-        self._driver.close()
 
-    def _build_viz_cypher(self, original_cypher: str) -> Optional[str]:
-        """
-        Трансформирует оригинальный Cypher: берёт MATCH (+WHERE) часть,
-        заменяет RETURN на `RETURN *` для получения полных объектов.
-        """
-        match = _MATCH_RE.search(original_cypher)
-        if not match:
-            logger.warning(
-                f"Не удалось извлечь MATCH-клаузу из Cypher: {original_cypher}"
-            )
-            return None
+def _iter_chain_edges(chain: dict[str, Any]) -> Iterable[tuple[str, dict[str, Any], str]]:
+    for edge in chain.get("edges") or []:
+        if isinstance(edge, dict):
+            yield "spine", edge, ""
+    for hub_id, fan_edges in (chain.get("fans") or {}).items():
+        for edge in fan_edges or []:
+            if isinstance(edge, dict):
+                yield "fan", edge, str(hub_id)
 
-        match_clause = match.group(1).strip()
 
-        limit_match = re.search(r"LIMIT\s+(\d+)", original_cypher, re.IGNORECASE)
-        limit = int(limit_match.group(1)) if limit_match else 50
+def _add_node(
+    nodes: dict[str, dict[str, Any]],
+    node_id: str,
+    *,
+    name: str = "",
+    label: str = "",
+    community: Any = None,
+) -> None:
+    if not node_id:
+        return
+    caption = (name or "").strip() or f"Node {node_id[-6:]}"
+    group = (label or "").strip() or "Unknown"
+    color = NODE_COLORS.get(group, DEFAULT_NODE_COLOR)
 
-        viz_cypher = f"{match_clause}\nRETURN * LIMIT {limit}"
-        logger.info(f"Viz Cypher: {viz_cypher}")
-        return viz_cypher
+    properties: dict[str, Any] = {"name": caption}
+    if group != "Unknown":
+        properties["label"] = group
+    if community is not None:
+        properties["leiden_community"] = community
 
-    def _extract_graph_from_records(
-        self, records: list
-    ) -> Dict[str, List[Dict[str, Any]]]:
-        """
-        Парсит записи Neo4j (содержащие Node/Relationship объекты) в {nodes, edges}.
-        """
-        nodes_map: Dict[str, Dict[str, Any]] = {}
-        edges_list: List[Dict[str, Any]] = []
-        seen_edges: set = set()
-
-        for record in records:
-            for value in record.values():
-                self._process_value(value, nodes_map, edges_list, seen_edges)
-
-        return {
-            "nodes": list(nodes_map.values()),
-            "edges": edges_list,
-        }
-
-    def _process_value(
-        self,
-        value: Any,
-        nodes_map: Dict[str, Dict[str, Any]],
-        edges_list: List[Dict[str, Any]],
-        seen_edges: set,
-    ):
-        """Рекурсивно обрабатывает значение из записи Neo4j."""
-        from neo4j.graph import Node, Relationship, Path
-
-        if isinstance(value, Node):
-            self._add_node(value, nodes_map)
-        elif isinstance(value, Relationship):
-            self._add_relationship(value, nodes_map, edges_list, seen_edges)
-        elif isinstance(value, Path):
-            for node in value.nodes:
-                self._add_node(node, nodes_map)
-            for rel in value.relationships:
-                self._add_relationship(rel, nodes_map, edges_list, seen_edges)
-        elif isinstance(value, list):
-            for item in value:
-                self._process_value(item, nodes_map, edges_list, seen_edges)
-
-    def _add_node(self, node: Any, nodes_map: Dict[str, Dict[str, Any]]):
-        """Добавляет ноду в карту, если ещё нет."""
-        node_id = str(node.element_id)
-        if node_id in nodes_map:
-            return
-
-        labels = list(node.labels)
-
-        primary_label = "Unknown"
-        for lbl in labels:
-            if lbl in _NODE_COLORS:
-                primary_label = lbl
-                break
-
-        if primary_label == "Unknown" and labels:
-            primary_label = labels[0]
-
-        props = dict(node)
-        name = props.get("name", f"Node {node_id[-6:]}")
-
-        nodes_map[node_id] = {
+    existing = nodes.get(node_id)
+    if existing is None:
+        nodes[node_id] = {
             "id": node_id,
-            "label": name,
-            "group": primary_label,
-            "color": _NODE_COLORS.get(primary_label, _DEFAULT_COLOR),
-            "properties": props,
+            "label": group,
+            "caption": caption,
+            "group": group,
+            "color": color,
+            "properties": properties,
         }
+        return
 
-    def _add_relationship(
-        self,
-        rel: Any,
-        nodes_map: Dict[str, Dict[str, Any]],
-        edges_list: List[Dict[str, Any]],
-        seen_edges: set,
-    ):
-        """Добавляет связь в список, если ещё нет."""
-        edge_id = str(rel.element_id)
-        if edge_id in seen_edges:
-            return
-        seen_edges.add(edge_id)
+    if existing.get("group") in ("", "Unknown") and group != "Unknown":
+        existing["group"] = group
+        existing["label"] = group
+        existing["color"] = color
+    if not existing.get("caption"):
+        existing["caption"] = caption
+    existing.setdefault("properties", {})
+    for key, value in properties.items():
+        existing["properties"].setdefault(key, value)
 
-        start_id = str(rel.start_node.element_id)
-        end_id = str(rel.end_node.element_id)
 
-        self._add_node(rel.start_node, nodes_map)
-        self._add_node(rel.end_node, nodes_map)
+def _edge_payload(
+    edge: dict[str, Any],
+    hydration: dict[str, Any],
+    *,
+    role: str,
+    chain_id: str,
+    hub_id: str = "",
+) -> dict[str, Any] | None:
+    edge_id = _first(edge.get("element_id"), edge.get("id"), hydration.get("id"))
+    from_id = _first(hydration.get("from_id"), edge.get("start_id"))
+    to_id = _first(hydration.get("to_id"), edge.get("end_id"))
+    if not edge_id or not from_id or not to_id:
+        return None
 
-        props = dict(rel)
-        display_props = {}
-        for k, v in props.items():
-            display_props[k] = v
+    properties: dict[str, Any] = {
+        "edge_key": _first(edge.get("edge_key"), hydration.get("id")),
+        "evidence": _first(hydration.get("evidence"), edge.get("evidence"), ""),
+        "chunk_id": _first(hydration.get("chunk_id"), edge.get("chunk_id"), ""),
+        "source_file": _first(hydration.get("source_file"), edge.get("source_file"), ""),
+        "confidence": _as_float(_first(hydration.get("confidence"), edge.get("confidence"), 1.0), 1.0),
+        "run_id": _first(hydration.get("run_id"), ""),
+        "sim": _as_float(edge.get("sim"), 0.0),
+        "source": _first(edge.get("source"), ""),
+    }
+    if hub_id:
+        properties["hub_id"] = hub_id
 
-        edges_list.append(
+    return {
+        "id": str(edge_id),
+        "from": str(from_id),
+        "to": str(to_id),
+        "label": _first(hydration.get("type"), edge.get("type"), "RELATED"),
+        "role": role,
+        "chain_ids": [chain_id],
+        "properties": properties,
+    }
+
+
+def _merge_edge(target: dict[str, dict[str, Any]], edge: dict[str, Any]) -> None:
+    existing = target.get(edge["id"])
+    if existing is None:
+        target[edge["id"]] = edge
+        return
+
+    existing["chain_ids"] = sorted(set(existing.get("chain_ids") or []) | set(edge.get("chain_ids") or []))
+    if existing.get("role") != "spine" and edge.get("role") == "spine":
+        existing["role"] = "spine"
+    for key, value in (edge.get("properties") or {}).items():
+        existing.setdefault("properties", {}).setdefault(key, value)
+
+
+def build_chain_views(
+    chains: list[dict[str, Any]],
+    hydration: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    hydration = hydration or {}
+    views: list[dict[str, Any]] = []
+
+    for idx, chain in enumerate(chains, 1):
+        chain_id = str(chain.get("chain_id") or f"a{idx}")
+        nodes: dict[str, dict[str, Any]] = {}
+        edges: dict[str, dict[str, Any]] = {}
+
+        for role, edge, hub_id in _iter_chain_edges(chain):
+            edge_id = _first(edge.get("element_id"), edge.get("id"))
+            row = hydration.get(str(edge_id), {}) if edge_id else {}
+            payload = _edge_payload(edge, row, role=role, chain_id=chain_id, hub_id=hub_id)
+            if payload is None:
+                continue
+
+            _add_node(
+                nodes,
+                payload["from"],
+                name=_first(row.get("from_name"), edge.get("start"), edge.get("start_name"), ""),
+                label=_first(row.get("from_label"), edge.get("start_label"), ""),
+                community=row.get("from_community"),
+            )
+            _add_node(
+                nodes,
+                payload["to"],
+                name=_first(row.get("to_name"), edge.get("end"), edge.get("end_name"), ""),
+                label=_first(row.get("to_label"), edge.get("end_label"), ""),
+                community=row.get("to_community"),
+            )
+            _merge_edge(edges, payload)
+
+        views.append(
             {
-                "id": edge_id,
-                "from": start_id,
-                "to": end_id,
-                "label": rel.type,
-                "properties": display_props,
+                "id": chain_id,
+                "label": f"Цепь {idx}",
+                "score": _as_float(chain.get("score"), 0.0),
+                "nodes": list(nodes.values()),
+                "edges": list(edges.values()),
             }
         )
 
-    def execute_and_parse(self, cypher: str) -> Dict[str, List[Dict[str, Any]]]:
-        """
-        Выполняет готовый Cypher-запрос и парсит результат в {nodes, edges}.
+    return views
 
-        Используется GraphFilterAgent, который самостоятельно генерирует Cypher.
 
-        Args:
-            cypher: Готовый Cypher-запрос для визуализации.
+def merge_views(views: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    nodes: dict[str, dict[str, Any]] = {}
+    edges: dict[str, dict[str, Any]] = {}
 
-        Returns:
-            Словарь {nodes: [...], edges: [...]}.
-        """
-        try:
-            with self._driver.session(default_access_mode="READ") as session:
-                result = session.run(cypher)
-                records = list(result)
+    for view in views:
+        for node in view.get("nodes") or []:
+            existing = nodes.get(node["id"])
+            if existing is None:
+                nodes[node["id"]] = node
+            else:
+                if existing.get("group") in ("", "Unknown") and node.get("group") not in ("", "Unknown"):
+                    existing["group"] = node["group"]
+                    existing["label"] = node["label"]
+                    existing["color"] = node["color"]
+                existing.setdefault("properties", {})
+                for key, value in (node.get("properties") or {}).items():
+                    existing["properties"].setdefault(key, value)
 
-                if not records:
-                    logger.info("Viz-запрос вернул пустой результат")
-                    return {"nodes": [], "edges": []}
+        for edge in view.get("edges") or []:
+            _merge_edge(edges, edge)
 
-                graph_data = self._extract_graph_from_records(records)
-                logger.info(
-                    f"Граф извлечён: {len(graph_data['nodes'])} нод, "
-                    f"{len(graph_data['edges'])} связей"
-                )
-                return graph_data
+    return {"nodes": list(nodes.values()), "edges": list(edges.values())}
 
-        except Exception as e:
-            logger.error(f"Ошибка извлечения графа: {e}")
-            return {"nodes": [], "edges": []}
 
-    def extract(self, original_cypher: str) -> Dict[str, List[Dict[str, Any]]]:
-        """
-        Извлекает данные графа по оригинальному Cypher-запросу (legacy).
+async def build_graph_viz_payload(
+    driver: AsyncDriver,
+    chains: list[dict[str, Any]],
+) -> dict[str, Any]:
+    edge_ids: list[str] = []
+    for chain in chains:
+        for _, edge, _ in _iter_chain_edges(chain):
+            edge_id = _first(edge.get("element_id"), edge.get("id"))
+            if edge_id:
+                edge_ids.append(str(edge_id))
 
-        Args:
-            original_cypher: Оригинальный успешный Cypher из GraphQA.
+    rows = await fetch_viz_edges(driver, edge_ids)
+    hydration = {str(row.get("id")): row for row in rows if row.get("id")}
 
-        Returns:
-            Словарь {nodes: [...], edges: [...]}.
-        """
-        viz_cypher = self._build_viz_cypher(original_cypher)
-        if not viz_cypher:
-            return {"nodes": [], "edges": []}
-
-        return self.execute_and_parse(viz_cypher)
+    views = build_chain_views(chains, hydration)
+    return {"views": views, "all": merge_views(views)}

@@ -22,11 +22,60 @@ from server.utils.config import OpenAIProfile
 logger = logging.getLogger(__name__)
 
 # Final user-facing strip: generic <think>, Gemma channel thoughts, bare <|think|>.
+# Also drop unclosed think blocks (truncated streams / broken tags).
 _THINK_TAG_RE = re.compile(
-    r"(?s)(?:<think>.*?</think>|"
-    r"<\|channel\>thought.*?<channel\|>|"
+    r"(?s)(?:<think>.*?(?:</think>|$)|"
+    r"<\|channel\>thought.*?(?:<channel\|>|$)|"
     r"<\|think\|>)"
 )
+
+# Untagged English chain-of-thought that some OpenRouter models dump into content
+# after tool calls (seen with qwen3.* when reasoning lands in Completion).
+_COT_MARKER_RE = re.compile(
+    r"(?im)^(?:The user wants|I have gathered|I need to|"
+    r"Drafting the response|Structure of the answer|"
+    r"Final check(?: on constraints)?|Let's write\.?|Plan:)\b"
+)
+_CYRILLIC_LINE_RE = re.compile(r"(?m)^[^\n]*[А-Яа-яЁё]{3,}")
+
+
+def strip_leaked_cot_preamble(text: str) -> str:
+    """
+    Drop untagged English planning preamble before a Cyrillic final answer.
+
+    OpenRouter sometimes puts Qwen/DeepSeek "thinking" into Completion/content
+    without <think> tags. Our stream then treats it as the answer. If we detect
+    multiple CoT markers and a later Cyrillic answer start, keep only the answer.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+
+    cleaned = _THINK_TAG_RE.sub("", raw).strip()
+    if not cleaned:
+        return ""
+
+    first_cot = _COT_MARKER_RE.search(cleaned)
+    if not first_cot or first_cot.start() > 240:
+        return cleaned
+
+    for match in _CYRILLIC_LINE_RE.finditer(cleaned):
+        if match.start() <= first_cot.start():
+            continue
+        preamble = cleaned[: match.start()]
+        if len(preamble) < 180:
+            continue
+        if len(_COT_MARKER_RE.findall(preamble)) < 2:
+            continue
+        answer = cleaned[match.start() :].strip()
+        if answer:
+            logger.info(
+                "Stripped untagged CoT preamble from final answer (%s chars)",
+                len(preamble),
+            )
+            return answer
+    return cleaned
+
 
 
 def _reasoning_kwargs(profile: OpenAIProfile) -> Dict[str, Any]:
@@ -404,7 +453,7 @@ class BaseLLMProvider(ABC):
                 kwargs["tool_choice"] = "none" if turns >= max_turns else "auto"
 
             text = "".join(final_content_parts)
-            text = _THINK_TAG_RE.sub("", text).strip()
+            text = strip_leaked_cot_preamble(text)
 
             logger.debug(
                 f"[{self.__class__.__name__}] Ответ за {time.perf_counter() - start:.2f}s"

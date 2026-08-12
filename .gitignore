@@ -16,6 +16,7 @@ venv/
 # IDE
 .vscode/
 .idea/
+.cursor/
 
 
 # OS

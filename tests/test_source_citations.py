@@ -5,6 +5,8 @@ from __future__ import annotations
 from server.tools.source_registry import (
     SourceRegistry,
     collect_source_files,
+    extract_cited_source_files,
+    filter_chains_by_source_files,
     remap_filenames_to_source_ids,
     render_citations,
 )
@@ -119,3 +121,45 @@ def test_collect_source_files_from_fans():
     ]
     files = collect_source_files(accepted)
     assert files == ["a.pdf", "b.pdf"]
+
+
+def test_extract_cited_source_files_order_and_unknown():
+    reg = SourceRegistry()
+    reg.register("one.pdf")
+    reg.register("two.pdf")
+    raw = "A (source:2). B (source:1; source:2). Fake (source:99)."
+    assert extract_cited_source_files(raw, reg) == ["two.pdf", "one.pdf"]
+
+
+def test_extract_cited_empty_when_no_citations():
+    reg = SourceRegistry()
+    reg.register("one.pdf")
+    assert extract_cited_source_files("Нет цитат.", reg) == []
+
+
+def test_filter_chains_by_source_files_edges_and_fans():
+    chains = [
+        {
+            "chain_id": "a1",
+            "edges": [{"source_file": "keep.pdf"}],
+            "fans": {},
+        },
+        {
+            "chain_id": "a2",
+            "edges": [{"source_file": "other.pdf"}],
+            "fans": {},
+        },
+        {
+            "chain_id": "a3",
+            "edges": [],
+            "fans": {"h": [{"source_file": "keep.pdf"}]},
+        },
+    ]
+    kept = filter_chains_by_source_files(chains, ["keep.pdf"])
+    assert [c["chain_id"] for c in kept] == ["a1", "a3"]
+
+
+def test_filter_chains_empty_cited_returns_empty():
+    chains = [{"chain_id": "a1", "edges": [{"source_file": "a.pdf"}], "fans": {}}]
+    assert filter_chains_by_source_files(chains, []) == []
+    assert filter_chains_by_source_files(chains, ["  "]) == []
