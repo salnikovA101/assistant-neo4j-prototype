@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-# Schema node labels only (nodes often carry an extra non-schema label too).
+# Schema labels for unit display; Cypher whitelist in cypher/edges.py imports this.
 PRIMARY_NODE_LABELS: tuple[str, ...] = (
     "Metabolite",
     "Microbe",
@@ -97,10 +97,9 @@ def _fan_leaf_line_in(
 class SubQuestion:
     id: str
     text: str
-    closed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return {"id": self.id, "text": self.text, "closed": self.closed}
+        return {"id": self.id, "text": self.text}
 
 
 @dataclass
@@ -129,13 +128,6 @@ class EdgeRecord:
     def end_ref(self) -> str:
         return format_node_ref(self.end_label, self.end_name, self.end_id)
 
-    def to_brief_part(self) -> str:
-        ev = self.evidence or ""
-        return f"{self.start_ref()}-[{self.rel_type}]->{self.end_ref()}: {ev}"
-
-    def to_spine_line(self) -> str:
-        return _directed_edge_line(self)
-
     def to_dict_edge(self) -> dict[str, Any]:
         return {
             "edge_key": self.edge_key,
@@ -162,9 +154,6 @@ class CandidateGraph:
     edges: dict[str, EdgeRecord] = field(default_factory=dict)
     node_to_edges: dict[str, list[str]] = field(default_factory=dict)
     transition_adj: dict[str, list[str]] = field(default_factory=dict)
-
-    def __len__(self) -> int:
-        return len(self.edges)
 
 
 def _fan_line(hub_id: str, e: EdgeRecord) -> str:
@@ -277,33 +266,10 @@ class Chain:
         }
 
 
-UNIT_RULES = """\
-RULES:
-- SPINE: one line = one directed edge
-  Label: A -[REL: "evidence"]-> Label: B  (source_file.pdf; conf=0.87),
-  top to bottom. Labels are Microbe / Metabolite / StarterCulture /
-  EnvironmentCondition. Adjacent lines may share an endpoint (walk order);
-  arrow is Neo4j direction. Trailing (...) lists source_file and/or conf when present.
-- FANS @Hub: hub-centric leaves only — out-star -[REL]-> Leaf  (source; conf),
-  in-star <-[REL]- Leaf  (source; conf). Sibling fans are NOT linked to each other.
-- Do not invent facts outside the listed units.
-- User-facing bibliography uses [n] → ### Источники mapped from these source_file
-  values; do not cite UNIT indices as sources. Edge conf is graph provenance, not
-  an answer-level confidence score.
-""".strip()
-
-
 @dataclass
 class SessionState:
-    """Per tool-call session (p, accepted, open sq)."""
+    """Per-question run: subquestions, accepted units, embed cache."""
 
     subquestions: list[SubQuestion] = field(default_factory=list)
     accepted: list[Chain] = field(default_factory=list)
-    p_edges: dict[str, float] = field(default_factory=dict)
     embed_cache: dict[str, list[float]] = field(default_factory=dict)
-    used_edges: set[str] = field(default_factory=set)
-    # Exact spine evidence sequences already shown (accepted + rejected)
-    seen_spine_seqs: set[tuple[str, ...]] = field(default_factory=set)
-
-    def open_sqs(self) -> list[SubQuestion]:
-        return [s for s in self.subquestions if not s.closed]

@@ -1,21 +1,38 @@
-"""Mock assistant: decompose question into retrieval statements (eval only)."""
+"""Mock assistant: isolate the SUBQUESTIONS module from assistant_logic.md."""
 
 from __future__ import annotations
 
 import json
 import logging
 import re
+from pathlib import Path
 from typing import Any
 
 from openai import AsyncOpenAI
 
-from server.algorithm.slm_utils import (
-    resolve_slm_base_url,
-    resolve_tool_llm_profile,
-)
 from server.utils.config import load_config
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_slm_base_url(raw: str | None) -> str:
+    url = (raw or "").strip().rstrip("/")
+    if not url:
+        url = "http://127.0.0.1:1234/v1"
+    if "host.docker.internal" in url:
+        url = url.replace("host.docker.internal", "127.0.0.1")
+    if url.endswith("/v1"):
+        return url
+    return f"{url}/v1"
+
+
+def _resolve_tool_llm_profile(config: Any) -> Any:
+    profile_name = config.llm.tool_profile
+    llm_profile = getattr(config.llm.profiles, profile_name, None)
+    return llm_profile or config.llm.profiles.other
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_ASSISTANT_LOGIC_PATH = _REPO_ROOT / "prompts" / "assistant_logic.md"
 
 _QUESTION_START_RE = re.compile(
     r"^(what|which|who|whom|whose|where|when|why|how|do|does|did|is|are|was|were|"
@@ -23,38 +40,22 @@ _QUESTION_START_RE = re.compile(
     re.IGNORECASE,
 )
 
-DECOMPOSE_PROMPT = """
-You decompose a scientific user question into 3–6 English RETRIEVAL STATEMENTS
-for dense vector search over GraphRAG *evidence* sentences.
+_DECOMPOSE_TEST_FOOTER = """
+# РЕЖИМ ТЕСТА (только evaluate_v6)
 
-CRITICAL — statements, NOT questions:
-- Each text MUST be a declarative phrase (HyDE / hypothetical evidence style).
-- NO question marks. NO interrogatives (What/Which/How/Does/…).
-- Write as authors write results: processes, lists, inhibitory effects, mappings.
-- Prefer domain keywords and entity names when plausible (peptides, pathogens,
-  casein fractions, proteases) so embeddings match paper evidence.
-- Do NOT invent long fake abstracts; keep each statement one dense sentence
-  (or short noun-phrase + clause), English only.
+Сейчас проверяется только модуль SUBQUESTIONS. Не вызывай ask_subgraph, не
+выбирай effort, не пиши научную заметку и не заполняй GAPS.
+На вопрос пользователя верни исключительно JSON без markdown-ограждения:
 
-Coverage (adapt to the question; skip irrelevant blocks):
-1) Antimicrobial peptides from casein (alpha/beta/kappa) hydrolysis
-2) Enzymes / LAB / pathways releasing those peptides
-3) Antibacterial spectrum (Gram+/Gram− pathogens)
-4) Antifungal activity only if the question asks about fungi
-5) Peptide↔pathogen mapping (activity / MIC style)
-
-GOOD examples:
-- "Antimicrobial peptides derived from enzymatic hydrolysis of alpha-s1, beta, and kappa caseins, including isracidin, casocidin, and kappacin."
-- "Inhibitory effects of casein-derived antimicrobial peptides against Gram-positive and Gram-negative bacterial pathogens."
-- "Correlation between specific casein-derived peptides and susceptible pathogens."
-
-BAD examples (forbidden):
-- "What antimicrobial peptides are formed during casein hydrolysis?"
-- "Which pathogens are inhibited by casein-derived peptides?"
-
-ONLY JSON:
 {"subquestions":[{"id":"sq1","text":"..."},{"id":"sq2","text":"..."}]}
+
+1–6 элементов. Каждый text — готовый sq по правилам модуля SUBQUESTIONS.
 """.strip()
+
+
+def _load_decompose_prompt() -> str:
+    logic = _ASSISTANT_LOGIC_PATH.read_text(encoding="utf-8").strip()
+    return logic + "\n\n" + _DECOMPOSE_TEST_FOOTER
 
 
 def _looks_like_question(text: str) -> bool:
@@ -99,22 +100,22 @@ def _fallback_statements(question: str) -> list[dict[str, str]]:
         {
             "id": "sq1",
             "text": (
-                "Antimicrobial peptides formed during enzymatic hydrolysis of "
-                f"caseins related to: {q}."
+                "produces Proteolytic lactic acid bacteria produce antimicrobial "
+                f"peptides related to: {q}."
             ),
         },
         {
             "id": "sq2",
             "text": (
-                "Inhibitory spectrum of casein-derived antimicrobial peptides "
-                "against bacterial and fungal pathogens."
+                "inhibits Casein-derived antimicrobial peptides inhibit "
+                "bacterial and fungal pathogens."
             ),
         },
         {
             "id": "sq3",
             "text": (
-                "Mapping of specific casein-derived peptides to susceptible "
-                "pathogens and reported antimicrobial activity."
+                "requires Hydrolysis conditions and medium support release of "
+                "antimicrobial peptides from casein."
             ),
         },
     ]
@@ -125,17 +126,17 @@ async def mock_decompose(question: str) -> list[dict[str, str]]:
         return []
     try:
         config = load_config()
-        llm_profile = resolve_tool_llm_profile(config)
+        llm_profile = _resolve_tool_llm_profile(config)
         client = AsyncOpenAI(
             api_key=llm_profile.api_key or "EMPTY",
-            base_url=resolve_slm_base_url(llm_profile.base_url),
+            base_url=_resolve_slm_base_url(llm_profile.base_url),
         )
         params: dict[str, Any] = {
             "model": llm_profile.model,
             "temperature": 0.0,
             "max_tokens": 800,
             "messages": [
-                {"role": "system", "content": DECOMPOSE_PROMPT},
+                {"role": "system", "content": _load_decompose_prompt()},
                 {"role": "user", "content": question},
             ],
         }

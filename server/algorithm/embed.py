@@ -9,8 +9,8 @@ from server.utils.constants import EmbeddingBackend
 
 logger = logging.getLogger(__name__)
 
-_EMBED_BACKEND = EmbeddingBackend.OPENROUTER
-_EMBED_MODEL = "nvidia/nemotron-3-embed-1b:free"
+_V6_EMBED_BACKEND = EmbeddingBackend.OPENROUTER
+_V6_EMBED_MODEL = "nvidia/nemotron-3-embed-1b:free"
 
 
 async def embed_texts(
@@ -31,16 +31,16 @@ async def embed_texts(
     if missing_texts:
         vectors = await get_embeddings_batch(
             missing_texts,
-            backend=_EMBED_BACKEND,
-            model_id=_EMBED_MODEL,
+            backend=_V6_EMBED_BACKEND,
+            model_id=_V6_EMBED_MODEL,
         )
         if len(vectors) != len(missing_texts):
             vectors = []
             for t in missing_texts:
                 one = await get_embeddings_batch(
                     [t],
-                    backend=_EMBED_BACKEND,
-                    model_id=_EMBED_MODEL,
+                    backend=_V6_EMBED_BACKEND,
+                    model_id=_V6_EMBED_MODEL,
                 )
                 vectors.append(one[0] if one else [])
         for i, vec in zip(missing_idx, vectors):

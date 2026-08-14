@@ -53,7 +53,7 @@ class LlmProfiles(BaseModel):
 class LlmConfig(BaseModel):
     current_profile: str = "other"
     cypher_profile: str = "other"
-    # Used by S6 unit judge (and tools that need a nested LLM)
+    # Nested LLM for mock_decompose / tools that need a second profile
     tool_profile: str = "other"
     history_len: int = 6
     prompt_folder: str = "prompts"

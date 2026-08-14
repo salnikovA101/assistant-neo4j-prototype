@@ -1,4 +1,4 @@
-"""S3: N+1 graphs — 300 ANN anchors + 200 bridges ranked in Cypher by cosine."""
+"""S3: N+1 graphs — L ANN/CE anchors + induced bridges ranked by cosine."""
 
 from __future__ import annotations
 
@@ -69,7 +69,6 @@ def _row_to_bridge(b: dict) -> EdgeRecord:
     end_name = b.get("end_name") or ""
     rel_type = b.get("rel_type") or ""
     key = compute_edge_key(start_name, rel_type, end_name, chunk_id, evidence)
-    emb = b.get("embedding")
     return EdgeRecord(
         edge_key=key,
         element_id=b.get("rid") or "",
@@ -81,7 +80,6 @@ def _row_to_bridge(b: dict) -> EdgeRecord:
         start_label=b.get("start_label") or "",
         end_label=b.get("end_label") or "",
         sim=float(b.get("score") or 0.0),
-        embedding=list(emb) if emb else [],
         chunk_id=chunk_id,
         evidence=evidence,
         source_file=b.get("source_file") or "",
@@ -141,7 +139,7 @@ async def build_sq_graph(
     merged = dict(anchors)
     merged.update(bridges)
     logger.info(
-        "S3 sq=%s anchors=%s bridges=%s total=%s",
+        "V6 S3 sq=%s anchors=%s bridges=%s total=%s",
         sq.id,
         len(anchors),
         len(bridges),
@@ -174,7 +172,6 @@ async def build_global_graph(
                     end_label=e.end_label,
                     sim=e.sim,
                     rerank_score=float(e.rerank_score),
-                    embedding=list(e.embedding),
                     chunk_id=e.chunk_id,
                     evidence=e.evidence,
                     source_file=e.source_file,
@@ -210,7 +207,7 @@ async def build_global_graph(
         if k not in merged:
             merged[k] = e
     logger.info(
-        "S3 global anchors=%s bridges=%s total=%s",
+        "V6 S3 global anchors=%s bridges=%s total=%s",
         len(anchors),
         len(bridges),
         len(merged),
@@ -220,13 +217,13 @@ async def build_global_graph(
 
 async def build_all_graphs(
     driver: AsyncDriver,
-    open_sqs: list[SubQuestion],
+    sqs: list[SubQuestion],
     ann_by_sq: dict[str, dict[str, EdgeRecord]],
     sq_embeddings: dict[str, list[float]],
     params: Params,
 ) -> dict[str, CandidateGraph]:
     graphs: dict[str, CandidateGraph] = {}
-    for sq in open_sqs:
+    for sq in sqs:
         g = await build_sq_graph(
             driver,
             sq,

@@ -1,12 +1,17 @@
-"""S4: global best-path DP on line-graph; prize/cost; reshape star → SPINE+FANS.
+"""S4: Team Arc Orienteering on the line-graph (k profitable tours / graph).
+
+Each tour is a global best-path DP: maximize sum of rank contribs over
+L ∈ [min_path_len, max_hops], no node/evidence revisit. After a tour is
+taken, its arcs are zeroed in a *local* p overlay so the next tour must
+collect leftover prize (TOARP: prize at most once).
 
 DP with path_so_far revisit ban is a practical optimum under no-revisit
-(not color-coding exact). Sufficient for n≤300, L≤10.
+(not color-coding exact). Sufficient for n≤300, L≤10, k≤3.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 
 from server.algorithm.evidence import edge_evidence_key
@@ -36,11 +41,10 @@ def _tag_s4_role(edge: EdgeRecord, prize_keys: set[str]) -> EdgeRecord:
 
 def _contribs_for_graph(
     graph: CandidateGraph,
-    tau_store: Mapping[str, float],
     p_store: Mapping[str, float],
     params: Params,
 ) -> tuple[dict[str, float], set[str]]:
-    return rank_contribs(graph.edges, tau_store=tau_store, p_store=p_store, params=params)
+    return rank_contribs(graph.edges, p_store=p_store, params=params)
 
 
 def _reconstruct(
@@ -62,21 +66,21 @@ def _reconstruct(
 def best_path_for_graph(
     graph: CandidateGraph,
     *,
-    tau_store: Mapping[str, float],
-    p_store: Mapping[str, float],
+    p_store: Mapping[str, float] | None = None,
     params: Params,
     id_prefix: str = "c",
+    path_index: int = 1,
 ) -> Chain | None:
     """
-    Global DP: start from every edge; maximize sum of rank contribs over
-    L ∈ [min_path_len, max_hops]. Prize on top prize_top ranked non-bridge
-    edges; demoted ANN + structural bridges pay rank costs. Returns one
-    Chain (SPINE+FANS) or None.
+    One profitable tour: start from every edge; maximize sum of rank contribs
+    over L ∈ [min_path_len, max_hops]. Prize on top prize_top ranked
+    non-bridge edges; demoted ANN + structural bridges pay rank costs.
+    Returns one Chain (SPINE+FANS) or None.
     """
     if not graph.edges:
         return None
 
-    contrib, prize_keys = _contribs_for_graph(graph, tau_store, p_store, params)
+    contrib, prize_keys = _contribs_for_graph(graph, p_store or {}, params)
     max_h = int(params.max_hops)
     min_h = max(1, min(int(params.min_path_len), max_h))
 
@@ -128,7 +132,7 @@ def best_path_for_graph(
     spine = [_tag_s4_role(e, prize_keys) for e in spine]
     fans = {hub: [_tag_s4_role(e, prize_keys) for e in flist] for hub, flist in fans.items()}
     return Chain(
-        chain_id=f"{id_prefix}1",
+        chain_id=f"{id_prefix}{path_index}",
         edge_keys=[e.edge_key for e in spine],
         score=float(best_score),
         source_graph=graph.source_graph,
@@ -139,45 +143,115 @@ def best_path_for_graph(
     )
 
 
+def _n_prize_edges(chain: Chain) -> int:
+    return sum(1 for e in chain.all_edges() if (e.source or "").strip().lower() == "prize")
+
+
 def hop_dp_paths(
     graph: CandidateGraph,
     *,
-    tau_store: Mapping[str, float],
-    p_store: Mapping[str, float],
+    p_store: Mapping[str, float] | None = None,
     params: Params,
     id_prefix: str = "c",
 ) -> list[Chain]:
-    """Compat wrapper: 0 or 1 best path per graph."""
-    chain = best_path_for_graph(
-        graph,
-        tau_store=tau_store,
-        p_store=p_store,
-        params=params,
-        id_prefix=id_prefix,
-    )
-    return [chain] if chain is not None else []
+    """k disjoint-prize tours on one graph (local p overlay)."""
+    k = max(1, int(params.s4_paths_per_graph))
+    local_p: dict[str, float] = dict(p_store or {})
+    out: list[Chain] = []
+    seen_spines: set[tuple[str, ...]] = set()
+    min_len = max(1, int(params.min_path_len))
+
+    for i in range(1, k + 1):
+        chain = best_path_for_graph(
+            graph,
+            p_store=local_p,
+            params=params,
+            id_prefix=id_prefix,
+            path_index=i,
+        )
+        if chain is None:
+            break
+        for ek in chain.all_edge_keys():
+            local_p[ek] = 0.0
+        if len(chain.all_edge_keys()) < min_len:
+            break
+        if _n_prize_edges(chain) < max(1, int(params.s4_min_prize_edges)) or chain.score <= 0.0:
+            break
+        spine = chain.spine_evidence_seq()
+        if spine in seen_spines:
+            continue
+        seen_spines.add(spine)
+        out.append(chain)
+    return out
 
 
 def run_s4_all_graphs(
     graphs: dict[str, CandidateGraph],
     *,
-    tau_store: Mapping[str, float],
-    p_store: Mapping[str, float],
+    p_store: Mapping[str, float] | None = None,
     params: Params,
+    collected_keys: Iterable[str] | None = None,
 ) -> list[Chain]:
+    """k tours / graph. Collected arcs keep frozen prize_top (no ANN promotion)."""
+    seed_p: dict[str, float] = dict(p_store or {})
+    for ek in collected_keys or ():
+        if ek:
+            seed_p[ek] = 0.0
     pool: list[Chain] = []
+    share = bool(params.s4_share_prize_across_graphs)
     for src, g in graphs.items():
-        chain = best_path_for_graph(
+        chains = hop_dp_paths(
             g,
-            tau_store=tau_store,
-            p_store=p_store,
+            p_store=seed_p,
             params=params,
             id_prefix=f"{src}_",
         )
-        if chain is not None:
-            pool.append(chain)
-    min_len = max(1, int(params.min_path_len))
-    if min_len > 1:
-        # Spine may shrink after reshape; require raw path length via spine+fans
-        pool = [c for c in pool if len(c.all_edge_keys()) >= min_len]
+        pool.extend(chains)
+        if share:
+            for c in chains:
+                for ek in c.all_edge_keys():
+                    seed_p[ek] = 0.0
+    return pool
+
+
+def run_s4_fill_budget(
+    graphs: dict[str, CandidateGraph],
+    *,
+    p_store: Mapping[str, float] | None = None,
+    params: Params,
+    budget: int,
+    collected_keys: Iterable[str] | None = None,
+) -> list[Chain]:
+    """Mine prize-once tours until ``budget`` unique spines (or prize runs out).
+
+    One S4 stage: repeats ``run_s4_all_graphs`` (k tours / graph) with an
+    accumulating overlay. May overshoot by one round; S5 cuts to ``budget``.
+    """
+    cap = max(0, int(budget))
+    if cap <= 0 or not graphs:
+        return []
+    collected: set[str] = {str(ek) for ek in (collected_keys or ()) if ek}
+    pool: list[Chain] = []
+    seen: set[tuple[str, ...]] = set()
+    while len(seen) < cap:
+        n_before = len(seen)
+        chunk = run_s4_all_graphs(
+            graphs,
+            p_store=p_store,
+            params=params,
+            collected_keys=collected,
+        )
+        if not chunk:
+            break
+        for c in chunk:
+            spine = c.spine_evidence_seq()
+            if spine in seen:
+                continue
+            seen.add(spine)
+            pool.append(c)
+            collected.update(c.all_edge_keys())
+        if len(seen) == n_before:
+            break
+        if len(pool) > cap * 4:
+            break
     return pool

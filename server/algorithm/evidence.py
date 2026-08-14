@@ -1,4 +1,4 @@
-"""Evidence keys for novelty / anti-dupe across chains and hops."""
+"""Evidence keys for anti-dupe inside a walk and across S5 units."""
 
 from __future__ import annotations
 

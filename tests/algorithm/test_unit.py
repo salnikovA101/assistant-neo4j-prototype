@@ -1,10 +1,9 @@
-"""Unit tests for V6 scoring / S4 / S5 / p / S7 (no Neo4j)."""
+"""Unit tests for retrieval scoring / S4 / S5 / format (no Neo4j)."""
 
 from __future__ import annotations
 
 from server.algorithm.models import CandidateGraph, Chain, EdgeRecord, SubQuestion
 from server.algorithm.params import Params
-from server.algorithm.pheromone import apply_s7, get_tau
 from server.algorithm.scoring import (
     anchor_prize,
     edge_prize_weight,
@@ -12,12 +11,7 @@ from server.algorithm.scoring import (
 )
 from server.algorithm.stage3_graphs import _finalize_graph, transition_allowed
 from server.algorithm.stage4_hop_dp import best_path_for_graph, hop_dp_paths
-from server.algorithm.stage5_select import dedup_s4_pool, select_judge_batch
-from server.algorithm.stage6_judge import (
-    _parse_judge_json,
-    apply_p_event,
-    postprocess_and_update_p,
-)
+from server.algorithm.stage5_select import dedup_s4_pool, select_budget_batch
 from tests.algorithm.mock_decompose import _fallback_statements, _parse_sq
 
 
@@ -44,36 +38,11 @@ def test_decompose_fallback_is_declarative():
 
 def test_anchor_prize_ranking_weight():
     p = Params(s_floor=1e-6)
-    prize = anchor_prize(0.9, "a1", tau_store={"a1": 1.0}, p_store={"a1": 1.0}, params=p)
+    prize = anchor_prize(0.9, "a1", p_store={"a1": 1.0}, params=p)
     assert abs(prize - 0.9) < 1e-9
     e = EdgeRecord("a", "id-a", "R", "x", "y", "X", "Y", sim=0.5, rerank_score=0.8, source="ann")
-    w = edge_prize_weight(e, tau_store={}, p_store={}, params=p)
+    w = edge_prize_weight(e, p_store={}, params=p)
     assert abs(w - 0.8) < 1e-9
-
-
-def test_p_multiply_floor():
-    store: dict[str, float] = {}
-    apply_p_event(store, ["e"], 0.55, floor=0.25)
-    assert abs(store["e"] - 0.55) < 1e-9
-    apply_p_event(store, ["e"], 0.55, floor=0.25)
-    assert abs(store["e"] - 0.55 * 0.55) < 1e-9
-    apply_p_event(store, ["e"], 0.55, floor=0.25)
-    assert store["e"] == 0.25
-
-
-def test_p_protect():
-    store = {"e": 1.0}
-    apply_p_event(store, ["e"], 0.55, floor=0.25, protected={"e"})
-    assert store["e"] == 1.0
-
-
-def test_s7_evaporate_deposit():
-    store = {"old": 1.2}
-    p = Params(tau_rho=0.9, tau_delta=0.08, tau_max=1.25)
-    apply_s7(store, ["new", "old"], p)
-    # old: 1 + 0.9*(1.2-1) = 1.18 then +0.08 = 1.26 → cap 1.25
-    assert abs(get_tau(store, "old") - 1.25) < 1e-9
-    assert abs(get_tau(store, "new") - 1.08) < 1e-9
 
 
 def test_dedup_and_spine_seq_batch():
@@ -100,12 +69,8 @@ def test_dedup_and_spine_seq_batch():
     c = Chain("z", ["e3"], 0.7, source_graph="sq2", edges=[e3])
     uniq = dedup_s4_pool([a, b, c])
     assert len(uniq) == 2
-    batch = select_judge_batch(uniq, seen_spine_seqs=set(), k=10)
+    batch = select_budget_batch(uniq, k=10)
     assert len(batch) == 2
-    # Exact spine copy already seen → empty
-    seen = {u.spine_evidence_seq() for u in uniq}
-    batch2 = select_judge_batch(uniq, seen_spine_seqs=seen, k=10)
-    assert batch2 == []
 
 
 def test_batch_per_graph_quota_then_fill():
@@ -124,7 +89,7 @@ def test_batch_per_graph_quota_then_fill():
     pool.append(_unit("sq4", 0, 0.4))
 
     graph_ids = ["sq1", "sq2", "sq3", "sq4", "global"]
-    batch = select_judge_batch(pool, seen_spine_seqs=set(), k=10, graph_ids=graph_ids)
+    batch = select_budget_batch(pool, k=10, graph_ids=graph_ids)
     assert len(batch) == 10
     counts: dict[str, int] = {}
     for c in batch:
@@ -151,9 +116,8 @@ def test_batch_quota_shrinks_with_fewer_graphs():
     for gid in ("sq1", "sq2", "global"):
         for i in range(5):
             pool.append(_unit(gid, i, 0.5 + 0.05 * i))
-    batch = select_judge_batch(
+    batch = select_budget_batch(
         pool,
-        seen_spine_seqs=set(),
         k=10,
         graph_ids=["sq1", "sq2", "global"],
     )
@@ -183,7 +147,7 @@ def test_batch_allows_partial_evidence_overlap():
             e3,
         ],
     )
-    batch = select_judge_batch([c1, c2], seen_spine_seqs=set(), k=10)
+    batch = select_budget_batch([c1, c2], k=10)
     assert len(batch) == 2
     # Ascending score: best last
     assert batch[0].score <= batch[1].score
@@ -207,7 +171,7 @@ def test_s4_blocks_same_evidence_reentry_via_hub():
     assert "e_sal" in g.transition_adj["e_eco"]
 
     p = Params(min_path_len=1, max_hops=5)
-    paths = hop_dp_paths(g, tau_store={}, p_store={}, params=p)
+    paths = hop_dp_paths(g, p_store={}, params=p)
     # No unit may contain both e_yer and e_sal (same evidence)
     assert len(paths) <= 1
     for c in paths:
@@ -249,7 +213,7 @@ def test_hop_dp_single_and_two_hop():
         transition_adj={"e1": ["e2"], "e2": ["e1"]},
     )
     p = Params(min_path_len=1, max_hops=3)
-    paths = hop_dp_paths(g, tau_store={}, p_store={}, params=p)
+    paths = hop_dp_paths(g, p_store={}, params=p)
     assert len(paths) == 1
     assert 1 <= len(paths[0].all_edge_keys()) <= 3
     # Prefer longer high-prize path: e1+e2 score > either alone
@@ -272,7 +236,7 @@ def test_s4_one_path_per_graph_global_start():
         bridge_cost_c0=0.25,
         bridge_struct_cost=0.30,
     )
-    paths = hop_dp_paths(g, tau_store={}, p_store={}, params=p)
+    paths = hop_dp_paths(g, p_store={}, params=p)
     assert len(paths) == 1
     keys = paths[0].all_edge_keys()
     assert set(keys) == {"e_low", "e_mid", "e_hi"}
@@ -294,13 +258,13 @@ def test_s4_struct_bridge_cost_penalizes_p():
         prize_rank_max=1.0,
         bridge_struct_cost=c_struct,
     )
-    c_p1 = best_path_for_graph(g, tau_store={}, p_store={}, params=p)
+    c_p1 = best_path_for_graph(g, p_store={}, params=p)
     assert c_p1 is not None
     # two ANN prizes at ranks 1,2 → 1.0 + 0.5; bridge −c_struct
     assert abs(c_p1.score - (1.5 - c_struct)) < 1e-6
     roles = {e.edge_key: e.source for e in c_p1.all_edges()}
     assert roles == {"a1": "prize", "a2": "prize", "br": "bridge"}
-    c_pen = best_path_for_graph(g, tau_store={}, p_store={"br": 0.7}, params=p)
+    c_pen = best_path_for_graph(g, p_store={"br": 0.7}, params=p)
     assert c_pen is not None
     assert abs(c_pen.score - (1.5 - c_struct * 1.3)) < 1e-6
 
@@ -320,7 +284,7 @@ def test_s4_prize_top_demotes_weak_ann():
         bridge_cost_c0=c0,
         bridge_cost_gamma=0.0,
     )
-    c = best_path_for_graph(g, tau_store={}, p_store={}, params=p)
+    c = best_path_for_graph(g, p_store={}, params=p)
     assert c is not None
     assert set(c.all_edge_keys()) == {"e_hi", "e_weak", "e_mid"}
     # hi r1=1.0, mid r2=0.5, weak demoted r3 → −c0 (gamma=0)
@@ -345,7 +309,7 @@ def test_s4_no_free_bridge_padding_to_max_hops():
         prize_rank_max=1.0,
         bridge_struct_cost=0.30,
     )
-    c = best_path_for_graph(g, tau_store={}, p_store={}, params=p)
+    c = best_path_for_graph(g, p_store={}, params=p)
     assert c is not None
     assert set(c.all_edge_keys()) == {"e1", "e2"}
     assert len(c.all_edge_keys()) == 2
@@ -382,7 +346,7 @@ def test_s4_rank_prizes_economics():
         source="bridge",
     )
     p = Params(prize_top=4, prize_rank_max=1.0, bridge_cost_c0=0.4, bridge_cost_gamma=0.5, bridge_struct_cost=0.5)
-    contrib, prize_keys = rank_contribs(edges, tau_store={}, p_store={}, params=p)
+    contrib, prize_keys = rank_contribs(edges, p_store={}, params=p)
 
     assert prize_keys == {"a00", "a01", "a02", "a03"}
     assert [round(contrib[f"a{i:02d}"], 3) for i in range(4)] == [1.0, 0.75, 0.5, 0.25]
@@ -394,7 +358,7 @@ def test_s4_rank_prizes_economics():
     assert abs(mid - 0.45) < 1e-6
     assert contrib["br"] == -0.5
     # p dynamics: discount demotes in ranking (a00: w=0.9·0.9=0.81 < a01 0.85)
-    contrib2, prize2 = rank_contribs(edges, tau_store={}, p_store={"a00": 0.9, "a13": 0.5}, params=p)
+    contrib2, prize2 = rank_contribs(edges, p_store={"a00": 0.9, "a13": 0.5}, params=p)
     assert abs(contrib2["a01"] - 1.0) < 1e-6  # a01 takes rank 1
     assert abs(contrib2["a00"] - 0.75 * 0.9) < 1e-6  # rank 2 prize × p
     assert abs(contrib2["a13"] - (-0.6 * 1.5)) < 1e-6  # rejected: tail cost × (2−0.5)
@@ -737,13 +701,6 @@ def test_format_unit_always_uses_arrows():
     assert "<-[" in text
 
 
-def test_unit_rules_describe_directed_hub_fans():
-    from server.algorithm.models import UNIT_RULES
-
-    assert "]->" in UNIT_RULES or "->" in UNIT_RULES
-    assert "FANS @Hub" in UNIT_RULES
-
-
 def test_star_walk_forms_unit_with_fans():
     """AMP star walk is allowed; reshape collapses rays into FANS."""
     e_in = _edge("e_in", "Lab", "AMP", evidence="enter amp")
@@ -764,7 +721,7 @@ def test_star_walk_forms_unit_with_fans():
         min_path_len=2,
         max_hops=5,
     )
-    paths = hop_dp_paths(g, tau_store={}, p_store={}, params=p)
+    paths = hop_dp_paths(g, p_store={}, params=p)
     assert len(paths) <= 1
     # Adjacency must allow star steps
     assert transition_allowed(e_sal, e_yer)
@@ -786,240 +743,6 @@ def _chain_with_ev(cid: str, edge_key: str, evidence: str, score: float = 0.9) -
         chunk_id=f"chunk-{edge_key}",
     )
     return Chain(cid, [edge_key], score, edges=[e], source_graph="sq1")
-
-
-def test_rejected_and_accepted_burn_spine_seq():
-    """Accepted and rejected both record spine_evidence_seq for S5."""
-    c_rej = _chain_with_ev("c1", "e1", "gold evidence sentence")
-    c_acc = _chain_with_ev("c2", "e2", "other evidence")
-    used_edges: set[str] = set()
-    seen: set[tuple[str, ...]] = set()
-    p_store: dict[str, float] = {}
-    sqs = [SubQuestion(id="sq1", text="peptide evidence")]
-    params = Params()
-
-    newly, rejected = postprocess_and_update_p(
-        open_sqs=sqs,
-        all_sqs=sqs,
-        chains=[c_rej, c_acc],
-        sq_closed={"sq1": False},
-        chain_needed={"c1": False, "c2": True},
-        accepted=[],
-        used_edges=used_edges,
-        seen_spine_seqs=seen,
-        p_store=p_store,
-        params=params,
-    )
-
-    assert [c.chain_id for c in rejected] == ["c1"]
-    assert len(newly) == 1
-    assert ("gold evidence sentence",) in seen
-    assert ("other evidence",) in seen
-    assert used_edges == {"e2"}
-    assert abs(p_store.get("e1", 1.0) - params.p_reject) < 1e-9
-    assert abs(p_store.get("e2", 1.0) - params.p_accept) < 1e-9
-
-
-def test_accepted_chain_burns_spine_seq_and_edges():
-    c = _chain_with_ev("c1", "e1", "accepted gold")
-    used_edges: set[str] = set()
-    seen: set[tuple[str, ...]] = set()
-    accepted: list[Chain] = []
-    sqs = [SubQuestion(id="sq1", text="x")]
-    params = Params()
-
-    newly, rejected = postprocess_and_update_p(
-        open_sqs=sqs,
-        all_sqs=sqs,
-        chains=[c],
-        sq_closed={"sq1": False},
-        chain_needed={"c1": True},
-        accepted=accepted,
-        used_edges=used_edges,
-        seen_spine_seqs=seen,
-        p_store={},
-        params=params,
-    )
-
-    assert rejected == []
-    assert len(newly) == 1
-    assert seen == {("accepted gold",)}
-    assert used_edges == {"e1"}
-    assert len(accepted) == 1
-
-
-def test_needed_accepts_even_with_overlapping_edges():
-    """needed=true always accepts; only S5 spine-seq blocks duplicates before judge."""
-    c = _chain_with_ev("c1", "e1", "already shown gold")
-    used_edges = {"e1"}
-    seen: set[tuple[str, ...]] = set()
-    accepted: list[Chain] = []
-    p_store: dict[str, float] = {"e1": 1.0}
-    sqs = [SubQuestion(id="sq1", text="x")]
-    params = Params()
-
-    newly, rejected = postprocess_and_update_p(
-        open_sqs=sqs,
-        all_sqs=sqs,
-        chains=[c],
-        sq_closed={"sq1": False},
-        chain_needed={"c1": True},
-        accepted=accepted,
-        used_edges=used_edges,
-        seen_spine_seqs=seen,
-        p_store=p_store,
-        params=params,
-    )
-
-    assert rejected == []
-    assert len(newly) == 1
-    assert ("already shown gold",) in seen
-    assert used_edges == {"e1"}
-    assert abs(p_store["e1"] - params.p_accept) < 1e-9
-
-
-def test_judge_parse_fail_returns_ok_false():
-    """Unparseable judge JSON → ok=False (do not postprocess)."""
-    import asyncio
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    from server.algorithm.stage6_judge import judge_flat
-
-    sqs = [SubQuestion(id="sq1", text="x")]
-    chains = [_chain_with_ev("c1", "e1", "fragile gold")]
-    params = Params()
-
-    mock_resp = MagicMock()
-    mock_resp.choices = [MagicMock(message=MagicMock(content="not valid json {{{"))]
-    mock_client = MagicMock()
-    mock_client.chat.completions.create = AsyncMock(return_value=mock_resp)
-
-    class _FakeProfile:
-        api_key = "k"
-        base_url = "http://localhost"
-        model = "m"
-        think = False
-
-    async def _run():
-        with (
-            patch(
-                "server.algorithm.stage6_judge.load_config",
-                return_value={},
-            ),
-            patch(
-                "server.algorithm.stage6_judge.resolve_tool_llm_profile",
-                return_value=_FakeProfile(),
-            ),
-            patch(
-                "server.algorithm.stage6_judge.resolve_slm_base_url",
-                return_value="http://localhost",
-            ),
-            patch(
-                "server.algorithm.stage6_judge.AsyncOpenAI",
-                return_value=mock_client,
-            ),
-        ):
-            return await judge_flat(sqs, chains, params)
-
-    sq_closed, chain_needed, raw, ok = asyncio.run(_run())
-    assert ok is False
-    assert sq_closed == {"sq1": False}
-    assert chain_needed == {"c1": False}
-    assert "not valid" in raw
-
-    used_edges: set[str] = set()
-    seen: set[tuple[str, ...]] = set()
-    p_store: dict[str, float] = {"e1": 1.0}
-    if ok:
-        postprocess_and_update_p(
-            open_sqs=sqs,
-            all_sqs=sqs,
-            chains=chains,
-            sq_closed=sq_closed,
-            chain_needed=chain_needed,
-            accepted=[],
-            used_edges=used_edges,
-            seen_spine_seqs=seen,
-            p_store=p_store,
-            params=params,
-        )
-    assert seen == set()
-    assert used_edges == set()
-    assert p_store["e1"] == 1.0
-
-
-def test_judge_api_fail_returns_ok_false():
-    """API exception → ok=False; no mass soft-blacklist if skipped."""
-    import asyncio
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    from server.algorithm.stage6_judge import judge_flat
-
-    sqs = [SubQuestion(id="sq1", text="x")]
-    chains = [
-        _chain_with_ev("c1", "e1", "ev1"),
-        _chain_with_ev("c2", "e2", "ev2"),
-    ]
-    params = Params()
-
-    mock_client = MagicMock()
-    mock_client.chat.completions.create = AsyncMock(side_effect=RuntimeError("boom"))
-
-    class _FakeProfile:
-        api_key = "k"
-        base_url = "http://localhost"
-        model = "m"
-        think = False
-
-    async def _run():
-        with (
-            patch(
-                "server.algorithm.stage6_judge.load_config",
-                return_value={},
-            ),
-            patch(
-                "server.algorithm.stage6_judge.resolve_tool_llm_profile",
-                return_value=_FakeProfile(),
-            ),
-            patch(
-                "server.algorithm.stage6_judge.resolve_slm_base_url",
-                return_value="http://localhost",
-            ),
-            patch(
-                "server.algorithm.stage6_judge.AsyncOpenAI",
-                return_value=mock_client,
-            ),
-        ):
-            return await judge_flat(sqs, chains, params)
-
-    sq_closed, chain_needed, raw, ok = asyncio.run(_run())
-    assert ok is False
-    assert sq_closed == {"sq1": False}
-    assert chain_needed == {"c1": False, "c2": False}
-    assert raw == ""
-
-    p_if_wrong: dict[str, float] = {"e1": 1.0, "e2": 1.0}
-    _, rejected = postprocess_and_update_p(
-        open_sqs=sqs,
-        all_sqs=sqs,
-        chains=chains,
-        sq_closed=sq_closed,
-        chain_needed=chain_needed,
-        accepted=[],
-        used_edges=set(),
-        seen_spine_seqs=set(),
-        p_store=p_if_wrong,
-        params=params,
-    )
-    assert len(rejected) == 2
-    assert abs(p_if_wrong["e1"] - params.p_reject) < 1e-9
-    p_ok: dict[str, float] = {"e1": 1.0, "e2": 1.0}
-    assert p_ok == {"e1": 1.0, "e2": 1.0}
-
-
-def test_parse_judge_json_none_on_garbage():
-    assert _parse_judge_json("not json at all") is None
-    assert _parse_judge_json("```json\n{bad}\n```") is None
 
 
 def _fake_edge(key: str, sim: float, evidence: str = "") -> EdgeRecord:
@@ -1136,132 +859,18 @@ def test_n_gold_in_keys():
     assert n_gold_in_keys([], gold, key_to_ev) == 0
 
 
-def test_graphs_for_open_keeps_open_and_global():
-    from server.algorithm.pipeline import _graphs_for_open
+def test_graphs_for_sqs_keeps_sq_and_global():
+    from server.algorithm.pipeline import _graphs_for_sqs
 
     g1 = CandidateGraph(source_graph="sq1", edges={"a": _fake_edge("a", 0.9)})
     g2 = CandidateGraph(source_graph="sq2", edges={"b": _fake_edge("b", 0.8)})
     gg = CandidateGraph(source_graph="global", edges={"c": _fake_edge("c", 0.7)})
     graphs = {"sq1": g1, "sq2": g2, "global": gg}
     open_sqs = [SubQuestion(id="sq1", text="open one")]
-    sliced = _graphs_for_open(graphs, open_sqs)
+    sliced = _graphs_for_sqs(graphs, open_sqs)
     assert set(sliced.keys()) == {"sq1", "global"}
     assert sliced["sq1"] is g1
     assert sliced["global"] is gg
-
-
-def test_run_s2_s3_once_per_session_multi_iter():
-    """Effort medium → up to 3 S4–S6 iters; S2/S3 must run exactly once."""
-    import asyncio
-    from unittest.mock import AsyncMock, patch
-
-    from server.algorithm.pipeline import run
-
-    e1 = _fake_edge("e1", 0.9, "fact one")
-    e2 = _fake_edge("e2", 0.8, "fact two")
-    # Two edges share a node so hop-DP can form a path of len>=2
-    e1.start_id, e1.end_id = "n1", "n2"
-    e1.start_name, e1.end_name = "N1", "N2"
-    e2.start_id, e2.end_id = "n2", "n3"
-    e2.start_name, e2.end_name = "N2", "N3"
-
-    graph = CandidateGraph(
-        source_graph="sq1",
-        edges={"e1": e1, "e2": e2},
-        node_to_edges={"n1": ["e1"], "n2": ["e1", "e2"], "n3": ["e2"]},
-        transition_adj={"e1": ["e2"], "e2": ["e1"]},
-    )
-    graphs = {"sq1": graph, "global": graph}
-
-    call_counts = {"ann": 0, "rerank": 0, "s3": 0, "judge": 0}
-
-    async def fake_embed(sqs, cache, query_fallback=""):
-        return {s.id: [1.0, 0.0] for s in sqs}
-
-    async def fake_ann(driver, sqs, sq_emb, cache, params):
-        call_counts["ann"] += 1
-        return {s.id: {"e1": e1, "e2": e2} for s in sqs}
-
-    async def fake_rerank(sqs, ann_by_sq, params):
-        call_counts["rerank"] += 1
-        keys = {s.id: ["e1", "e2"] for s in sqs}
-        sims = {"e1": 0.9, "e2": 0.8}
-        return ann_by_sq, keys, keys, sims
-
-    async def fake_build(driver, open_sqs, ann_by_sq, sq_emb, params):
-        call_counts["s3"] += 1
-        return graphs
-
-    async def fake_hydrate(driver, chains):
-        for c in chains:
-            c.edges = [graph.edges[k] for k in c.edge_keys if k in graph.edges]
-            c.text = " | ".join(e.to_brief_part() for e in c.edges)
-
-    async def fake_judge(open_sqs, batch, params):
-        call_counts["judge"] += 1
-        # Keep sq open so effort loop can run multiple iters; reject chains
-        # so novelty burns nothing useful → may empty on later iters, or accept
-        # none and leave used empty. Accept none, leave sq open.
-        return (
-            {s.id: False for s in open_sqs},
-            {c.chain_id: False for c in batch},
-            "{}",
-            True,
-        )
-
-    params = Params(
-        effort="medium",
-        skip_judge=False,
-        min_path_len=2,
-        max_hops=3,
-        k_tool_medium=5,
-        rerank_enabled=False,
-    )
-
-    async def _run():
-        with (
-            patch(
-                "server.algorithm.pipeline.embed_subquestions",
-                side_effect=fake_embed,
-            ),
-            patch(
-                "server.algorithm.pipeline.ann_for_subquestions",
-                side_effect=fake_ann,
-            ),
-            patch(
-                "server.algorithm.pipeline.rerank_ann_by_sq",
-                side_effect=fake_rerank,
-            ),
-            patch(
-                "server.algorithm.pipeline.build_all_graphs",
-                side_effect=fake_build,
-            ),
-            patch(
-                "server.algorithm.pipeline.hydrate_chains",
-                side_effect=fake_hydrate,
-            ),
-            patch(
-                "server.algorithm.pipeline.judge_flat",
-                side_effect=fake_judge,
-            ),
-        ):
-            return await run(
-                AsyncMock(),
-                subquestions=[{"id": "sq1", "text": "Declarative statement about pathways."}],
-                effort="medium",
-                params=params,
-            )
-
-    result = asyncio.run(_run())
-    assert call_counts["ann"] == 1
-    assert call_counts["rerank"] == 1
-    assert call_counts["s3"] == 1
-    # Rejected batch still burns used_edges → next iters may empty; at least 1 judge
-    assert call_counts["judge"] >= 1
-    assert len(result["iters"]) >= 1
-    assert "s3_keys_union" in result
-    assert "ann_keys_union" in result
-    assert result.get("from_graph_cache") is False
 
 
 def test_run_from_graph_cache_skips_s1_s3():
@@ -1283,11 +892,13 @@ def test_run_from_graph_cache_skips_s1_s3():
     sqs = [{"id": "sq1", "text": "Declarative statement about pathways."}]
     params = Params(
         effort="low",
-        skip_judge=True,
         min_path_len=2,
         max_hops=3,
-        k_tool_low=5,
+        max_paths_low=5,
         prize_top=25,
+        s4_paths_per_graph=1,
+        s4_min_prize_edges=1,
+        emit_score_frac=0.0,
     )
     bundle = build_s3_bundle(
         qid="q0",
