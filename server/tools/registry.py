@@ -101,7 +101,7 @@ class Tools:
 
         Args:
             subquestions: 1–6 English declarative statements (light HyDE ok; no '?').
-            effort: search budget — low (1 iteration), medium (2, default), high (3).
+            effort: search budget — low (mine 10 / emit 5), medium (15 / 10, default), high (20 / 15).
         """
         with tracer.start_as_current_span("ask_subgraph") as span:
             span.set_attribute(OI_SPAN_KIND, OISpanKind.TOOL)
@@ -200,9 +200,9 @@ class Tools:
                                 "type": "string",
                                 "enum": ["low", "medium", "high"],
                                 "description": (
-                                    "Search budget = number of chain-selection iterations: "
-                                    "low=1 (single narrow fact), medium=2 (default, typical "
-                                    "question), high=3 (broad multi-entity / table request). "
+                                    "Search budget: how many UNIT chains to mine/emit. "
+                                    "low=mine 10 emit 5 (narrow fact), medium=15/10 "
+                                    "(default), high=20/15 (broad multi-entity / table). "
                                     "Choose by question WIDTH. Max two calls total: "
                                     "high+low or medium+medium."
                                 ),

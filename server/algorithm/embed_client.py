@@ -1,4 +1,4 @@
-"""Embedding HTTP client + Neo4j vector-index discovery."""
+"""Embedding HTTP client + Neo4j vector-index discovery for V6 (no v4 imports)."""
 
 from __future__ import annotations
 

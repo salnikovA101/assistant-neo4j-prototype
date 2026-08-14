@@ -1,16 +1,10 @@
-"""Algorithm hyperparameters (defaults), grouped by pipeline stage."""
+"""Algorithm hyperparameters, grouped by pipeline stage."""
 
 from __future__ import annotations
 
 import os
 from dataclasses import asdict, dataclass, fields
 from typing import Any
-
-# Legacy override keys → canonical field (L = ANN / CE keep / S3 anchors).
-_PARAM_ALIASES: dict[str, str] = {
-    "anchor_top": "L",
-    "rerank_keep": "L",
-}
 
 # Docker Compose sets RERANK_URL=http://host.docker.internal:7997 for the app service.
 _DEFAULT_RERANK_URL = "http://127.0.0.1:7997"
@@ -40,55 +34,63 @@ class Params:
     bridge_top: int = 4000
     branch_cap: int = 20
 
-    # S4: global best-path DP on line-graph (1 path / graph)
-    # Rank-based prize/cost (G-Retriever PCST-style): rank edges by
-    # (rerank|sim)·τ·p; prize(r) = prize_rank_max·(K−r+1)/K for r≤prize_top;
+    # S4: Team Arc Orienteering on the line-graph — k profitable tours / graph.
+    # Rank-based prize/cost: rank edges by (rerank|sim)·p;
+    # prize(r) = prize_rank_max·(K−r+1)/K for r≤prize_top;
     # demoted ANN cost(r) = bridge_cost_c0·(1+γ·x²), x=(r−K)/(N−K);
     # structural bridges (source="bridge") pay flat bridge_struct_cost.
-    prize_top: int = 25
+    # After each tour, collected arcs get local p=0 so the next tour must
+    # pick leftover prize (TOARP: prize at most once).
+    prize_top: int = 80
     max_hops: int = 10
-    min_path_len: int = 5
+    min_path_len: int = 6
+    s4_paths_per_graph: int = 3
+    s4_min_prize_edges: int = 2
+    # Prize collected on one graph is gone for the next (TOARP globally).
+    s4_share_prize_across_graphs: bool = True
     prize_rank_max: float = 1.0
+    # Floor as a fraction of prize_rank_max so mid-ranks in prize_top stay
+    # worth collecting (0 = linear to ~0 at rank K; 0.25 ≈ bridge cost).
+    prize_floor: float = 0.0
     bridge_cost_c0: float = 0.25
     bridge_cost_gamma: float = 0.3
     bridge_struct_cost: float = 0.30
     s_floor: float = 1e-6
 
-    # S5 / effort K
-    k_tool_low: int = 10
-    k_tool_medium: int = 10
-    k_tool_high: int = 10
+    # S5: pick up to path budget (effort_max_paths)
+    max_paths_low: int = 10
+    max_paths_medium: int = 15
+    max_paths_high: int = 20
     effort: str = "medium"
+    # What the assistant actually sees: sort by S4 score, then cap.
+    # Retrieval budget stays max_paths_*; emit is smaller: easy 5 / medium 10 / hard 15.
+    # emit_top_k>0 overrides the effort-specific cap (sweep). 0 → use emit_top_k_*.
+    # emit_score_frac still drops a score cliff inside that cap.
+    emit_top_k_low: int = 5
+    emit_top_k_medium: int = 10
+    emit_top_k_high: int = 15
+    emit_top_k: int = 0
+    emit_score_frac: float = 0.25
 
-    # S6 session p + judge SLM
-    p_accept: float = 0.90
-    p_reject: float = 0.50
-    p_floor: float = 0.10
-    judge_temperature: float = 0.0
-    judge_max_tokens: int = 8192
-    # A/B: skip SLM judge — accept every batch chain, never close sq
-    skip_judge: bool = True
-
-    # S7 pheromone
-    tau_rho: float = 0.9
-    tau_delta: float = 0.08
-    tau_max: float = 1.25
-
-    def effort_max_iters(self) -> int:
+    def effort_max_paths(self) -> int:
+        """Hard cap on accepted units per question (low≈10, medium≈15, hard≈20)."""
         e = (self.effort or "medium").strip().lower()
         if e == "low":
-            return 1
+            return max(0, int(self.max_paths_low))
         if e == "high":
-            return 3
-        return 2
+            return max(0, int(self.max_paths_high))
+        return max(0, int(self.max_paths_medium))
 
-    def effort_k_tool(self) -> int:
+    def effort_emit_top_k(self) -> int:
+        """How many score-sorted units the assistant sees (low=5, medium=10, hard=15)."""
+        if int(self.emit_top_k or 0) > 0:
+            return int(self.emit_top_k)
         e = (self.effort or "medium").strip().lower()
         if e == "low":
-            return int(self.k_tool_low)
+            return max(0, int(self.emit_top_k_low))
         if e == "high":
-            return int(self.k_tool_high)
-        return int(self.k_tool_medium)
+            return max(0, int(self.emit_top_k_high))
+        return max(0, int(self.emit_top_k_medium))
 
     def with_effort(self, effort: str | None) -> Params:
         if not effort:
@@ -112,7 +114,6 @@ def merge_params(overrides: dict[str, Any] | None = None) -> Params:
     allowed = {f.name for f in fields(Params)}
     data = asdict(base)
     for k, v in overrides.items():
-        key = _PARAM_ALIASES.get(k, k)
-        if key in allowed:
-            data[key] = v
+        if k in allowed:
+            data[k] = v
     return Params(**data)

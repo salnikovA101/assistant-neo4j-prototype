@@ -1,4 +1,4 @@
-"""S3 CandidateGraph cache: dump after ANN→CE→bridges; replay S4–S6 offline."""
+"""S3 CandidateGraph cache: dump after ANN→CE→bridges; replay S4–S5 offline."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ S3_FINGERPRINT_KEYS: tuple[str, ...] = (
 
 
 def edge_to_cache_dict(e: EdgeRecord) -> dict[str, Any]:
-    """Serialize edge for disk; omit embedding vectors."""
+    """Serialize edge for disk."""
     return {
         "edge_key": e.edge_key,
         "element_id": e.element_id,
@@ -65,7 +65,6 @@ def edge_from_cache_dict(d: dict[str, Any]) -> EdgeRecord:
         end_label=str(d.get("end_label") or ""),
         sim=float(d.get("sim") or 0.0),
         rerank_score=float(d.get("rerank_score") or 0.0),
-        embedding=[],
         chunk_id=str(d.get("chunk_id") or ""),
         evidence=str(d.get("evidence") or ""),
         source_file=str(d.get("source_file") or ""),

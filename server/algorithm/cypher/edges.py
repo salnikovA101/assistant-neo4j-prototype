@@ -8,8 +8,10 @@ from typing import Any
 
 from neo4j import AsyncDriver
 
+from server.algorithm.models import PRIMARY_NODE_LABELS
+
 # Whitelist only; nodes usually carry an extra non-schema label too.
-_PRIMARY_LABEL_CYPHER = "['Metabolite', 'Microbe', 'StarterCulture', 'EnvironmentCondition']"
+_PRIMARY_LABEL_CYPHER = "[" + ", ".join(repr(x) for x in PRIMARY_NODE_LABELS) + "]"
 _START_LABEL = f"[l IN labels(startNode(r)) WHERE l IN {_PRIMARY_LABEL_CYPHER}][0]"
 _END_LABEL = f"[l IN labels(endNode(r)) WHERE l IN {_PRIMARY_LABEL_CYPHER}][0]"
 _START_LABEL_REL = f"[l IN labels(startNode(relationship)) WHERE l IN {_PRIMARY_LABEL_CYPHER}][0]"
@@ -30,8 +32,7 @@ RETURN elementId(r) AS rid,
        coalesce(r.chunk_id, '') AS chunk_id,
        coalesce(r.evidence, '') AS evidence,
        coalesce(r.source_file, '') AS source_file,
-       coalesce(r.confidence, 1.0) AS confidence,
-       r.evidence_embedding AS embedding
+       coalesce(r.confidence, 1.0) AS confidence
 """
 
 
@@ -95,7 +96,6 @@ RETURN elementId(r) AS rid,
        coalesce(r.evidence, '') AS evidence,
        coalesce(r.source_file, '') AS source_file,
        coalesce(r.confidence, 1.0) AS confidence,
-       r.evidence_embedding AS embedding,
        score AS score
 """
 

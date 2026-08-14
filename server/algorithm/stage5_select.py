@@ -57,34 +57,31 @@ def _score_key(c: Chain) -> tuple[float, int]:
 def _is_eligible(
     c: Chain,
     *,
-    seen_spine_seqs: set[tuple[str, ...]],
     batch_seqs: set[tuple[str, ...]],
 ) -> bool:
     if not c.edge_keys and not c.fans:
         return False
     seq = c.spine_evidence_seq()
-    if seq in seen_spine_seqs or seq in batch_seqs:
+    if seq in batch_seqs:
         return False
     return True
 
 
-def select_judge_batch(
+def select_budget_batch(
     unique_pool: list[Chain],
     *,
-    seen_spine_seqs: set[tuple[str, ...]],
     k: int,
     graph_ids: Sequence[str] | None = None,
 ) -> list[Chain]:
     """
     Fill up to k units with even per-graph quota, then leftover by global score.
 
-    After S4 global DP each graph contributes ≤1 unit, so the per-graph round
-    typically takes that single candidate; fill uses any remaining.
+    After S4 each graph may contribute several tours; the per-graph round
+    takes floor(k/n) of them, then fill uses leftover slots.
 
     For n active graphs: take floor(k/n) best novel units from each graph
     (by score desc). If slots remain (remainder or thin graphs), fill with the
-    best remaining units across all graphs. Final order: score ascending
-    (PathRAG, best last).
+    best remaining units across all graphs.
     """
     if k <= 0:
         return []
@@ -111,7 +108,7 @@ def select_judge_batch(
             return False
         if id(c) in picked:
             return False
-        if not _is_eligible(c, seen_spine_seqs=seen_spine_seqs, batch_seqs=batch_seqs):
+        if not _is_eligible(c, batch_seqs=batch_seqs):
             return False
         batch.append(c)
         batch_seqs.add(c.spine_evidence_seq())
@@ -136,7 +133,7 @@ def select_judge_batch(
                 break
             _try_add(c)
 
-    # PathRAG: lowest score first, best unit last
+    # Score ascending; emit re-ranks by score descending.
     batch.sort(key=_score_key)
 
     out: list[Chain] = []
@@ -172,6 +169,8 @@ async def hydrate_chains(driver: AsyncDriver, chains: Sequence[Chain]) -> None:
                 e.evidence = row.get("evidence") or e.evidence
                 e.chunk_id = row.get("chunk_id") or e.chunk_id
                 e.source_file = row.get("source_file") or e.source_file
+                if row.get("confidence") is not None:
+                    e.confidence = float(row.get("confidence") or e.confidence)
     for c in chains:
         c.text = c.format_unit(c.chain_id)
 
@@ -179,25 +178,24 @@ async def hydrate_chains(driver: AsyncDriver, chains: Sequence[Chain]) -> None:
 def prepare_s5_batch(
     s4_pool: list[Chain],
     *,
-    seen_spine_seqs: set[tuple[str, ...]],
     params: Params,
     graph_ids: Sequence[str] | None = None,
+    k: int | None = None,
 ) -> list[Chain]:
     unique = dedup_s4_pool(s4_pool)
-    k = params.effort_k_tool()
-    batch = select_judge_batch(
+    k_use = int(params.effort_max_paths() if k is None else k)
+    batch = select_budget_batch(
         unique,
-        seen_spine_seqs=seen_spine_seqs,
-        k=k,
+        k=k_use,
         graph_ids=graph_ids,
     )
     n_g = len(graph_ids) if graph_ids else len({c.source_graph for c in unique})
     logger.info(
-        "S5 unique=%s batch=%s k=%s graphs=%s per~%s",
+        "V6 S5 unique=%s batch=%s k=%s graphs=%s per~%s",
         len(unique),
         len(batch),
-        k,
+        k_use,
         n_g,
-        (k // n_g) if n_g else k,
+        (k_use // n_g) if n_g else k_use,
     )
     return batch

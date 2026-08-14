@@ -73,7 +73,7 @@ def _keep_top(pool: list[EdgeRecord], keep: int) -> dict[str, EdgeRecord]:
 
 
 async def rerank_ann_by_sq(
-    open_sqs: list[SubQuestion],
+    sqs: list[SubQuestion],
     ann_by_sq: dict[str, dict[str, EdgeRecord]],
     params: Params,
 ) -> tuple[
@@ -83,7 +83,7 @@ async def rerank_ann_by_sq(
     dict[str, float],
 ]:
     """
-    Per open sq: take top ``L_raw_max`` by cosine (ANN already capped), CE-rerank
+    Per sq: take top ``L_raw_max`` by cosine (ANN already capped), CE-rerank
     vs sq.text, keep ``L``.
 
     Returns:
@@ -107,7 +107,7 @@ async def rerank_ann_by_sq(
                 ann_edge_sims[e.edge_key] = sim
 
     if not params.rerank_enabled:
-        for sq in open_sqs:
+        for sq in sqs:
             hits = ann_by_sq.get(sq.id) or {}
             pool = _pool_by_sim(hits, pool_n)
             _note_pool(pool)
@@ -116,7 +116,7 @@ async def rerank_ann_by_sq(
             rerank_keys[sq.id] = list(kept.keys())
             out[sq.id] = kept
             logger.info(
-                "S2b sq=%s rerank=off pool=%s keep=%s",
+                "V6 S2b sq=%s rerank=off pool=%s keep=%s",
                 sq.id,
                 len(pool),
                 len(kept),
@@ -128,7 +128,7 @@ async def rerank_ann_by_sq(
     url = (params.rerank_url or "http://127.0.0.1:7997").strip()
 
     async with httpx.AsyncClient() as client:
-        for sq in open_sqs:
+        for sq in sqs:
             hits = ann_by_sq.get(sq.id) or {}
             pool = _pool_by_sim(hits, pool_n)
             _note_pool(pool)
@@ -165,7 +165,7 @@ async def rerank_ann_by_sq(
                 )
                 kept = _keep_top(ordered, keep_n)
                 logger.info(
-                    "S2b sq=%s pool=%s keep=%s top_ce=%.3f",
+                    "V6 S2b sq=%s pool=%s keep=%s top_ce=%.3f",
                     sq.id,
                     len(pool),
                     len(kept),
@@ -173,7 +173,7 @@ async def rerank_ann_by_sq(
                 )
             except Exception as e:
                 logger.warning(
-                    "S2b sq=%s rerank failed (%s); fallback top-%s by sim",
+                    "V6 S2b sq=%s rerank failed (%s); fallback top-%s by sim",
                     sq.id,
                     e,
                     keep_n,

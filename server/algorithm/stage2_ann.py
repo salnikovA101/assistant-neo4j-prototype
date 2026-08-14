@@ -1,11 +1,10 @@
-"""S2: per-open-sq relationship ANN (score = cosine from vector index)."""
+"""S2: per-subquestion relationship ANN (score = cosine from vector index)."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
-from collections.abc import Sequence
 
 from neo4j import AsyncDriver
 
@@ -49,7 +48,6 @@ def _upsert_hit(
     chunk_id: str,
     evidence: str,
     score: float,
-    embedding: Sequence[float] | None = None,
 ) -> None:
     edge_key = compute_edge_key(start_name, rel_type, end_name, chunk_id, evidence)
     existing = raw.get(edge_key)
@@ -65,7 +63,6 @@ def _upsert_hit(
             start_label=start_label or "",
             end_label=end_label or "",
             sim=float(score),
-            embedding=list(embedding or []),
             chunk_id=chunk_id or "",
             evidence=evidence or "",
             source="ann",
@@ -80,8 +77,6 @@ def _upsert_hit(
             existing.start_label = start_label
         if end_label:
             existing.end_label = end_label
-    if embedding and not existing.embedding:
-        existing.embedding = list(embedding)
     if evidence and not existing.evidence:
         existing.evidence = evidence
     if chunk_id and not existing.chunk_id:
@@ -154,29 +149,29 @@ async def edge_ann_search(
         ranked = sorted(raw.values(), key=lambda h: h.sim, reverse=True)
         raw = {h.edge_key: h for h in ranked[: params.L_raw_max]}
     logger.info(
-        "S2 ANN indexes=%s per_index_L=%s merged_unique=%s after_L_raw_max=%s",
+        "V6 S2 ANN indexes=%s per_index_L=%s merged_unique=%s after_L_raw_max=%s",
         len(rel_indexes),
         params.L,
         n_merged,
         len(raw),
     )
 
-    missing_emb_ids = [h.element_id for h in raw.values() if not h.embedding]
-    if missing_emb_ids:
-        props = await fetch_edge_properties(driver, missing_emb_ids)
+    prop_ids = [h.element_id for h in raw.values() if h.element_id]
+    if prop_ids:
+        props = await fetch_edge_properties(driver, prop_ids)
         by_id = {p["rid"]: p for p in props}
         remapped: dict[str, EdgeRecord] = {}
         for hit in list(raw.values()):
             p = by_id.get(hit.element_id)
             if p:
-                if p.get("embedding") and not hit.embedding:
-                    hit.embedding = list(p["embedding"])
                 if p.get("evidence") and not hit.evidence:
                     hit.evidence = p["evidence"]
                 if p.get("chunk_id") and not hit.chunk_id:
                     hit.chunk_id = p["chunk_id"]
                 if p.get("source_file"):
                     hit.source_file = p["source_file"] or ""
+                if p.get("confidence") is not None:
+                    hit.confidence = float(p.get("confidence") or hit.confidence)
                 if p.get("start_label") and not hit.start_label:
                     hit.start_label = p["start_label"] or ""
                 if p.get("end_label") and not hit.end_label:
@@ -203,17 +198,17 @@ async def edge_ann_search(
 
 async def ann_for_subquestions(
     driver: AsyncDriver,
-    open_sqs: list[SubQuestion],
+    sqs: list[SubQuestion],
     sq_embeddings: dict[str, list[float]],
     embed_cache: dict[str, list[float]],
     params: Params,
 ) -> dict[str, dict[str, EdgeRecord]]:
     out: dict[str, dict[str, EdgeRecord]] = {}
-    for sq in open_sqs:
+    for sq in sqs:
         emb = sq_embeddings.get(sq.id) or []
         if emb and sq.text.strip() not in embed_cache:
             embed_cache[sq.text.strip()] = emb
         hits = await edge_ann_search(driver, [sq.text], params, embed_cache)
         out[sq.id] = hits
-        logger.info("S2 sq=%s hits=%s", sq.id, len(hits))
+        logger.info("V6 S2 sq=%s hits=%s", sq.id, len(hits))
     return out

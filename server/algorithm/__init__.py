@@ -1,4 +1,4 @@
-"""Graph retrieval algorithm: edge-ANN → N+1 graphs → hop-DP → bool judge → pheromone S7."""
+"""Algorithm V6: edge-ANN → N+1 graphs → S4 tours → emit."""
 
 from server.algorithm.pipeline import run
 
