@@ -86,6 +86,7 @@ def _reasoning_kwargs(profile: OpenAIProfile) -> Dict[str, Any]:
     - OpenAI SDK top-level reasoning_effort (LM Studio / OpenAI gateways)
     - OpenRouter: extra_body.reasoning
     - DeepSeek direct: extra_body.thinking
+    - Qwen3.8: extra_body.chat_template_kwargs.preserve_thinking (+ body flag)
 
     Note: Gemma in LM Studio only accepts reasoning on/off (not high/medium).
     Sending an OpenAI effort still works (LMS warns and falls back to on);
@@ -103,29 +104,82 @@ def _reasoning_kwargs(profile: OpenAIProfile) -> Dict[str, Any]:
     effort = (profile.think_effort or "high").strip().lower()
     # LM Studio Gemma: on/off only — keep SDK-valid effort for OpenAI/DeepSeek,
     # and always pass enabled=true for local templates.
+    template_kwargs: Dict[str, Any] = {"enable_thinking": True}
+    extra: Dict[str, Any]
     if effort in {"on", "off"}:
         enabled = effort == "on"
+        template_kwargs = {"enable_thinking": enabled}
         # Omit top-level reasoning_effort: LM Studio Gemma only accepts on/off and
         # warns on high/medium; extra_body is enough (verified).
-        return {
-            "extra_body": {
-                "reasoning": {"enabled": enabled},
-                "thinking": {"type": "enabled" if enabled else "disabled"},
-                "chat_template_kwargs": {"enable_thinking": enabled},
-            },
+        extra = {
+            "reasoning": {"enabled": enabled},
+            "thinking": {"type": "enabled" if enabled else "disabled"},
+            "chat_template_kwargs": template_kwargs,
         }
+        _apply_preserve_thinking(extra, template_kwargs, profile)
+        return {"extra_body": extra}
 
     if effort not in {"low", "medium", "high", "max", "xhigh", "minimal"}:
         effort = "high"
     sdk_effort = "high" if effort == "max" else effort
+    extra = {
+        "reasoning": {"enabled": True, "effort": effort},
+        "thinking": {"type": "enabled"},
+        "chat_template_kwargs": template_kwargs,
+    }
+    _apply_preserve_thinking(extra, template_kwargs, profile)
     return {
         "reasoning_effort": sdk_effort,
-        "extra_body": {
-            "reasoning": {"enabled": True, "effort": effort},
-            "thinking": {"type": "enabled"},
-            "chat_template_kwargs": {"enable_thinking": True},
-        },
+        "extra_body": extra,
     }
+
+
+def _apply_preserve_thinking(
+    extra: Dict[str, Any],
+    template_kwargs: Dict[str, Any],
+    profile: OpenAIProfile,
+) -> None:
+    """Qwen3.8: keep historical think blocks (vLLM template + Qwen Cloud body)."""
+    if not profile.preserve_thinking:
+        return
+    template_kwargs["preserve_thinking"] = True
+    extra["preserve_thinking"] = True
+
+
+def _sampling_kwargs(profile: OpenAIProfile) -> Dict[str, Any]:
+    """OpenAI-standard sampling on the request; vendor extras in extra_body."""
+    kwargs: Dict[str, Any] = {
+        "temperature": profile.temperature,
+        "max_tokens": profile.max_output_tokens,
+    }
+    if profile.top_p is not None:
+        kwargs["top_p"] = profile.top_p
+    if profile.presence_penalty is not None:
+        kwargs["presence_penalty"] = profile.presence_penalty
+    extra: Dict[str, Any] = {}
+    if profile.top_k is not None:
+        extra["top_k"] = profile.top_k
+    if profile.min_p is not None:
+        extra["min_p"] = profile.min_p
+    if profile.repetition_penalty is not None:
+        extra["repetition_penalty"] = profile.repetition_penalty
+    if extra:
+        kwargs["extra_body"] = extra
+    return kwargs
+
+
+def _merge_request_kwargs(*parts: Dict[str, Any]) -> Dict[str, Any]:
+    """Shallow-merge chat kwargs; extra_body dicts are combined."""
+    out: Dict[str, Any] = {}
+    extra: Dict[str, Any] = {}
+    for part in parts:
+        body = part.get("extra_body")
+        if isinstance(body, dict):
+            extra.update(body)
+        out.update({k: v for k, v in part.items() if k != "extra_body"})
+    if extra:
+        out["extra_body"] = extra
+    return out
 
 
 def _with_think_token(system_prompt: str, profile: OpenAIProfile) -> str:
@@ -299,14 +353,15 @@ class BaseLLMProvider(ABC):
                 )
             messages.append({"role": "user", "content": content})
 
-            kwargs: Dict[str, Any] = {
-                "model": self.profile.model,
-                "messages": messages,
-                "temperature": self.profile.temperature,
-                "max_tokens": self.profile.max_output_tokens,
-                "stream": True,
-                **_reasoning_kwargs(self.profile),
-            }
+            kwargs: Dict[str, Any] = _merge_request_kwargs(
+                {
+                    "model": self.profile.model,
+                    "messages": messages,
+                    "stream": True,
+                },
+                _sampling_kwargs(self.profile),
+                _reasoning_kwargs(self.profile),
+            )
             if tools:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = "auto"

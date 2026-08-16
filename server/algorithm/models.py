@@ -44,53 +44,27 @@ def _quote_ev(evidence: str) -> str:
 
 
 def _edge_meta_suffix(source_file: str = "", confidence: float | None = None) -> str:
-    """Trailing meta: (file.pdf; conf=0.87) — only present fields."""
-    parts: list[str] = []
+    """Trailing meta: always both keys. Filename remaps to source:N later."""
     sf = (source_file or "").strip()
-    if sf:
-        parts.append(sf)
-    if confidence is not None:
-        parts.append(f"conf={float(confidence):.2f}")
-    if not parts:
-        return ""
-    return f"  ({'; '.join(parts)})"
+    src = sf if sf else "source:None"
+    conf = f"{float(confidence):.2f}" if confidence is not None else "None"
+    return f"  ({src}; conf={conf})"
 
 
 def _directed_edge_line(e: EdgeRecord) -> str:
-    """Neo4j direction: Label: start -[REL: ev]-> Label: end  (source; conf)."""
-    ev = _quote_ev(e.evidence)
+    """Triple line: Label: start —REL→ Label: end  (source; conf)."""
     return (
-        f'{e.start_ref()} -[{e.rel_type}: "{ev}"]-> {e.end_ref()}'
+        f"{e.start_ref()} —{e.rel_type}→ {e.end_ref()}"
         f"{_edge_meta_suffix(e.source_file, e.confidence)}"
     )
 
 
-def _fan_leaf_line_out(
-    rel_type: str,
-    evidence: str,
-    leaf: str,
-    source_file: str = "",
-    confidence: float | None = None,
-) -> str:
-    ev = _quote_ev(evidence)
-    return (
-        f'-[{rel_type}: "{ev}"]-> {leaf}'
-        f"{_edge_meta_suffix(source_file, confidence)}"
-    )
-
-
-def _fan_leaf_line_in(
-    rel_type: str,
-    evidence: str,
-    leaf: str,
-    source_file: str = "",
-    confidence: float | None = None,
-) -> str:
-    ev = _quote_ev(evidence)
-    return (
-        f'<-[{rel_type}: "{ev}"]- {leaf}'
-        f"{_edge_meta_suffix(source_file, confidence)}"
-    )
+def _edge_card_lines(e: EdgeRecord) -> list[str]:
+    """One edge as triple + indented verbatim quote."""
+    return [
+        _directed_edge_line(e),
+        f'  "{_quote_ev(e.evidence)}"',
+    ]
 
 
 @dataclass
@@ -120,7 +94,7 @@ class EdgeRecord:
     evidence: str = ""
     source_file: str = ""
     source: str = "ann"  # graph: ann|bridge; after S4 on chains: prize|bridge
-    confidence: float = 1.0
+    confidence: float | None = 1.0
 
     def start_ref(self) -> str:
         return format_node_ref(self.start_label, self.start_name, self.start_id)
@@ -143,7 +117,9 @@ class EdgeRecord:
             "chunk_id": self.chunk_id,
             "source_file": self.source_file,
             "sim": round(self.sim, 4),
-            "confidence": round(self.confidence, 4),
+            "confidence": (
+                round(self.confidence, 4) if self.confidence is not None else None
+            ),
             "source": self.source,
         }
 
@@ -156,35 +132,17 @@ class CandidateGraph:
     transition_adj: dict[str, list[str]] = field(default_factory=dict)
 
 
-def _fan_line(hub_id: str, e: EdgeRecord) -> str:
-    """Hub-centric fan line with Neo4j direction: out -> Leaf, in <- Leaf."""
-    if e.start_id == hub_id:
-        return _fan_leaf_line_out(
-            e.rel_type,
-            e.evidence,
-            e.end_ref(),
-            e.source_file,
-            e.confidence,
-        )
-    if e.end_id == hub_id:
-        return _fan_leaf_line_in(
-            e.rel_type,
-            e.evidence,
-            e.start_ref(),
-            e.source_file,
-            e.confidence,
-        )
-    return _directed_edge_line(e)
-
-
 def format_spine_lines(edges: list[EdgeRecord]) -> list[str]:
     """
-    Directed spine lines in Neo4j start→end order.
+    Directed spine cards in Neo4j start→end order.
 
     SPINE/FANS membership is decided upstream by reshape (transition-hub rule);
-    arrows always reflect the stored relationship direction (A -> B, C -> B).
+    arrows always reflect the stored relationship direction (A → B, C → B).
     """
-    return [_directed_edge_line(e) for e in edges]
+    lines: list[str] = []
+    for e in edges:
+        lines.extend(_edge_card_lines(e))
+    return lines
 
 
 @dataclass
@@ -230,20 +188,19 @@ class Chain:
 
     def format_unit(self, uid: str | None = None) -> str:
         label = uid or self.chain_id
-        lines = [f"UNIT {label}  (score={self.score:.4f})", "SPINE:"]
+        lines = [f"UNIT {label}", "SPINE:"]
         if self.edges:
-            for line in format_spine_lines(self.edges):
-                lines.append(f"  {line}")
+            lines.extend(format_spine_lines(self.edges))
         else:
             for k in self.edge_keys:
-                lines.append(f"  {k}")
+                lines.append(str(k))
         for hub_id, flist in self.fans.items():
             if not flist:
                 continue
             hub_name = self.fan_hub_names.get(hub_id) or hub_id
             lines.append(f"FANS @{hub_name}:")
             for e in flist:
-                lines.append(f"  {_fan_line(hub_id, e)}")
+                lines.extend(_edge_card_lines(e))
         return "\n".join(lines)
 
     def brief(self) -> str:

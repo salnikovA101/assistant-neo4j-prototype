@@ -416,11 +416,14 @@ def test_reshape_star_walk_to_spine_fans():
 
 
 def _parse_spine_joints(text: str) -> list[tuple[str, str]]:
-    """Extract (left, right) entity pairs from SPINE lines (directed)."""
+    """Extract (left, right) entity pairs from SPINE triple lines (directed)."""
     import re
 
     pairs: list[tuple[str, str]] = []
     in_spine = False
+    triple_re = re.compile(
+        r"^(.+?) —[A-Za-z0-9_]+→ (.+?)(?:\s+\([^)]*\))?\s*$"
+    )
     for line in text.splitlines():
         if line.strip() == "SPINE:":
             in_spine = True
@@ -430,7 +433,7 @@ def _parse_spine_joints(text: str) -> list[tuple[str, str]]:
             continue
         if not in_spine:
             continue
-        m = re.match(r'\s*(.+?) -\[.+: ".*"\]-> (.+?)(?:\s+\([^)]*\))?\s*$', line)
+        m = triple_re.match(line)
         if m:
             pairs.append((m.group(1), m.group(2)))
     return pairs
@@ -441,8 +444,10 @@ def test_format_single_edge_spine_neo4j_direction():
     e = _edge("e1", "A", "B", evidence='quote with "quotes"')
     c = Chain("c1", ["e1"], 1.0, edges=[e])
     text = c.format_unit()
-    assert 'A -[INHIBITS: "quote with \'quotes\'"]-> B' in text
+    assert "A —INHIBITS→ B  (source:None; conf=1.00)" in text
+    assert '  "quote with \'quotes\'"' in text
     assert "FANS" not in text
+    assert "(score=" not in text
 
 
 def test_format_edge_appends_source_file():
@@ -460,12 +465,16 @@ def test_format_edge_appends_source_file():
         fans={"B": [ray]},
         fan_hub_names={"B": "B"},
     ).format_unit()
-    assert 'A -[INHIBITS: "ab"]-> B  (PMC123.pdf; conf=0.87)' in text
-    assert '-[INHIBITS: "bc"]-> C  (Other.pdf; conf=0.50)' in text
-    # source only omitted → still print conf (EdgeRecord default 1.0)
+    assert "A —INHIBITS→ B  (PMC123.pdf; conf=0.87)" in text
+    assert '  "ab"' in text
+    assert "B —INHIBITS→ C  (Other.pdf; conf=0.50)" in text
+    assert '  "bc"' in text
+    # missing source_file → source:None; missing confidence → conf=None
     bare = _edge("e3", "X", "Y", evidence="xy")
+    bare.confidence = None
     bare_text = Chain("c2", ["e3"], 1.0, edges=[bare]).format_unit()
-    assert 'X -[INHIBITS: "xy"]-> Y  (conf=1.00)' in bare_text
+    assert "X —INHIBITS→ Y  (source:None; conf=None)" in bare_text
+    assert '  "xy"' in bare_text
 
 
 def test_format_spine_with_node_labels():
@@ -502,9 +511,14 @@ def test_format_spine_with_node_labels():
         fans={"met1": [ray]},
         fan_hub_names={"met1": "Metabolite: L-lactic acid"},
     ).format_unit()
-    assert 'Microbe: Lactobacillus -[PRODUCES: "makes acid"]-> Metabolite: L-lactic acid' in text
+    assert (
+        "Microbe: Lactobacillus —PRODUCES→ Metabolite: L-lactic acid"
+        in text
+    )
+    assert '  "makes acid"' in text
     assert "FANS @Metabolite: L-lactic acid:" in text
-    assert '-[INHIBITS: "kills"]-> Microbe: E. coli' in text
+    assert "Metabolite: L-lactic acid —INHIBITS→ Microbe: E. coli" in text
+    assert '  "kills"' in text
 
 
 def test_pick_primary_label_whitelist():
@@ -559,7 +573,8 @@ def test_format_spine_spur_directions_and_fans():
     ).format_unit()
     joints = _parse_spine_joints(text)
     assert joints == [("Ecoli", "Llactic"), ("Wkefir", "Llactic")]
-    assert '-[INHIBITS: "lp"]-> Pathogen' in text
+    assert "Llactic —INHIBITS→ Pathogen" in text
+    assert '  "lp"' in text
 
 
 def test_format_spine_broken_still_prints_direction():
@@ -588,7 +603,7 @@ def test_format_empty_fans_dict_omitted():
 
 
 def test_format_fans_out_star_direction():
-    """Co-outgoing fans: -[REL]-> Leaf."""
+    """Co-outgoing fans: Hub —REL→ Leaf as a full triple."""
     spine = [_edge("ah", "A", "H", evidence="enter"), _edge("hc", "H", "C", evidence="exit")]
     fans = {
         "H": [
@@ -605,12 +620,14 @@ def test_format_fans_out_star_direction():
         fan_hub_names={"H": "H"},
     ).format_unit()
     assert "FANS @H:" in text
-    assert '-[INHIBITS: "ray-d"]-> D' in text
-    assert '-[INHIBITS: "ray-e"]-> E' in text
+    assert "H —INHIBITS→ D" in text
+    assert '  "ray-d"' in text
+    assert "H —INHIBITS→ E" in text
+    assert '  "ray-e"' in text
 
 
 def test_format_fans_in_star_direction():
-    """Co-incoming fans: <-[REL]- Leaf (leaf on right, arrow into hub)."""
+    """Co-incoming fans: Leaf —REL→ Hub as a full triple."""
     spine = [
         _edge("ah", "A", "H", evidence="enter"),
         _edge("hc", "H", "C", evidence="exit"),
@@ -629,10 +646,10 @@ def test_format_fans_in_star_direction():
         fans=fans,
         fan_hub_names={"H": "H"},
     ).format_unit()
-    assert '<-[INHIBITS: "in-d"]- D' in text
-    assert '<-[INHIBITS: "in-e"]- E' in text
-    assert "D -[INHIBITS:" not in text
-    assert "E -[INHIBITS:" not in text
+    assert "D —INHIBITS→ H" in text
+    assert '  "in-d"' in text
+    assert "E —INHIBITS→ H" in text
+    assert '  "in-e"' in text
 
 
 def test_format_spine_after_reshape_hub_walk():
@@ -657,7 +674,10 @@ def test_format_spine_after_reshape_hub_walk():
     joints = _parse_spine_joints(text)
     assert joints == [("A", "H"), ("H", "C")]
     assert "FANS @H:" in text
-    assert '-[INHIBITS: "ray-d"]-> D' in text
+    assert "H —INHIBITS→ D" in text
+    assert '  "ray-d"' in text
+    assert "H —INHIBITS→ E" in text
+    assert '  "ray-e"' in text
 
 
 def test_format_multiple_fan_hubs():
@@ -680,12 +700,14 @@ def test_format_multiple_fan_hubs():
     ).format_unit()
     assert "FANS @A:" in text
     assert "FANS @C:" in text
-    assert '-[INHIBITS: "ae"]-> E' in text
-    assert '<-[INHIBITS: "fc"]- F' in text
+    assert "A —INHIBITS→ E" in text
+    assert '  "ae"' in text
+    assert "F —INHIBITS→ C" in text
+    assert '  "fc"' in text
 
 
 def test_format_unit_always_uses_arrows():
-    """Undirected -[...]- never emitted in unit text."""
+    """Cypher -[REL]- / <-[REL]- never emitted; cards use —REL→."""
     e1 = _edge("e1", "A", "B", evidence="ab")
     e2 = _edge("e2", "C", "B", evidence="cb")
     fans = {"B": [_edge("bd", "B", "D", evidence="bd"), _edge("xb", "X", "B", evidence="xb")]}
@@ -697,8 +719,68 @@ def test_format_unit_always_uses_arrows():
         fans=fans,
         fan_hub_names={"B": "B"},
     ).format_unit()
-    assert "]->" in text
-    assert "<-[" in text
+    assert "—" in text and "→" in text
+    assert "-[" not in text
+    assert "<-[" not in text
+    assert "B —INHIBITS→ D" in text
+    assert "X —INHIBITS→ B" in text
+
+
+def test_format_unit_card_layout_spine_and_fans():
+    """Quote on its own line; FANS keep full triples; no score on UNIT header."""
+    spine = [
+        EdgeRecord(
+            "e1",
+            "id-e1",
+            "REQUIRES",
+            "d1",
+            "pH",
+            "Ph-sensitive dyes",
+            "pH",
+            start_label="Metabolite",
+            end_label="EnvironmentCondition",
+            evidence="Colorimetric indicators, such as pH-sensitive dyes",
+            source_file="a.pdf",
+            confidence=1.0,
+        ),
+    ]
+    fan = EdgeRecord(
+        "e2",
+        "id-e2",
+        "REQUIRES",
+        "al",
+        "pH",
+        "Alizarin",
+        "pH",
+        start_label="Metabolite",
+        end_label="EnvironmentCondition",
+        evidence=(
+            "plant-based natural pigments, such as anthocyanins, curcumin, "
+            "and alizarin"
+        ),
+        source_file="b.pdf",
+        confidence=1.0,
+    )
+    text = Chain(
+        "c1",
+        ["e1"],
+        8.04,
+        edges=spine,
+        fans={"pH": [fan]},
+        fan_hub_names={"pH": "EnvironmentCondition: pH"},
+    ).format_unit()
+    assert text == (
+        "UNIT c1\n"
+        "SPINE:\n"
+        "Metabolite: Ph-sensitive dyes —REQUIRES→ EnvironmentCondition: pH"
+        "  (a.pdf; conf=1.00)\n"
+        '  "Colorimetric indicators, such as pH-sensitive dyes"\n'
+        "FANS @EnvironmentCondition: pH:\n"
+        "Metabolite: Alizarin —REQUIRES→ EnvironmentCondition: pH"
+        "  (b.pdf; conf=1.00)\n"
+        '  "plant-based natural pigments, such as anthocyanins, curcumin, '
+        'and alizarin"'
+    )
 
 
 def test_star_walk_forms_unit_with_fans():

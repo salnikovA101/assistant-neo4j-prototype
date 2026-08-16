@@ -46,9 +46,9 @@ graph_embeddings:
   max_input_chars: 8192
 
 llm:
-  current_profile: "ollama"
+  current_profile: "other"
   cypher_profile: "other"
-  tool_profile: "ollama"
+  tool_profile: "other"
   history_len: 30
   prompt_folder: "prompts"
   profiles:
@@ -60,13 +60,20 @@ llm:
       max_turns: 2
     other:
       provider: "openai"
-      model: "z-ai/glm-5.2" #Локально
+      model: "qwen/qwen3.8-27b" #Локально
       # model: "deepseek/deepseek-v4-flash-0731"
-      temperature: 0.1
-      max_output_tokens: 16384
+      # Qwen3.8 thinking-mode sampling (model card).
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+      repetition_penalty: 1.0
+      max_output_tokens: 32768
       max_turns: 2
       think: true
-      think_effort: "high"
+      think_effort: "xhigh"
+      preserve_thinking: true
     lm_studio:
       provider: "openai"
       model: "google/gemma-4-12b-qat"
@@ -83,7 +90,7 @@ llm:
       provider: "openai"
       model: "gemma4:31b-cloud"
       base_url: "https://ollama.com/v1"
-      temperature: 0.1
+      temperature: 0.6
       max_output_tokens: 16384
       max_turns: 2
       think: true

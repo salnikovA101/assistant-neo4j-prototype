@@ -41,9 +41,9 @@ class Params:
     # structural bridges (source="bridge") pay flat bridge_struct_cost.
     # After each tour, collected arcs get local p=0 so the next tour must
     # pick leftover prize (TOARP: prize at most once).
-    prize_top: int = 80
+    prize_top: int = 50
     max_hops: int = 10
-    min_path_len: int = 6
+    min_path_len: int = 1
     s4_paths_per_graph: int = 3
     s4_min_prize_edges: int = 2
     # Prize collected on one graph is gone for the next (TOARP globally).

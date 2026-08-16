@@ -43,10 +43,11 @@ def test_remap_from_accepted_edges():
     accepted = [
         {
             "text": (
-                'UNIT c1  (score=1.0)\n'
+                "UNIT c1\n"
                 "SPINE:\n"
-                '  Microbe: A -[PRODUCES: "x"]-> Metabolite: B  '
-                "(Hashim et al. Anthocyanins.pdf; conf=0.88)"
+                "Microbe: A —PRODUCES→ Metabolite: B  "
+                "(Hashim et al. Anthocyanins.pdf; conf=0.88)\n"
+                '  "x"'
             ),
             "edges": [
                 {"source_file": "Hashim et al. Anthocyanins.pdf"},

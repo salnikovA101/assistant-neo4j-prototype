@@ -35,11 +35,15 @@ def _format_accepted_chains(
     lines = [
         "### Retrieved evidence chains",
         "",
-        "Edge format: Label: A -[REL: \"verbatim evidence\"]-> Label: B (source:N; conf=0-1). "
-        "SPINE = main path (read top-down); FANS @Hub = extra hub facts, leaves NOT linked "
-        "to each other. Cite claims as (source:N) or (source:1; source:2) — copy ids from "
-        "edges; never invent ids; never write [n] or ### Источники (server adds those). "
-        "Never cite UNIT indices as bibliography. Answer only from these chains; list GAPS honestly.",
+        "Edge format: Label: A —REL→ Label: B  (source:N; conf=0-1 or None) then a new line "
+        'with the verbatim quote. SPINE = main path (read top-down); FANS @Hub = extra hub '
+        "facts as full triples (hub is on the line); leaves NOT linked to each other. "
+        "Node labels may name only one entity — the quote may list several; extract every "
+        "name the quote contains. Cite claims as (source:N) or (source:1; source:2) — copy "
+        "ids from edges; never invent ids; never write [n] or ### Источники (server adds "
+        "those). Never cite UNIT indices as bibliography. Answer only from these chains. "
+        "The most frequent product in this pack is not automatically the asked product — "
+        "label extrapolation or a GAP. List GAPS honestly.",
         "",
     ]
     n = 0
@@ -56,11 +60,7 @@ def _format_accepted_chains(
         if text.startswith("UNIT "):
             rest = text.split("\n", 1)
             body = rest[1] if len(rest) > 1 else ""
-            score_part = ""
-            head = rest[0]
-            if "(score=" in head:
-                score_part = "  " + head[head.index("(score=") :]
-            text = f"UNIT [{n}]{score_part}\n{body}".rstrip()
+            text = f"UNIT [{n}]\n{body}".rstrip()
         else:
             text = f"UNIT [{n}]\n{text}"
         lines.append(text)

@@ -88,20 +88,16 @@ class Tools:
         """
         Search the English knowledge graph (articles, patents, regulations).
 
-        Budget: at most TWO calls per user question — high+low or medium+medium.
-        Call 1: decompose the question into 1–6 English declarative statements.
-        Call 2 (only if gaps remain): 1–3 narrow statements naming the missing info;
-        they do not have to re-decompose the original question.
+        At most TWO calls: medium+medium or high+low (second is not high).
+        Call 1: 1–6 English statements. Call 2: missing field (dose / matrix /
+        regulation), not a repeat of call 1.
 
-        Returns UNIT blocks: SPINE = main directed edge path; FANS @Hub = extra
-        facts about a hub node (fan leaves are NOT linked to each other).
-        Each edge: Label: A -[REL: "evidence"]-> Label: B (source:N; conf=0-1).
-        Answer only from these chains; cite as (source:N); do NOT write [n] or
-        ### Источники (server rewrites citations for the user). State GAPS honestly.
+        Returns UNIT blocks. Cite (source:N); no [n] / ### Источники.
 
         Args:
-            subquestions: 1–6 English declarative statements (light HyDE ok; no '?').
-            effort: search budget — low (mine 10 / emit 5), medium (15 / 10, default), high (20 / 15).
+            subquestions: 1–6 English statements. Only classes and user
+                constraints; do not invent entity names.
+            effort: low (mine 10 / emit 5), medium (15 / 10), high (20 / 15).
         """
         with tracer.start_as_current_span("ask_subgraph") as span:
             span.set_attribute(OI_SPAN_KIND, OISpanKind.TOOL)
@@ -157,25 +153,20 @@ class Tools:
                 "function": {
                     "name": "ask_subgraph",
                     "description": (
-                        "Search the English knowledge graph (scientific articles, patents, "
-                        "regulations) for food technology: starter cultures, strains, freshness "
-                        "indicators, smart packaging. ALWAYS call it for any content question. "
-                        "BUDGET: at most TWO calls per user question — high+low or medium+medium. "
-                        "Call 1: decompose the user question into 1–6 English DECLARATIVE "
-                        "statements (light HyDE allowed: extend with plausible general domain "
-                        "facts, never invent specific numbers/substances). Call 2 ONLY if gaps "
-                        "remain after call 1: 1–3 narrow statements naming the missing "
-                        "information (need not re-decompose the original question). "
-                        "RETURNS: UNIT blocks. SPINE = main directed path of edges "
-                        "Label: A -[REL: \"verbatim evidence\"]-> Label: B (source:N; conf=0-1). "
-                        "FANS @Hub = extra facts about a hub node; fan leaves are NOT linked "
-                        "to each other — never infer Leaf1→Leaf2 from a shared hub. "
-                        "Answer ONLY from these chains: never transfer properties between "
-                        "entities; cite every fact as (source:N) or (source:1; source:2) "
-                        "copying ids from edges. Do NOT write [n], PDF names, or ### Источники "
-                        "(server adds those for the user). List GAPS honestly. "
-                        "If the user asks for a confidence score, derive it from the per-edge "
-                        "conf of the edges behind the claim and state the method; never invent it."
+                        "Search the English knowledge graph for food technology "
+                        "(starter cultures, freshness indicators, smart packaging). "
+                        "Call when the question has a product and/or goal. If neither "
+                        "is named, do not call — ask one clarifying question. "
+                        "BUDGET: two calls max — medium+medium or high+low (second "
+                        "call is not high). "
+                        "Call 1: 1–6 English declarative statements; only classes and "
+                        "constraints from the user; no invented dye/strain/gas names; "
+                        "no Russian. Orthogonal beats paraphrases. "
+                        "Call 2: 1–3 statements for a missing field (dose / matrix / "
+                        "regulation), not a repeat of call 1. "
+                        "RETURNS: UNIT chains. Cite (source:N). Do not write [n], "
+                        "PDF names, or ### Источники. One UNIT is one system; "
+                        "do not mix facts across UNITs."
                     ),
                     "parameters": {
                         "type": "object",
@@ -186,14 +177,16 @@ class Tools:
                                 "minItems": 1,
                                 "maxItems": 6,
                                 "description": (
-                                    "1–6 English declarative statements: units of information "
-                                    "you want from the DB. Atomic but contextual (product / "
-                                    "process / substance class). No question marks, no field "
-                                    "checklists, no Russian. "
-                                    "GOOD: 'Colorimetric freshness indicators change color in "
-                                    "response to volatile amines in packaged food headspace.' "
-                                    "BAD: 'What dyes are used? Include concentration, matrix, "
-                                    "color, placement.'"
+                                    "1–6 English declarative statements (product / process / "
+                                    "matrix class / sensor or culture class). No '?', no "
+                                    "checklists, no Russian. Only classes and user constraints; "
+                                    "never invent entity names. "
+                                    "GOOD: 'Lactic acid bacteria are used as starter cultures "
+                                    "for cottage cheese production.' "
+                                    "GOOD: 'Freshness indicators change color "
+                                    "in packaged food.' "
+                                    "BAD: 'Bromocresol green is embedded in agar to detect "
+                                    "spoilage.' (named a dye the user did not)."
                                 ),
                             },
                             "effort": {
@@ -202,9 +195,10 @@ class Tools:
                                 "description": (
                                     "Search budget: how many UNIT chains to mine/emit. "
                                     "low=mine 10 emit 5 (narrow fact), medium=15/10 "
-                                    "(default), high=20/15 (broad multi-entity / table). "
-                                    "Choose by question WIDTH. Max two calls total: "
-                                    "high+low or medium+medium."
+                                    "(default), high=20/15 only if the user asked a list "
+                                    "or comparison of many entities. Choose by question "
+                                    "WIDTH. Max two calls: medium+medium or high+low "
+                                    "(second call is not high)."
                                 ),
                             },
                         },

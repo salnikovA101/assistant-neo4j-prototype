@@ -32,6 +32,11 @@ class OpenAIProfile(BaseModel):
     base_url: str = ""
     api_key: str = ""
     temperature: float = 0.7
+    top_p: float | None = None
+    top_k: int | None = None
+    min_p: float | None = None
+    presence_penalty: float | None = None
+    repetition_penalty: float | None = None
     max_output_tokens: int = 4096
     context_length: int = 4096
     max_turns: int = 2
@@ -41,6 +46,8 @@ class OpenAIProfile(BaseModel):
     think_token: str = ""
     # OpenRouter/DeepSeek/OpenAI effort when think=true: low|medium|high|max
     think_effort: str = "high"
+    # Qwen3.8: keep <think> from prior turns (tool loop). Official default is True.
+    preserve_thinking: bool = False
 
 
 class LlmProfiles(BaseModel):

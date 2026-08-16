@@ -48,7 +48,7 @@ def edge_to_cache_dict(e: EdgeRecord) -> dict[str, Any]:
         "evidence": e.evidence or "",
         "source_file": e.source_file or "",
         "source": e.source or "ann",
-        "confidence": float(e.confidence),
+        "confidence": float(e.confidence) if e.confidence is not None else 1.0,
     }
 
 

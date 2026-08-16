@@ -28,7 +28,9 @@ and how many to emit (5 / 10 / 15).
 - Star walks reshaped to SPINE + FANS via `unit_reshape`.
 
 Unit = SPINE (bamboo) + optional FANS at hubs (from rays the walk actually took).
-Endpoints print as `Label: name` with primary Neo4j labels from
+Each edge prints as a card: `Label: A —REL→ Label: B  (source; conf)` and the
+verbatim quote on the next line. FANS use the same full triple (hub on the line).
+Endpoints use primary Neo4j labels from
 `Microbe|Metabolite|StarterCulture|EnvironmentCondition` (extra labels dropped).
 Evidence may not repeat inside one unit; S5 drops exact SPINE evidence
 duplicates in the pool.
