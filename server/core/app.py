@@ -12,6 +12,7 @@ from server.utils.config import load_config
 from server.core.db import get_driver
 from server.core.graph_runs import graph_run_store
 from server.core.pipeline import ServerPipeline
+from server.llm.base import UI_THINK_EFFORTS, parse_ui_think_effort
 from server.tools.graph_viz import build_graph_viz_payload
 from server.utils.tracing import init_tracing
 
@@ -152,11 +153,12 @@ async def process_text(request: Request):
     pipeline: ServerPipeline = request.app.state.pipeline
     data = await request.json()
     text = data.get("text", "").strip()
+    think_effort = parse_ui_think_effort(data.get("reasoning_effort"))
 
     if not text:
         return JSONResponse({"error": "Пустой текст"}, status_code=400)
 
-    answer = await pipeline.process_text(text)
+    answer = await pipeline.process_text(text, think_effort=think_effort)
 
     if not pipeline.config.audio_enabled:
         return JSONResponse({"answer": answer, "has_graph": pipeline.has_graph})
@@ -179,17 +181,20 @@ async def process_text_stream(request: Request):
     """
     SSE stream of assistant events: thinking, tool_call, tool_result, content, done, error.
 
-    Request body: {"text": "вопрос пользователя"}
+    Request body: {"text": "вопрос пользователя", "reasoning_effort": "xhigh"|"medium"|"low"}
     """
     pipeline: ServerPipeline = request.app.state.pipeline
     data = await request.json()
     text = data.get("text", "").strip()
+    think_effort = parse_ui_think_effort(data.get("reasoning_effort"))
 
     if not text:
         return JSONResponse({"error": "Пустой текст"}, status_code=400)
 
     async def event_generator():
-        async for event in pipeline.process_text_stream(text, request):
+        async for event in pipeline.process_text_stream(
+            text, request, think_effort=think_effort
+        ):
             yield event.to_sse()
 
     return StreamingResponse(
@@ -209,16 +214,17 @@ async def process_text_test(request: Request):
     Принимает текст JSON, возвращает ответ LLM (без TTS).
     Специально для скриптов тестирования.
 
-    Request body: {"text": "вопрос пользователя"}
+    Request body: {"text": "вопрос пользователя", "reasoning_effort": "xhigh"|"medium"|"low"}
     """
     pipeline: ServerPipeline = request.app.state.pipeline
     data = await request.json()
     text = data.get("text", "").strip()
+    think_effort = parse_ui_think_effort(data.get("reasoning_effort"))
 
     if not text:
         return JSONResponse({"error": "Пустой текст"}, status_code=400)
 
-    answer = await pipeline.process_text(text)
+    answer = await pipeline.process_text(text, think_effort=think_effort)
 
     return JSONResponse({"answer": answer})
 
@@ -235,6 +241,21 @@ async def clear_history(request: Request):
 async def health():
     """Проверка готовности сервера."""
     return {"status": "ready"}
+
+
+@app.get("/ui_config")
+async def ui_config(request: Request):
+    """Defaults for the web UI (reasoning effort picker, etc.)."""
+    pipeline: ServerPipeline = request.app.state.pipeline
+    profile = pipeline.llm.model.profile
+    default_effort = parse_ui_think_effort(profile.think_effort) or "xhigh"
+    raw_effort = (profile.think_effort or "").strip().lower()
+    supports_levels = raw_effort not in {"on", "off", "none"}
+    return {
+        "think": bool(profile.think) and supports_levels,
+        "reasoning_effort": default_effort,
+        "reasoning_effort_options": list(UI_THINK_EFFORTS),
+    }
 
 
 @app.post("/graph_viz")

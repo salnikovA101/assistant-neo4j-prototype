@@ -128,12 +128,15 @@ class ServerPipeline:
                 set_span_error(span, str(e))
                 raise
 
-    async def process_text(self, text: str) -> str:
+    async def process_text(
+        self, text: str, think_effort: Optional[str] = None
+    ) -> str:
         """
         Обрабатывает текстовый ввод: LLM (без STT).
 
         Args:
             text: Текст от пользователя.
+            think_effort: Optional per-request reasoning_effort override.
 
         Returns:
             Ответ LLM.
@@ -141,13 +144,17 @@ class ServerPipeline:
         with tracer.start_as_current_span("process_text") as span:
             span.set_attribute(OI_SPAN_KIND, OISpanKind.CHAIN)
             span.set_attribute(OI_INPUT_VALUE, text)
-            logger.info(f"Текст: {text}")
+            if think_effort:
+                span.set_attribute("think_effort", think_effort)
+            logger.info("Текст: %s effort=%s", text, think_effort or "-")
 
             try:
                 sq = self.llm.tools.graph_qa.successful_queries
                 sq_len_before = len(sq)
                 answer = await asyncio.wait_for(
-                    self.llm.generate_response(user_text=text),
+                    self.llm.generate_response(
+                        user_text=text, think_effort=think_effort
+                    ),
                     timeout=self.config.server.llm_timeout,
                 )
                 sq_len_after = len(sq)
@@ -164,7 +171,10 @@ class ServerPipeline:
                 raise
 
     async def process_text_stream(
-        self, text: str, request: Optional[Request] = None
+        self,
+        text: str,
+        request: Optional[Request] = None,
+        think_effort: Optional[str] = None,
     ) -> AsyncGenerator[StreamEvent, None]:
         """
         Stream LLM events (thinking / tools / content / done) for text input.
@@ -172,7 +182,13 @@ class ServerPipeline:
         with tracer.start_as_current_span("process_text_stream") as span:
             span.set_attribute(OI_SPAN_KIND, OISpanKind.CHAIN)
             span.set_attribute(OI_INPUT_VALUE, text)
-            logger.info(f"Текст (stream): {text}")
+            if think_effort:
+                span.set_attribute("think_effort", think_effort)
+            logger.info(
+                "Текст (stream): %s effort=%s",
+                text,
+                think_effort or "-",
+            )
 
             sq = self.llm.tools.graph_qa.successful_queries
             sq_len_before = len(sq)
@@ -180,7 +196,9 @@ class ServerPipeline:
             collector_token = new_graph_collector()
 
             try:
-                async for event in self.llm.generate_response_stream(user_text=text):
+                async for event in self.llm.generate_response_stream(
+                    user_text=text, think_effort=think_effort
+                ):
                     if request and await request.is_disconnected():
                         logger.info("Клиент отключился — остановка LLM stream")
                         break

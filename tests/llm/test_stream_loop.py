@@ -85,7 +85,7 @@ async def test_generate_response_stream_tool_loop(monkeypatch):
     provider.client.chat.completions.create = AsyncMock(side_effect=fake_create)
 
     async def fake_tool(subquestions, effort="medium"):
-        return "UNIT [1]\nevidence"
+        return "UNIT [1]\nevidence (source:1)"
 
     events: List[Any] = []
     async for ev in provider.generate_response_stream(
@@ -111,3 +111,16 @@ async def test_generate_response_stream_tool_loop(monkeypatch):
     assert tool_result.data["ok"] is True
     assert "UNIT [1]" in tool_result.data["result"]
     assert "preview" in tool_result.data
+
+    done = events[-1]
+    receipts = done.data.get("history_tool_messages") or []
+    assert len(receipts) == 2
+    assert receipts[0]["role"] == "assistant"
+    assert receipts[0]["content"] is None
+    assert "reasoning" not in receipts[0]
+    assert receipts[0]["tool_calls"][0]["id"] == "call_1"
+    assert '"subquestions":["a"]' in receipts[0]["tool_calls"][0]["function"]["arguments"]
+    assert receipts[1]["role"] == "tool"
+    assert receipts[1]["tool_call_id"] == "call_1"
+    assert "UNIT" not in receipts[1]["content"]
+    assert "Session sources 1" in receipts[1]["content"]

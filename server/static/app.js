@@ -34,6 +34,19 @@ const pauseIcon = document.getElementById('pause-icon');
 const statusText = document.getElementById('db-status-text');
 const connectionDot = document.getElementById('connection-dot');
 const clearBtn = document.getElementById('clear-btn');
+const effortPicker = document.getElementById('effort-picker');
+const effortBtn = document.getElementById('effort-btn');
+const effortMenu = document.getElementById('effort-menu');
+const effortLabel = document.getElementById('effort-label');
+
+const EFFORT_STORAGE_KEY = 'reasoning_effort';
+const EFFORT_OPTIONS = {
+    low: { label: 'Low' },
+    medium: { label: 'Medium' },
+    xhigh: { label: 'Extra High' },
+};
+let currentReasoningEffort = 'xhigh';
+let reasoningEffortEnabled = true;
 
 // ===== Audio Utilities =====
 
@@ -290,7 +303,7 @@ async function processAudioBlob(blob) {
         const response = await fetch('/process_text', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: recognizedText }),
+            body: JSON.stringify(processTextPayload(recognizedText)),
             signal: currentAbortController.signal
         });
 
@@ -328,6 +341,7 @@ async function sendText() {
 
     addMessage('user', text);
     textInput.value = '';
+    resizeTextInput();
     setUIState('processing');
 
     // Перед отправкой нового запроса прерываем предыдущее воспроизведение
@@ -358,7 +372,7 @@ async function consumeProcessTextStream(text, signal) {
             'Content-Type': 'application/json',
             Accept: 'text/event-stream',
         },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify(processTextPayload(text)),
         signal,
     });
 
@@ -1624,10 +1638,23 @@ function renderMarkdown(text) {
         return escapeHtml(text);
     }
     const raw = marked.parse(text, { breaks: true, gfm: true });
-    if (typeof DOMPurify !== 'undefined') {
-        return DOMPurify.sanitize(raw);
-    }
-    return raw;
+    const html = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(raw) : raw;
+    return wrapMarkdownTables(html);
+}
+
+function wrapMarkdownTables(html) {
+    const holder = document.createElement('div');
+    holder.innerHTML = html;
+    holder.querySelectorAll('table').forEach((table) => {
+        if (table.parentElement && table.parentElement.classList.contains('md-table-scroll')) {
+            return;
+        }
+        const wrap = document.createElement('div');
+        wrap.className = 'md-table-scroll';
+        table.parentNode.insertBefore(wrap, table);
+        wrap.appendChild(table);
+    });
+    return holder.innerHTML;
 }
 
 function addCopyButton(wrapper, plainText) {
@@ -1829,18 +1856,127 @@ async function clearHistory() {
     }
 }
 
+// ===== Reasoning effort picker =====
+
+function processTextPayload(text) {
+    const payload = { text };
+    if (reasoningEffortEnabled) {
+        payload.reasoning_effort = currentReasoningEffort;
+    }
+    return payload;
+}
+
+function isEffortMenuOpen() {
+    return effortBtn.getAttribute('aria-expanded') === 'true';
+}
+
+function closeEffortMenu() {
+    effortBtn.setAttribute('aria-expanded', 'false');
+    effortMenu.hidden = true;
+}
+
+function openEffortMenu() {
+    effortBtn.setAttribute('aria-expanded', 'true');
+    effortMenu.hidden = false;
+}
+
+function toggleEffortMenu() {
+    if (isEffortMenuOpen()) closeEffortMenu();
+    else openEffortMenu();
+}
+
+function setReasoningEffort(effort, persist = true) {
+    if (!EFFORT_OPTIONS[effort]) return;
+    currentReasoningEffort = effort;
+    effortLabel.textContent = EFFORT_OPTIONS[effort].label;
+    effortBtn.title = `Глубина рассуждения: ${EFFORT_OPTIONS[effort].label}`;
+    effortBtn.setAttribute(
+        'aria-label',
+        `Глубина рассуждения: ${EFFORT_OPTIONS[effort].label}`
+    );
+    effortMenu.querySelectorAll('.effort-option').forEach((btn) => {
+        btn.setAttribute('aria-selected', btn.dataset.effort === effort ? 'true' : 'false');
+    });
+    if (persist) {
+        try {
+            localStorage.setItem(EFFORT_STORAGE_KEY, effort);
+        } catch (_) {}
+    }
+}
+
+function loadStoredEffort() {
+    try {
+        const stored = localStorage.getItem(EFFORT_STORAGE_KEY);
+        if (stored && EFFORT_OPTIONS[stored]) return stored;
+    } catch (_) {}
+    return null;
+}
+
+async function initReasoningEffort() {
+    const stored = loadStoredEffort();
+    let serverDefault = 'xhigh';
+    let thinkEnabled = true;
+    try {
+        const resp = await fetch('/ui_config', { signal: AbortSignal.timeout(3000) });
+        if (resp.ok) {
+            const data = await resp.json();
+            thinkEnabled = data.think !== false;
+            if (data.reasoning_effort && EFFORT_OPTIONS[data.reasoning_effort]) {
+                serverDefault = data.reasoning_effort;
+            }
+        }
+    } catch (_) {}
+
+    reasoningEffortEnabled = thinkEnabled;
+    if (effortPicker) {
+        effortPicker.hidden = !thinkEnabled;
+    }
+    setReasoningEffort(stored || serverDefault, false);
+}
+
 // ===== Init =====
 
 // Подключение кнопок управления микрофоном и текстом
 micBtn.addEventListener('click', toggleMic);
 sendBtn.addEventListener('click', sendText);
 clearBtn.addEventListener('click', clearHistory);
+effortBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleEffortMenu();
+});
+effortMenu.addEventListener('click', (e) => {
+    const option = e.target.closest('.effort-option');
+    if (!option) return;
+    setReasoningEffort(option.dataset.effort);
+    closeEffortMenu();
+});
+document.addEventListener('click', (e) => {
+    if (!effortPicker.contains(e.target)) closeEffortMenu();
+});
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && isEffortMenuOpen()) {
+        closeEffortMenu();
+        effortBtn.focus();
+    }
+});
 textInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         sendText();
     }
 });
+textInput.addEventListener('input', resizeTextInput);
+
+function resizeTextInput() {
+    textInput.style.height = 'auto';
+    const max = parseFloat(getComputedStyle(textInput).maxHeight) || 208;
+    const next = Math.min(textInput.scrollHeight, max);
+    textInput.style.height = `${next}px`;
+    textInput.style.overflowY = textInput.scrollHeight > max + 1 ? 'auto' : 'hidden';
+}
+
+initReasoningEffort();
+resizeTextInput();
 
 // Проверяем здоровье сервера при загрузке и периодически
 checkHealth();

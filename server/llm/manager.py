@@ -47,7 +47,9 @@ class LLMManager:
         self.tools = Tools(config)
         self.model: BaseLLMProvider = self._load(self.config.current_profile)
 
-    async def generate_response(self, user_text: str) -> str:
+    async def generate_response(
+        self, user_text: str, think_effort: str | None = None
+    ) -> str:
         with tracer.start_as_current_span("generate_response") as span:
             span.set_attribute(OI_SPAN_KIND, OISpanKind.CHAIN)
             span.set_attribute(OI_INPUT_VALUE, user_text)
@@ -55,7 +57,9 @@ class LLMManager:
 
             try:
                 text = ""
-                async for event in self.generate_response_stream(user_text):
+                async for event in self.generate_response_stream(
+                    user_text, think_effort=think_effort
+                ):
                     if event.type == "done":
                         text = event.data.get("final_content") or text
                     elif event.type == "error":
@@ -69,7 +73,7 @@ class LLMManager:
                 raise
 
     async def generate_response_stream(
-        self, user_text: str
+        self, user_text: str, think_effort: str | None = None
     ) -> AsyncIterator[StreamEvent]:
         """
         Stream assistant events. History is updated only after a successful done
@@ -79,6 +83,8 @@ class LLMManager:
             span.set_attribute(OI_SPAN_KIND, OISpanKind.CHAIN)
             span.set_attribute(OI_INPUT_VALUE, user_text)
             span.set_attribute("user_text", user_text[:200])
+            if think_effort:
+                span.set_attribute("think_effort", think_effort)
 
             prompt = self.prompt_manager.get_system_prompt()
             history = self.history_manager.get_history()
@@ -93,13 +99,20 @@ class LLMManager:
                     history=history,
                     tools=self.tools.get_openai_tools(),
                     tool_map=self.tools.get_tool_map(),
+                    think_effort=think_effort,
                 ):
                     if event.type == "done":
                         final_content = (
                             event.data.get("final_content") or final_content
                         )
-                        # History keeps raw (source:N); user/SSE get [n] + ### Источники
-                        self.history_manager.add_entry(user_text, final_content)
+                        # History keeps raw (source:N) plus compact tool receipts.
+                        # User/SSE get [n] + ### Источники; UNIT stays in live UI only.
+                        self.history_manager.add_entry(
+                            user_text,
+                            final_content,
+                            tool_messages=event.data.get("history_tool_messages")
+                            or [],
+                        )
                         cited = extract_cited_source_files(
                             final_content, self.tools.source_registry
                         )
@@ -109,9 +122,9 @@ class LLMManager:
                         event = StreamEvent(
                             "done",
                             {
-                                **event.data,
                                 "final_content": display,
                                 "cited_source_files": cited,
+                                "has_graph": event.data.get("has_graph", False),
                             },
                         )
                         set_span_ok(span, display)

@@ -1,5 +1,5 @@
 from collections import deque
-from typing import Deque, Dict, List
+from typing import Any, Deque, Dict, List, Optional
 
 
 class HistoryManager:
@@ -7,10 +7,11 @@ class HistoryManager:
     Управляет историей диалога, ограничивая её максимальную длину.
 
     Использует двустороннюю очередь (deque) для автоматического удаления
-    старых записей при превышении лимита.
+    старых записей при превышении лимита. maxlen — число ходов пользователя,
+    не сырых OpenAI-сообщений.
 
     Attributes:
-        history (Deque[Dict[str, str]]): Очередь, хранящая пары "user" и "assistant".
+        history: Очередь ходов: user, compact tool pairs, assistant.
     """
 
     def __init__(self, max_len: int) -> None:
@@ -20,15 +21,22 @@ class HistoryManager:
         Args:
             max_len (int): Максимальное количество хранимых пар (запрос-ответ).
         """
-        self.history: Deque[Dict[str, str]] = deque(maxlen=max_len)
+        self.history: Deque[Dict[str, Any]] = deque(maxlen=max_len)
 
-    def add_entry(self, user_text: str, assistant_text: str) -> None:
+    def add_entry(
+        self,
+        user_text: str,
+        assistant_text: str,
+        tool_messages: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
         """
         Добавляет новую запись в историю, если текст не пустой.
 
         Args:
-            user_text (str): Текст запроса пользователя.
-            assistant_text (str): Ответ ассистента.
+            user_text: Текст запроса пользователя.
+            assistant_text: Ответ ассистента (сырой, с source:N).
+            tool_messages: Компактные пары assistant.tool_calls + role:tool
+                (квитанции, без UNIT).
         """
         if (
             user_text
@@ -37,18 +45,25 @@ class HistoryManager:
             and assistant_text.strip()
             and not assistant_text.startswith("Ошибка:")
         ):
-            self.history.append({"user": user_text, "assistant": assistant_text})
+            self.history.append(
+                {
+                    "user": user_text,
+                    "assistant": assistant_text,
+                    "tool_messages": list(tool_messages or []),
+                }
+            )
 
-    def get_history(self) -> List[Dict[str, str]]:
+    def get_history(self) -> List[Dict[str, Any]]:
         """
         Преобразует историю в стандартный формат сообщений OpenAI.
 
         Returns:
-            List[Dict[str, str]]: Список сообщений с ролями 'user' и 'assistant'.
+            user → compact tool pairs → assistant (final).
         """
-        contents: List[Dict[str, str]] = []
+        contents: List[Dict[str, Any]] = []
         for entry in self.history:
             contents.append({"role": "user", "content": entry["user"]})
+            contents.extend(entry.get("tool_messages") or [])
             contents.append({"role": "assistant", "content": entry["assistant"]})
         return contents
 

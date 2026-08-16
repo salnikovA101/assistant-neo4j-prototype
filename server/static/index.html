@@ -68,7 +68,51 @@
                         </button>
 
                         <!-- Input field -->
-                        <input type="text" id="text-input" placeholder="Спросить Neo4j Assistant..." autocomplete="off">
+                        <textarea id="text-input" rows="1" placeholder="Спросить Neo4j Assistant..." autocomplete="off"></textarea>
+
+                        <div class="effort-picker" id="effort-picker">
+                            <button type="button" id="effort-btn" class="effort-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="effort-menu" title="Глубина рассуждения">
+                                <svg class="effort-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <path d="M12 3v3"></path>
+                                    <path d="M18.4 6.6l-2.1 2.1"></path>
+                                    <path d="M21 12h-3"></path>
+                                    <path d="M18.4 17.4l-2.1-2.1"></path>
+                                    <path d="M12 18v3"></path>
+                                    <path d="M7.7 15.3l-2.1 2.1"></path>
+                                    <path d="M6 12H3"></path>
+                                    <path d="M7.7 8.7L5.6 6.6"></path>
+                                    <circle cx="12" cy="12" r="3.2"></circle>
+                                </svg>
+                                <span id="effort-label">Extra High</span>
+                                <svg class="effort-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                            </button>
+                            <div class="effort-menu" id="effort-menu" hidden role="listbox" aria-labelledby="effort-btn">
+                                <div class="effort-menu-title">Рассуждения</div>
+                                <button type="button" class="effort-option" role="option" data-effort="low" aria-selected="false">
+                                    <span class="effort-option-check" aria-hidden="true"></span>
+                                    <span class="effort-option-text">
+                                        <span class="effort-option-name">Low</span>
+                                        <span class="effort-option-hint">быстрее</span>
+                                    </span>
+                                </button>
+                                <button type="button" class="effort-option" role="option" data-effort="medium" aria-selected="false">
+                                    <span class="effort-option-check" aria-hidden="true"></span>
+                                    <span class="effort-option-text">
+                                        <span class="effort-option-name">Medium</span>
+                                        <span class="effort-option-hint">баланс</span>
+                                    </span>
+                                </button>
+                                <button type="button" class="effort-option" role="option" data-effort="xhigh" aria-selected="true">
+                                    <span class="effort-option-check" aria-hidden="true"></span>
+                                    <span class="effort-option-text">
+                                        <span class="effort-option-name">Extra High</span>
+                                        <span class="effort-option-hint">максимум</span>
+                                    </span>
+                                </button>
+                            </div>
+                        </div>
 
                         <!-- Send button -->
                         <button id="send-btn" type="button" title="Отправить" aria-label="Отправить">

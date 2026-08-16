@@ -13,10 +13,12 @@ from server.llm.stream_events import (
     ContentThinkSplitter,
     StreamEvent,
     ToolCallAssembler,
+    assembled_to_openai_tool_calls,
     build_assistant_replay,
     normalize_chunk,
     preview_tool_result,
 )
+from server.tools.source_registry import tool_history_stub
 from server.utils.config import OpenAIProfile
 
 logger = logging.getLogger(__name__)
@@ -78,7 +80,22 @@ def strip_leaked_cot_preamble(text: str) -> str:
 
 
 
-def _reasoning_kwargs(profile: OpenAIProfile) -> Dict[str, Any]:
+UI_THINK_EFFORTS = ("low", "medium", "xhigh")
+
+
+def parse_ui_think_effort(value: Any) -> Optional[str]:
+    """Accept ChatGPT/Cursor-style UI values: low | medium | xhigh."""
+    if not isinstance(value, str):
+        return None
+    effort = value.strip().lower()
+    if effort in UI_THINK_EFFORTS:
+        return effort
+    return None
+
+
+def _reasoning_kwargs(
+    profile: OpenAIProfile, effort_override: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Build request kwargs that enable/disable thinking for the whole agentic loop
     (first turn and every turn after tool results).
@@ -101,7 +118,7 @@ def _reasoning_kwargs(profile: OpenAIProfile) -> Dict[str, Any]:
             },
         }
 
-    effort = (profile.think_effort or "high").strip().lower()
+    effort = (effort_override or profile.think_effort or "high").strip().lower()
     # LM Studio Gemma: on/off only — keep SDK-valid effort for OpenAI/DeepSeek,
     # and always pass enabled=true for local templates.
     template_kwargs: Dict[str, Any] = {"enable_thinking": True}
@@ -289,6 +306,7 @@ class BaseLLMProvider(ABC):
         history: Optional[List[Any]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_map: Optional[Dict[str, Callable]] = None,
+        think_effort: Optional[str] = None,
     ) -> str:
         """
         Генерирует текстовый ответ на основе входных данных.
@@ -304,6 +322,7 @@ class BaseLLMProvider(ABC):
                 history=history,
                 tools=tools,
                 tool_map=tool_map,
+                think_effort=think_effort,
             ):
                 if event.type == "content":
                     final += event.data.get("delta") or ""
@@ -326,6 +345,7 @@ class BaseLLMProvider(ABC):
         history: Optional[List[Any]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_map: Optional[Dict[str, Callable]] = None,
+        think_effort: Optional[str] = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Stream thinking / tool_call / tool_result / content events for one user turn.
@@ -334,6 +354,7 @@ class BaseLLMProvider(ABC):
         start = time.perf_counter()
         messages: List[Dict[str, Any]] = []
         final_content_parts: List[str] = []
+        history_tool_messages: List[Dict[str, Any]] = []
 
         try:
             system_prompt = _with_think_token(prompt, self.profile)
@@ -360,7 +381,7 @@ class BaseLLMProvider(ABC):
                     "stream": True,
                 },
                 _sampling_kwargs(self.profile),
-                _reasoning_kwargs(self.profile),
+                _reasoning_kwargs(self.profile, think_effort),
             )
             if tools:
                 kwargs["tools"] = tools
@@ -444,6 +465,13 @@ class BaseLLMProvider(ABC):
                         profile=self.profile,
                     )
                 )
+                history_tool_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": assembled_to_openai_tool_calls(tool_calls),
+                    }
+                )
                 budget_footer = _tool_budget_footer(turns, max_turns)
 
                 for tc in tool_calls:
@@ -503,6 +531,13 @@ class BaseLLMProvider(ABC):
                             "content": _tool_result_content(payload, self.profile),
                         }
                     )
+                    history_tool_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": tool_history_stub(display_result, ok=ok),
+                        }
+                    )
 
                 kwargs["messages"] = messages
                 kwargs["tool_choice"] = "none" if turns >= max_turns else "auto"
@@ -515,7 +550,11 @@ class BaseLLMProvider(ABC):
             )
             yield StreamEvent(
                 "done",
-                {"final_content": text, "has_graph": False},
+                {
+                    "final_content": text,
+                    "has_graph": False,
+                    "history_tool_messages": history_tool_messages,
+                },
             )
 
         except Exception as e:

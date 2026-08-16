@@ -49,3 +49,31 @@ def test_preserve_thinking_omitted_by_default():
     kwargs = _reasoning_kwargs(OpenAIProfile(think=True, think_effort="xhigh"))
     assert "preserve_thinking" not in kwargs["extra_body"]
     assert "preserve_thinking" not in kwargs["extra_body"]["chat_template_kwargs"]
+
+
+def test_reasoning_effort_levels():
+    for effort in ("low", "medium", "xhigh"):
+        kwargs = _reasoning_kwargs(OpenAIProfile(think=True, think_effort=effort))
+        assert kwargs["reasoning_effort"] == effort
+        assert kwargs["extra_body"]["reasoning"]["effort"] == effort
+        assert kwargs["extra_body"]["reasoning"]["enabled"] is True
+
+
+def test_reasoning_effort_override():
+    kwargs = _reasoning_kwargs(
+        OpenAIProfile(think=True, think_effort="xhigh"),
+        effort_override="low",
+    )
+    assert kwargs["reasoning_effort"] == "low"
+    assert kwargs["extra_body"]["reasoning"]["effort"] == "low"
+
+
+def test_parse_ui_think_effort():
+    from server.llm.base import parse_ui_think_effort
+
+    assert parse_ui_think_effort("xhigh") == "xhigh"
+    assert parse_ui_think_effort(" Medium ") == "medium"
+    assert parse_ui_think_effort("low") == "low"
+    assert parse_ui_think_effort("high") is None
+    assert parse_ui_think_effort("") is None
+    assert parse_ui_think_effort(None) is None

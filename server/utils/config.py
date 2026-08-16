@@ -44,7 +44,7 @@ class OpenAIProfile(BaseModel):
     # Gemma/LM Studio: inject into system message so thinking stays on after tool results.
     # Empty for DeepSeek/OpenRouter (they use reasoning API params instead).
     think_token: str = ""
-    # OpenRouter/DeepSeek/OpenAI effort when think=true: low|medium|high|max
+    # OpenRouter/DeepSeek/OpenAI effort when think=true: low|medium|high|max|xhigh
     think_effort: str = "high"
     # Qwen3.8: keep <think> from prior turns (tool loop). Official default is True.
     preserve_thinking: bool = False

@@ -1,10 +1,11 @@
 import logging
-from typing import Any, Callable, Dict, List
+from collections.abc import Callable
+from typing import Any
 
-from server.utils.config import AppConfig
 from server.tools.graph_qa import GraphQA
 from server.tools.source_registry import SourceRegistry
 from server.tools.subgraph_search import SubgraphSearchAgent
+from server.utils.config import AppConfig
 from server.utils.tracing import (
     OI_INPUT_VALUE,
     OI_SPAN_KIND,
@@ -34,22 +35,16 @@ class Tools:
         llm_profile = getattr(config.llm.profiles, cypher_profile_name, None)
 
         if not llm_profile:
-            logger.warning(
-                f"Профиль {cypher_profile_name} не найден. Используем профиль по умолчанию."
-            )
+            logger.warning(f"Профиль {cypher_profile_name} не найден. Используем профиль по умолчанию.")
             llm_profile = getattr(config.llm.profiles, config.llm.current_profile)
 
         tool_profile_name = config.llm.tool_profile or cypher_profile_name
         tool_llm_profile = getattr(config.llm.profiles, tool_profile_name, None)
         if not tool_llm_profile:
-            logger.warning(
-                f"Профиль {tool_profile_name} не найден. Используем cypher-профиль."
-            )
+            logger.warning(f"Профиль {tool_profile_name} не найден. Используем cypher-профиль.")
             tool_llm_profile = llm_profile
 
-        self.graph_qa = GraphQA(
-            config.neo4j, llm_profile, config.llm.history_len, config.run_id, config.limit
-        )
+        self.graph_qa = GraphQA(config.neo4j, llm_profile, config.llm.history_len, config.run_id, config.limit)
         self.source_registry = SourceRegistry()
         self.subgraph_search = SubgraphSearchAgent(
             tool_llm_profile,
@@ -133,19 +128,19 @@ class Tools:
         self.graph_qa.successful_queries.clear()
         self.source_registry.clear()
 
-    def get_tools_list(self) -> List[Callable]:
+    def get_tools_list(self) -> list[Callable]:
         """
         Возвращает список всех доступных функций-инструментов.
         """
         return [self.ask_subgraph]
 
-    def get_tool_map(self) -> Dict[str, Callable]:
+    def get_tool_map(self) -> dict[str, Callable]:
         """
         Создает словарь соответствия имен функций их объектам.
         """
         return {func.__name__: func for func in self.get_tools_list()}
 
-    def get_openai_tools(self) -> List[Dict[str, Any]]:
+    def get_openai_tools(self) -> list[dict[str, Any]]:
         """
         Возвращает список инструментов в формате JSON Schema для OpenAI SDK.
         """
@@ -160,14 +155,21 @@ class Tools:
                         "Call when the question has a product and/or goal. If neither "
                         "is named, do not call — ask one clarifying question. "
                         "BUDGET: two calls max; high+high is forbidden, any other "
-                        "pair is allowed. "
+                        "pair is allowed. Prior ask_subgraph calls in history are "
+                        "the previous turn and do not spend this budget. "
                         "Call 1: 1–6 English declarative statements; orthogonal "
                         "aspects from the question, not paraphrases and not empty "
                         "axes; only names the user said; no Russian. GOOD lines "
-                        "are syntax, not default entities. "
+                        "are syntax, not default entities. Follow-up that points "
+                        "at the previous assistant answer (expand, close GAPS, "
+                        "add a field): names from that answer and its GAPS axes "
+                        "are in scope for call 1. Do not copy subquestion strings "
+                        "from prior ask_subgraph calls in history; write new "
+                        "statements for missing fields. "
                         "Call 2: 1–3 statements for a missing field (dose / matrix / "
-                        "regulation) or names from returned chains; if call 1 was "
-                        "empty, repeat the same question classes without new names. "
+                        "regulation) or names from returned chains this turn; if "
+                        "call 1 was empty, repeat the same question classes "
+                        "without new names. "
                         "RETURNS: evidence blocks. One block = one system = one "
                         "table row. Cite (source:N). Do not write [n], PDF names, "
                         "or ### Источники. Do not name block labels in the answer."
@@ -186,13 +188,21 @@ class Tools:
                                     "No '?', no Russian. Call 1: only names and "
                                     "classes the user said (substance, gas, number, "
                                     "strain, matrix, plant, subclass — not only a "
-                                    "dye). Call 2 may use names from returned chains. "
+                                    "dye). Follow-up pointing at the previous "
+                                    "assistant answer: those names are in scope "
+                                    "for call 1. Call 2 may use names from returned "
+                                    "chains this turn. "
                                     "GOOD: 'Lactic acid bacteria are used as starter cultures "
                                     "for cottage cheese production.' "
                                     "GOOD: 'Freshness indicators change color "
                                     "in packaged food.' "
                                     "BAD: several restatements of one sentence. "
-                                    "BAD (call 1): a name the user did not mention."
+                                    "BAD (call 1): a name the user did not mention "
+                                    "and that is not in the previous assistant answer. "
+                                    "BAD: copying a previous ask_subgraph "
+                                    "subquestion string from history. "
+                                    "BAD (follow-up call 1): drop names from your "
+                                    "previous answer and search only a class."
                                 ),
                             },
                             "effort": {

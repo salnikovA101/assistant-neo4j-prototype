@@ -51,6 +51,61 @@ _ISTOCHNIKI_SECTION_RE = re.compile(
 )
 
 
+def session_source_ids_in_text(text: str) -> list[int]:
+    """Unique session source ids found in text, sorted."""
+    found = {int(x) for x in _SOURCE_ID_RE.findall(text or "")}
+    return sorted(found)
+
+
+def format_source_id_list(ids: Iterable[int]) -> str:
+    """Compact id list: 1, 2, 5-9 (pairs stay comma-separated)."""
+    nums = sorted({int(x) for x in ids})
+    if not nums:
+        return ""
+    ranges: list[tuple[int, int]] = []
+    start = prev = nums[0]
+    for n in nums[1:]:
+        if n == prev + 1:
+            prev = n
+            continue
+        ranges.append((start, prev))
+        start = prev = n
+    ranges.append((start, prev))
+    parts: list[str] = []
+    for a, b in ranges:
+        if a == b:
+            parts.append(str(a))
+        elif b == a + 1:
+            parts.append(f"{a}, {b}")
+        else:
+            parts.append(f"{a}-{b}")
+    return ", ".join(parts)
+
+
+def tool_history_stub(result: str, *, ok: bool = True) -> str:
+    """
+    Compact tool.content for chat history. Not an empty-search marker.
+    Full UNIT stays in the live UI event only.
+    """
+    if not ok:
+        msg = (result or "unknown").strip()
+        if msg.lower().startswith("error:"):
+            msg = msg[6:].strip()
+        if len(msg) > 200:
+            msg = msg[:199] + "…"
+        return f"Tool error: {msg}"
+    ids = session_source_ids_in_text(result)
+    if ids:
+        listed = format_source_id_list(ids)
+        return (
+            f"Retrieved data. Session sources {listed} (stable ids). "
+            "Facts are in the following assistant message. Not an empty result."
+        )
+    return (
+        "Retrieved data. No source:N in this result. Not an empty result."
+    )
+
+
 def collect_source_files(accepted: Iterable[dict]) -> list[str]:
     """Unique source_file values from accepted chain dicts (edges + fans)."""
     seen: set[str] = set()
