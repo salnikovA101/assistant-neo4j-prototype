@@ -88,15 +88,17 @@ class Tools:
         """
         Search the English knowledge graph (articles, patents, regulations).
 
-        At most TWO calls: medium+medium or high+low (second is not high).
-        Call 1: 1–6 English statements. Call 2: missing field (dose / matrix /
-        regulation), not a repeat of call 1.
+        At most TWO calls; high+high is forbidden, any other pair is allowed.
+        Call 1: 1–6 English statements from the user question only.
+        Call 2: missing field or follow-up from returned chains, not a
+        repeat of call 1.
 
         Returns UNIT blocks. Cite (source:N); no [n] / ### Источники.
 
         Args:
-            subquestions: 1–6 English statements. Only classes and user
-                constraints; do not invent entity names.
+            subquestions: 1–6 English statements. Call 1: only classes
+                from the user question. Call 2 may use names from
+                returned chains.
             effort: low (mine 10 / emit 5), medium (15 / 10), high (20 / 15).
         """
         with tracer.start_as_current_span("ask_subgraph") as span:
@@ -157,16 +159,18 @@ class Tools:
                         "(starter cultures, freshness indicators, smart packaging). "
                         "Call when the question has a product and/or goal. If neither "
                         "is named, do not call — ask one clarifying question. "
-                        "BUDGET: two calls max — medium+medium or high+low (second "
-                        "call is not high). "
-                        "Call 1: 1–6 English declarative statements; only classes and "
-                        "constraints from the user; no invented dye/strain/gas names; "
-                        "no Russian. Orthogonal beats paraphrases. "
+                        "BUDGET: two calls max; high+high is forbidden, any other "
+                        "pair is allowed. "
+                        "Call 1: 1–6 English declarative statements; orthogonal "
+                        "aspects from the question, not paraphrases and not empty "
+                        "axes; only names the user said; no Russian. GOOD lines "
+                        "are syntax, not default entities. "
                         "Call 2: 1–3 statements for a missing field (dose / matrix / "
-                        "regulation), not a repeat of call 1. "
-                        "RETURNS: UNIT chains. Cite (source:N). Do not write [n], "
-                        "PDF names, or ### Источники. One UNIT is one system; "
-                        "do not mix facts across UNITs."
+                        "regulation) or names from returned chains; if call 1 was "
+                        "empty, repeat the same question classes without new names. "
+                        "RETURNS: evidence blocks. One block = one system = one "
+                        "table row. Cite (source:N). Do not write [n], PDF names, "
+                        "or ### Источники. Do not name block labels in the answer."
                     ),
                     "parameters": {
                         "type": "object",
@@ -177,28 +181,30 @@ class Tools:
                                 "minItems": 1,
                                 "maxItems": 6,
                                 "description": (
-                                    "1–6 English declarative statements (product / process / "
-                                    "matrix class / sensor or culture class). No '?', no "
-                                    "checklists, no Russian. Only classes and user constraints; "
-                                    "never invent entity names. "
+                                    "1–6 English declarative statements; orthogonal "
+                                    "aspects from the question, not paraphrases. "
+                                    "No '?', no Russian. Call 1: only names and "
+                                    "classes the user said (substance, gas, number, "
+                                    "strain, matrix, plant, subclass — not only a "
+                                    "dye). Call 2 may use names from returned chains. "
                                     "GOOD: 'Lactic acid bacteria are used as starter cultures "
                                     "for cottage cheese production.' "
                                     "GOOD: 'Freshness indicators change color "
                                     "in packaged food.' "
-                                    "BAD: 'Bromocresol green is embedded in agar to detect "
-                                    "spoilage.' (named a dye the user did not)."
+                                    "BAD: several restatements of one sentence. "
+                                    "BAD (call 1): a name the user did not mention."
                                 ),
                             },
                             "effort": {
                                 "type": "string",
                                 "enum": ["low", "medium", "high"],
                                 "description": (
-                                    "Search budget: how many UNIT chains to mine/emit. "
+                                    "Search budget: how many evidence blocks to mine/emit. "
                                     "low=mine 10 emit 5 (narrow fact), medium=15/10 "
                                     "(default), high=20/15 only if the user asked a list "
                                     "or comparison of many entities. Choose by question "
-                                    "WIDTH. Max two calls: medium+medium or high+low "
-                                    "(second call is not high)."
+                                    "WIDTH. Max two calls; high+high is forbidden. "
+                                    "Do not pick high only to mine more blocks."
                                 ),
                             },
                         },
