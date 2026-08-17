@@ -10,8 +10,6 @@ from typing import List, Tuple
 
 import httpx
 
-from client.main import wait_for_server
-
 TEST_CASES: List[Tuple[str, str]] = [
     (
         "Какие соединения производятся микробами и могут служить прямым индикатором"
@@ -250,6 +248,22 @@ TEST_CASES: List[Tuple[str, str]] = [
 
 API_URL = "http://localhost:8000/process_text_test"
 OUTPUT_FILE = "tests/test_results.txt"
+
+
+async def wait_for_server(url: str, timeout: float = 60.0) -> None:
+    health = f"{url.rstrip('/')}/health"
+    deadline = time.perf_counter() + timeout
+    async with httpx.AsyncClient() as client:
+        while True:
+            try:
+                response = await client.get(health)
+                if response.status_code < 500:
+                    return
+            except httpx.HTTPError:
+                pass
+            if time.perf_counter() >= deadline:
+                raise TimeoutError(f"Server not ready: {url}")
+            await asyncio.sleep(0.5)
 
 
 async def run_tests():

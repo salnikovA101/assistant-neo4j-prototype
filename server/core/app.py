@@ -11,6 +11,13 @@ from fastapi.staticfiles import StaticFiles
 from server.utils.config import load_config
 from server.core.db import get_driver
 from server.core.graph_runs import graph_run_store
+from server.core.http_api import (
+    CORS_ORIGIN_RE,
+    GraphVizBody,
+    TextProcessBody,
+    build_health,
+    session_id_from_request,
+)
 from server.core.pipeline import ServerPipeline
 from server.llm.base import UI_THINK_EFFORTS, parse_ui_think_effort
 from server.tools.graph_viz import build_graph_viz_payload
@@ -64,13 +71,12 @@ app = FastAPI(title="Voice Assistant Server", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origin_regex=CORS_ORIGIN_RE,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept", "X-Session-Id"],
     expose_headers=[
         "Recognized-Text",
         "LLM-Response",
-        "Has-Graph",
         "Sample-Rate",
         "Channels",
         "Sample-Width",
@@ -103,7 +109,9 @@ async def process_audio(request: Request):
     if not wav_bytes:
         return JSONResponse({"error": "Пустое тело запроса"}, status_code=400)
 
-    recognized, answer = await pipeline.process_audio(wav_bytes)
+    recognized, answer = await pipeline.process_audio(
+        wav_bytes, session_id=session_id_from_request(request)
+    )
 
     if not recognized:
         return JSONResponse({"error": "Речь не распознана"}, status_code=422)
@@ -114,7 +122,6 @@ async def process_audio(request: Request):
         headers={
             "Recognized-Text": quote(recognized, safe=""),
             "LLM-Response": quote(answer, safe=""),
-            "Has-Graph": "true" if pipeline.has_graph else "false",
             "Sample-Rate": "24000",
             "Channels": "1",
             "Sample-Width": "2",
@@ -145,30 +152,32 @@ async def stt_only(request: Request):
 
 
 @app.post("/process_text")
-async def process_text(request: Request):
+async def process_text(request: Request, body: TextProcessBody):
     """
     Принимает текст JSON.
     При audio_enabled=true — стрим PCM; иначе — JSON {"answer": "..."} (как /process_text_test).
     """
     pipeline: ServerPipeline = request.app.state.pipeline
-    data = await request.json()
-    text = data.get("text", "").strip()
-    think_effort = parse_ui_think_effort(data.get("reasoning_effort"))
+    text = body.text.strip()
+    think_effort = parse_ui_think_effort(body.reasoning_effort)
 
     if not text:
         return JSONResponse({"error": "Пустой текст"}, status_code=400)
 
-    answer = await pipeline.process_text(text, think_effort=think_effort)
+    answer = await pipeline.process_text(
+        text,
+        think_effort=think_effort,
+        session_id=session_id_from_request(request),
+    )
 
     if not pipeline.config.audio_enabled:
-        return JSONResponse({"answer": answer, "has_graph": pipeline.has_graph})
+        return JSONResponse({"answer": answer})
 
     return StreamingResponse(
         pipeline.synthesize(answer, request),
         media_type="audio/pcm",
         headers={
             "LLM-Response": quote(answer, safe=""),
-            "Has-Graph": "true" if pipeline.has_graph else "false",
             "Sample-Rate": "24000",
             "Channels": "1",
             "Sample-Width": "2",
@@ -177,23 +186,24 @@ async def process_text(request: Request):
 
 
 @app.post("/process_text_stream")
-async def process_text_stream(request: Request):
+async def process_text_stream(request: Request, body: TextProcessBody):
     """
     SSE stream of assistant events: thinking, tool_call, tool_result, content, done, error.
 
     Request body: {"text": "вопрос пользователя", "reasoning_effort": "xhigh"|"medium"|"low"}
     """
     pipeline: ServerPipeline = request.app.state.pipeline
-    data = await request.json()
-    text = data.get("text", "").strip()
-    think_effort = parse_ui_think_effort(data.get("reasoning_effort"))
+    text = body.text.strip()
+    think_effort = parse_ui_think_effort(body.reasoning_effort)
 
     if not text:
         return JSONResponse({"error": "Пустой текст"}, status_code=400)
 
+    session_id = session_id_from_request(request)
+
     async def event_generator():
         async for event in pipeline.process_text_stream(
-            text, request, think_effort=think_effort
+            text, request, think_effort=think_effort, session_id=session_id
         ):
             yield event.to_sse()
 
@@ -209,7 +219,7 @@ async def process_text_stream(request: Request):
 
 
 @app.post("/process_text_test")
-async def process_text_test(request: Request):
+async def process_text_test(request: Request, body: TextProcessBody):
     """
     Принимает текст JSON, возвращает ответ LLM (без TTS).
     Специально для скриптов тестирования.
@@ -217,30 +227,35 @@ async def process_text_test(request: Request):
     Request body: {"text": "вопрос пользователя", "reasoning_effort": "xhigh"|"medium"|"low"}
     """
     pipeline: ServerPipeline = request.app.state.pipeline
-    data = await request.json()
-    text = data.get("text", "").strip()
-    think_effort = parse_ui_think_effort(data.get("reasoning_effort"))
+    text = body.text.strip()
+    think_effort = parse_ui_think_effort(body.reasoning_effort)
 
     if not text:
         return JSONResponse({"error": "Пустой текст"}, status_code=400)
 
-    answer = await pipeline.process_text(text, think_effort=think_effort)
+    answer = await pipeline.process_text(
+        text,
+        think_effort=think_effort,
+        session_id=session_id_from_request(request),
+    )
 
     return JSONResponse({"answer": answer})
 
 
 @app.post("/clear_history")
 async def clear_history(request: Request):
-    """Сбрасывает историю чата и контекст."""
+    """Сбрасывает историю чата и контекст этой вкладки."""
     pipeline: ServerPipeline = request.app.state.pipeline
-    pipeline.clear_history()
+    pipeline.clear_history(session_id=session_id_from_request(request))
     return JSONResponse({"status": "ok"})
 
 
 @app.get("/health")
-async def health():
-    """Проверка готовности сервера."""
-    return {"status": "ready"}
+async def health(request: Request):
+    """Готовность: pipeline + LLM-объект + Neo4j verify_connectivity."""
+    pipeline = getattr(request.app.state, "pipeline", None)
+    status_code, payload = await build_health(pipeline)
+    return JSONResponse(payload, status_code=status_code)
 
 
 @app.get("/ui_config")
@@ -259,11 +274,9 @@ async def ui_config(request: Request):
 
 
 @app.post("/graph_viz")
-async def get_graph_viz(request: Request):
+async def get_graph_viz(body: GraphVizBody):
     """Hydrate accepted chains for the lightweight graph modal. No LLM calls."""
-    data = await request.json()
-    run_id = str(data.get("graph_run_id") or "")
-    chains = graph_run_store.get(run_id)
+    chains = graph_run_store.get(body.graph_run_id)
     if chains is None:
         return JSONResponse(
             {"error": "Graph run not found or expired"},

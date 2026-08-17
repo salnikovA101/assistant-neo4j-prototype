@@ -1,0 +1,842 @@
+[
+  {
+    "id": "q0",
+    "question": "Which culture supernatants are reported to inhibit urease activity (including L. casei strain Shirota supernatant at pH 6.5 and L. acidophilus supernatant), and how does oral culture-spent supernatant of human L. acidophilus strain LB affect H. felis urease activity? Which organisms produce lacticins A164 and BH5, how do those lacticins compare with nisin A and leucocin K against H. pylori, what mode of action do other LAB bacteriocins show against H. pylori, which organism is described as secreting bacteriocins (B. subtilis), and how does L. salivarius compare with L. acidophilus or L. casei in suppressing H. pylori and inflammatory response in gnotobiotic mice?",
+    "evidence": [
+      "significant reduction in the urease activity of H. pylori cells incubated with L. casei strain Shirota supernatant at pH 6.5",
+      "L acidophilus supernatant ... decreased urease activity",
+      "lacticins A164 and BH5 produced by Lactococcus lactis subsp. lactis A164 and L. lactis BH5, respectively",
+      "lacticins A164 and BH5 ... showed the strongest antibacterial activity against H. pylori strains",
+      "nisin A ... showed far less activity than the lacticins",
+      "leucocin K was the least active peptide, with no inhibition toward H. pylori ATCC 43504",
+      "Other bacteriocins of LAB ... showed a bactericidal mode of action against H. pylori",
+      "B. subtilis ... secrete bacteriocins",
+      "oral treatment with the culture-spent supernatant of the human L. acidophilus strain LB ... reduced H. felis urease activity",
+      "L. salivarius suppressed H. pylori and reduced the inflammatory response in gnotobiotic mice more efficiently than L. acidophilus or L. casei"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 10
+  },
+  {
+    "id": "q1",
+    "question": "How do exopolysaccharide charge and molar-mass properties relate to casein interaction mechanisms (including DX versus DS), gelation and network morphology, gel stiffness, and reported texture outcomes such as viscosity, creaminess, and whey separation in yogurt or fermented milk?",
+    "evidence": [
+      "EPS can be uncharged or negatively charged and vary in terms of molar mass, radius of gyration, structure, and sugar composition.",
+      "DX interacted with caseins through depletion type mechanism",
+      "DS interacted with caseins through electrostatic interactions",
+      "coating of DS onto caseins inhibited casein aggregation",
+      "Gels made with EPS-producing strains gelled at significantly higher pH values",
+      "The stiffness (G') of all gels made with EPS-producing strains was significantly higher than the control gel at pH 4.6",
+      "higher stiffness might be caused by a modification in the casein network resulted from depletion flocculation",
+      "larger EPS molecules ... promoted greater rearrangement of casein network",
+      "thicker strands with larger pore sizes were observed in the gels made from EPS producing strains",
+      "EPS have been reported to increase viscosity, smoothness and creaminess, as well as, reduce whey separation of fermented dairy products"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 10
+  },
+  {
+    "id": "q2",
+    "question": "How does the glutamate decarboxylase (GAD) system convert glutamate or glutamic acid into GABA, including the role of H+ / intracellular protons, and what physiological role related to cytoplasmic or intracellular pH is reported?",
+    "evidence": [
+      "The GAD system converts the glutamic acid molecule in GABA while consuming an intracellular proton (hydrogen ion)",
+      "GAD catalyzes the irreversible α-decarboxylation of glutamic acid to produce GABA",
+      "GABA production, through H+ consumption, may contribute to buffer cytoplasmic pH drop",
+      "cells begin to accumulate stress-response metabolites, most likely due to the role of the GAD system in maintaining intracellular pH homeostasis and cellular integrity under acidic condition"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 4
+  },
+  {
+    "id": "q3",
+    "question": "Which biogenic amines are cited and which occur in fermented meat products, how does the arginine deiminase (ADI) pathway relate to putrescine formation, how do tyrosine supplements affect tyramine accumulation and tyrosine decarboxylase (TDC) activity, and what determines free amino acid concentration in wine in relation to the proteolytic activity of the strain concerned with malolactic fermentation (MLF)?",
+    "evidence": [
+      "biogenic amines (tyramine and histamine)",
+      "As far as fermented meat products are concerned, tyramine, cadaverine, putrescine, and histamine can be found",
+      "arginine deiminase pathway (ADI) generating ammonia, ornithine (generating putrescine) and carbamoyl phosphate",
+      "Supplements of tyrosine in the medium can increase about 10-fold tyramine accumulation",
+      "Supplements of tyrosine in the medium can increase about twofold tyrosine decarboxylase (TDC) activity",
+      "The concentration of free amino acids in wine is also dependent on the proteolytic activity of the strain concerned with MLF"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 6
+  },
+  {
+    "id": "q4",
+    "question": "What was evaluated regarding the ability of thermophilic LAB strains to hydrolyse the major whey proteins BLG and ALA, which LAB species such as Streptococcus thermophilus have been studied for whey protein degradation in milk products, which peptidases were identified, and how does hydrolysis relate to the number of epitopes and the allergenicity of hydrolyzed proteins?",
+    "evidence": [
+      "a reduction of the number of epitopes and consequently by a decrease in allergenicity of hydrolyzed proteins",
+      "The aim of this work was to evaluate the ability of thermophilic LAB strains to hydrolyse the major whey proteins, BLG and ALA",
+      "a few LAB species such as ... Streptococcus thermophilus have been studied for their ability to degrade whey proteins in milk products",
+      "12 of the identified proteins were peptidases (Pep A, Pep C, Pep DB, Pep F, Pep M, Pep N, Pep P, Pep Q, Pep O, Pep O2, Pep T, and Pep V)"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 4
+  },
+  {
+    "id": "q5",
+    "question": "According to the evidence, which factors may affect GABA concentration in cheese; when does Lactobacillus brevis reach its highest GABA amount; what GABA enrichment level is reported for a Streptococcus thermophilus yogurt strain; under what in vitro conditions did 61 isolates synthesize GABA; and what fraction of GABA present in both products was bioaccessible?",
+    "evidence": [
+      "the protocol of manufacture, type of primary starters, and, especially, the autochthonous microbiota and ripening conditions may affect the concentration of GABA in cheese",
+      "highest amount of GABA was reached at 30 h [in Lactobacillus brevis]",
+      "a novel Streptococcus thermophilus strain ... for production of yogurt naturally enriched with 2 mg/ml of gamma-aminobutyric acid",
+      "61 isolates synthesized GABA under in vitro conditions at 30 degrees C for 24 h, pH 4.7",
+      "This indicates that only 30% of GABA presents in both products was bioaccessible"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 5
+  },
+  {
+    "id": "q6",
+    "question": "How do PLP cofactor addition, MSG-related osmotic protection of L. plantarum FL-664, NaCl supplementation for L. plantarum, and Mn SO4.H2O among tested trace elements for L. brevis NCL912 relate to GAD activity, GABA production, or cell protection, and what GABA yield is reported for co-fermentation of L. plantarum K154 with the fungus Ceriporia lacerate?",
+    "evidence": [
+      "The addition of PLP (as a cofactor) in the range of 0.2 to 0.6 mM could increase GAD activity and GABA production by LAB",
+      "the addition of MSG up to 6%, may protect L. plantarum FL-664 cells from the osmotic stress",
+      "Co-fermentation of L. plantarum K154 and fungus Ceriporia lacerate efficiently produced GABA (15.53 mg/mL)",
+      "the addition of NaCl in MRS medium at concentrations up to 3% seemed to be able to enhance the GABA production by L. plantarum",
+      "They also investigated the effect of 20 potential trace elements ... on the GABA production by L. brevis NCL912 and found only Mn SO4.H2O significantly"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 5
+  },
+  {
+    "id": "q7",
+    "question": "What antimicrobial substances do kefir grain microorganisms produce, which pathogenic bacteria does kefir act against, and what effects do kefir bacteria–yeast mixtures and kefir have against Clostridium difficile diarrhea/enterocolitis and Aspergillus flavus aflatoxin B1 spore formation?",
+    "evidence": [
+      "The microorganisms in the kefir grains produce lactic acid, antibiotics and bactericides, which inhibit the development of degrading and pathogenic microorganisms in kefir milk",
+      "Kefir acts against the pathogenic bacteria Salmonella, Helicobacter, Shigella, Staphylococcus, Escherichia coli, Enterobacter aerogenes, Proteus vulgaris, Bacillus subtilis, Micrococcus luteus, Listeria monocytogenes, Streptococcus pyrogenes, Streptococcus faecalis KR6",
+      "a mixture of kefir isolated bacteria and yeast is able to prevent diarrhea and enterocolitis triggered by Clostridium difficile",
+      "kefir showed good efficacy in inhibiting spore formation and aflatoxin B1 produced by the fungus Aspergillus flavus"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 4
+  },
+  {
+    "id": "q8",
+    "question": "In water kefir metagenomes, which bacterial species including B. aquikefiri and Candidatus O. aquikefiri were considered present; what read-recruitment results are reported for the B. aquikefiri genome; what does recruitment across known Oenococcus genomes indicate about Candidatus Oenococcus aquikefiri; and which Lactobacillus and other species were considered not to be present?",
+    "evidence": [
+      "the bacterial species B. aquikefiri, Candidatus O. aquikefiri, L. harbinensis, L. hilgardii, ... were considered to be present in all four water kefir metagenomes",
+      "the B. aquikefiri genome recruited between 17.4 and 34.8% of all reads and was considered to be present",
+      "the spread of the recruited reads with identities ranging mainly from 70 to 85% throughout the genome sequences of all three known Oenococcus species ... indicated the presence of a novel Oenococcus species that is further referred to as Candidatus Oenococcus aquikefiri",
+      "L. casei, L. kefiranofaciens, Lactobacillus kefiri, Lactobacillus parakefiri, and species of Bacillus, Cellulomonas, Isoptericola, Pediococcus, and Sanguibacter were considered not to be present"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 4
+  },
+  {
+    "id": "q9",
+    "question": "Which LAB species are reported to modulate blood pressure by producing angiotensin 1-converting enzyme inhibitory peptides from milk proteins, which caseins does Lactobacillus delbrueckii subsp. lactis hydrolyze via cell-envelope proteinase to release antihypertensive peptides, and what additives prevent correct proteolysis?",
+    "evidence": [
+      "Lactobacillus helveticus, Lactobacillus delbrueckii subsp. bulgaricus SS1, Lactobacillus delbrueckii subsp. lactis, and Lactococcus lactis subsp. cremoris FT4 can modulate blood pressure by producing angiotensin 1-converting enzyme inhibitory peptides (ACE inhibitors) from milk proteins",
+      "Lactobacillus delbrueckii subsp. lactis hydrolyzes both alpha s1 and beta casein (but not k-casein) by means of a cell envelope proteinase releasing antihypertensive peptides",
+      "addition of NaCl and glycerol prevents correct proteolysis"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 3
+  },
+  {
+    "id": "q10",
+    "question": "What microorganisms characterize Brazilian and Tibetan kefir starters, what organic acid concentrations are observed in cow milk kefir fermentation, which volatile esters does Saccharomyces cerevisiae contribute to kefir aroma, and which metabolites do Tibetan kefir starter organisms produce?",
+    "evidence": [
+      "Brazilian kefir is characterized by the presence of three microbial populations: yeast (Saccharomyces cerevisiae), lactic acid bacteria and gram-negative bacteria (Lactobacillus paracasei)",
+      "The highest concentration of lactic acid (7.30 mg/mL), followed by acetic acid (6.50 mg/mL) and malic acid (4.00 mg/mL) is observed in cow milk kefir fermentation",
+      "yeast (S. cerevisiae) mediates for aroma production in kefir alongside other volatile esters such as isopentyl acetate, ethyl hexanoate, ethyl octanoate, phenethyl acetate, and ethyl decanoate",
+      "In the manufacture of Tibetan kefir, a combination of different microorganism species from Lactococcus lactis, Leuconosroc mesenteroides, Lactobacillus kefir, Lactobacillus casei, and Kluyveromyces marxianus are employed and produce diacetyl, ethanol, and CO2"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 4
+  },
+  {
+    "id": "q11",
+    "question": "How do bacteriocinogenic lactic acid bacteria contribute to pathogen control in European fermented sausages—including early reduction of Listeria monocytogenes counts, use of Lactobacillus and Pediococcus starter cultures in nitrite-formulated products, predominance of Lactobacillus sakei and L. curvatus, and what environmental factors should be considered when analyzing bacteriocin effectiveness in food systems?",
+    "evidence": [
+      "LAB producing bacteriocins have been demonstrated to reduce the count of food borne pathogens such as L. monocytogenes by one log early in meat fermentation",
+      "Most of European fermented sausages formulated with nitrite are produced with added starter culture such as Lactobacillus and Pediococcus spp.",
+      "The predominant species during lactic fermentation of sausages are psychrotrophic Lactobacillus sakei and L. curvatus",
+      "the effectiveness of bacteriocins in food systems should be analyzed with respect of their environment, bacteriocin stability and/or the intensity of their synthesis"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 4
+  },
+  {
+    "id": "q12",
+    "question": "Which bacterial and fungal genera and species are shared between kefir grains and soybean kefir grains—including the most abundant bacterial genus, the major fungal genus, the top two Lactobacillus species, and the fungal species that dominated both groups—and which additional fungal genera (Saccharomyces, Candida, and Kluyveromyces) were also dominant in the fungal community of kefir grains?",
+    "evidence": [
+      "Lactobacillus was the most abundant bacterial genus in both kefir and soybean kefir grains.",
+      "The major fungal genus was Kazachstania in both groups.",
+      "Saccharomyces, Candida, and Kluyveromyces were also the dominant genera of the fungal community in kefir grains.",
+      "Lactobacillus kefiranofaciens and Lactobacillus kefiri comprised the top two species in both groups.",
+      "Kazachstania unispora dominated the fungal community in both groups."
+    ],
+    "difficulty": "easy",
+    "n_evidence": 5
+  },
+  {
+    "id": "q13",
+    "question": "What fungal composition findings are reported for kefir milk relative to kefir grains: which genus was most common across milks and grains, which was second most prevalent (and in how many grain and milk samples), which was the third most commonly assigned, what was the only significant Dekkera difference between milks and grains (including the p-value), and how did the number of genera—including those at trace levels—in kefir milks compare with the grains?",
+    "evidence": [
+      "The most common fungal genus across both the kefir milk and grains was Kazachstania",
+      "Naumovozyma was the second most prevalent fungal genus, being present in 16 grains and 10 milk samples",
+      "The third most commonly assigned genus was Kluyveromyces",
+      "the only significant difference related to a higher proportion of Dekkera in the milks than in the grains (p = 0.004)",
+      "The kefir milks also contained a larger number of different genera, often at trace levels"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 5
+  },
+  {
+    "id": "q14",
+    "question": "What symbiotic consortia primarily make up kefir grains; which bacterial family dominates both kefir grains and at approximately what percentage; which Lactobacillus species is most abundant in kefir A and kefir B grains (with OTU percentages); and which fungal genus is also reported among the dominant genera in kefir grains?",
+    "evidence": [
+      "Kefir grains contain symbiotic probiotic consortia that primarily consist of lactic acid bacteria, acetic acid bacteria, and/or yeast",
+      "Lactobacillaceae was the dominant bacterial family in both kefir grains (approx. 98%)",
+      "Lactobacillus kefiranofaciens being the most abundant in both kefir grains (95.0 % of OTUs in kefir A and 96.3 % of OTUs in kefir B)",
+      "Saccharomyces ... were also the dominant genera of the fungal community in kefir grains."
+    ],
+    "difficulty": "easy",
+    "n_evidence": 4
+  },
+  {
+    "id": "q15",
+    "question": "How does malted sorghum enriched in GABA plus lactic acid fermentation relate to GABA-enriched food, and how do bound 4-hydroxybenzoic, vanillic, and ferulic acids compare in RS-containing products P1c and P1 versus P2c and P2? In P1, what happens to free p-coumaric acid after fermentation, and how do free caffeic, ferulic, and sinapic acid contents change?",
+    "evidence": [
+      "malted sorghum enriched in GABA plus lactic acid fermentation could be a good strategy to provide GABA-enriched food",
+      "the product containing RS, without and with lactic acid fermentation (P1c and P1), had a higher content of the bound 4-hydroxybenzoic, vanillic and ferulic acids, compared to the same phenolic acids in P2c and P2",
+      "In the case of P1, only free p-coumaric acid increased after fermentation",
+      "free caffeic, ferulic and sinapic acid contents decreased, which is reflected as a lower value of the sum of free phenolic acids (Total Free PA) after fermentation"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 4
+  },
+  {
+    "id": "q16",
+    "question": "What non-milk substrates are used to produce kefir-like fermented beverages (including brown sugar solution for sugar kefir and fruit/vegetable juices), which lactic acid bacteria and yeast genera characterize these fermentations, and on which of the tested juice substrates did LAB and yeasts show the best growth?",
+    "evidence": [
+      "A brown sugar solution is the main alternative substrate used nowadays in the fermentation of kefir and produces a beverage known as sugar kefir.",
+      "Sugary kefir possesses a similar microbial association as traditional milk kefir fermentation, especially lactic acid bacteria and yeast species such as Lactobacillus, Leuconostoc, Kluyveromyces pichia and Saccharomyces.",
+      "Melon, carrot, onion, tomato, fennel and strawberry juices have been used as fermentable substrates to produce kefir on which LAB and yeasts could grow.",
+      "Among these substrates, microorganisms showed the best growth on melon juice."
+    ],
+    "difficulty": "easy",
+    "n_evidence": 4
+  },
+  {
+    "id": "q17",
+    "question": "What does the proteolytic system provide for LAB strain growth during fermentation; how does Lactobacillus delbrueckii subsp. lactis hydrolyze caseins via its cell-envelope proteinase; what does CEP initiate in extracellular protein hydrolysis; and what peptide classes can CEP from L. delbrueckii subsp. lactis liberate from caseins?",
+    "evidence": [
+      "The proteolytic system provides peptides and free amino acids for the growth of strains during fermentation",
+      "Lactobacillus delbrueckii subsp. lactis hydrolyzes both alpha s1 and beta casein (but not k-casein) by means of a cell envelope proteinase releasing antihypertensive peptides",
+      "Extracellular protein hydrolysis into various long oligopeptides is initiated by a cell-envelope proteinase",
+      "CEP from Lactobacillus delbrueckii subsp. lactis are suitable to liberate both metal-chelating and anti-hypertensive peptides directly from caseins"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 4
+  },
+  {
+    "id": "q18",
+    "question": "What antimicrobial substances do sourdough-associated LAB produce, how do acetic and propionic acids from heterofermentative LAB compare with lactic acid in effectiveness, and what role do caproic acid produced by Lactobacillus sanfranciscensis CB1 together with a mixture of acetic, formic, propionic, butyric, and n-valeric acids play in inhibiting Fusarium, Penicillium, Aspergillus, and Monilia growth in bread?",
+    "evidence": [
+      "Sourdough-associated LAB produce many antimicrobial substances, such as organic acids, CO2, ethanol, hydrogen peroxide, diacetyl, fatty acids, phenyllactic acid, reuterin and fungicins",
+      "Among the organic acids, acetic and propionic acids produced by hetero fermentative LAB are more effective than lactic acid",
+      "Caproic acid produced by Lactobacillus sanfranciscensis CB1, together with a mixture of acetic, formic, propionic, butyric, and n-valeric acids, play a key role in inhibiting Fusarium, Penicillium, Aspergillus and Monilia growth in bread"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 3
+  },
+  {
+    "id": "q19",
+    "question": "What antibacterial and antifungal activities are reported for kefir (including effects against S. aureus, E. coli, Salmonella enteritidis and Aspergillus flavus spore formation/aflatoxin B1); against which organisms does bacteriocin ST8KF from L. plantarum ST8KF exhibit antimicrobial action; and against which organisms is a bactericidal effect of Lactobacillus plantarum ST8KF reported?",
+    "evidence": [
+      "Kefir exerts an antibacterial effect against several microorganisms, including S. aureus, E. coli, and Salmonella enteritidis",
+      "kefir showed good efficacy in inhibiting spore formation and aflatoxin B1 produced by the fungus Aspergillus flavus",
+      "L. plantarum ST8KF produces the bacteriocin ST8KF which exhibits antimicrobial action against Enterococcus mundtii and Listeria innocua",
+      "Lactobacillus plantarum ST8KF ... Bactericida effect against: Lactobacillus casei, Lactobacillus salivarius, Lactobacillus curvatus, Listeria innocua"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 4
+  },
+  {
+    "id": "q20",
+    "question": "What amino acid, vitamin, and cofactor biosynthesis capabilities were identified in water kefir microbes—including full aromatic amino acid pathways in Saccharomyces cerevisiae and Brettanomyces aquikefiri, the aspartate kinase nonsense mutation that blocks L-threonine, L-methionine, and L-lysine biosynthesis in B. aquikefiri, complete phosphopantothenate, tetrahydrofolate, thiamine pyrophosphate, and riboflavin pathways in S. cerevisiae, bacterial dependence on pantothenate, thiamine, and folic acid precursors, and pyridoxal 5-phosphate production in B. aquikefiri, Lactobacillus hilgardii, L. paracasei, and Candidatus O. aquikefiri?",
+    "evidence": [
+      "genes for the full biosynthetic pathways of aromatic amino acids were found for S. cerevisiae and B. aquikefiri",
+      "A nonsense mutation in the aspartate kinase gene of B. aquikefiri made it incapable of L-threonine, L-methionine, and L-lysine biosynthesis",
+      "Full biosynthetic pathways for phosphopantothenate, tetrahydrofolate, thiamine pyrophosphate, and riboflavin by S. cerevisiae were found",
+      "the bacterial species would depend on the precursors pantothenate, thiamine, and folic acid to produce phosphopantothenate, thiamine pyrophosphate, or tetrahydrofolate, respectively",
+      "the capability of pyridoxal 5-phosphate production from glutamate and glyceraldehyde 3-phosphate was found for B. aquikefiri, L. hilgardii, L. paracasei, and Candidatus O. aquikefiri"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 5
+  },
+  {
+    "id": "q21",
+    "question": "Which Lactococcus, Lactobacillus, and Streptococcus strains revealed significant potential in producing antimicrobial peptides, and which food pathogens are listed as inhibited by antimicrobial peptides?",
+    "evidence": [
+      "Lactococcus lactis l598, Lactobacillus lactis 1043, Streptococcus thermophilus t3D1, Dt1 and Lb. delbrueckii subsp. bulgaricus b38, b122 and b24 revealed a significant potential in producing antimicrobial peptides",
+      "antimicrobial peptides inhibiting S. aureus, L. monocytogenes, Listeria innocua, Enterobacter aerogenes, and Salmonella enteritidis"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 2
+  },
+  {
+    "id": "q22",
+    "question": "How do differences in amino acid and vitamin/cofactor biosynthesis among water kefir microbes create cross-species dependencies—specifically for limiting amino acids (tryptophan, tyrosine, methionine, histidine), aromatic amino acid supply to LAB from dried figs or Saccharomyces cerevisiae and possibly Brettanomyces aquikefiri, LAB vitamin/cofactor dependence on figs or S. cerevisiae, and the benefit Lactobacillus hordei and L. nagelii gain from amino acids and pyridoxal phosphate released by Zygotorulaspora florentina?",
+    "evidence": [
+      "Differences in the amino acid biosynthesis capabilities between microbial species may make them depend on each other to supply limiting amino acids, such as tryptophan, tyrosine, methionine, and histidine",
+      "none of the LAB species reported were predicted to synthesize aromatic amino acids, which could be supplied by the dried figs or, when those were depleted, by S. cerevisiae or possibly B. aquikefiri",
+      "LAB species likely depended on the figs or S. cerevisiae for their vitamin and cofactor requirements",
+      "L. hordei and L. nagelii benefit from amino acids and pyridoxal phosphate released by the yeast Zygotorulaspora florentina"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 4
+  },
+  {
+    "id": "q23",
+    "question": "Which foods are most frequently associated with high biogenic amine content, what specific biogenic amines are found in cheese and fermented meat products, and which amines are particularly abundant in foods of animal origin?",
+    "evidence": [
+      "Cheese is the food most frequently associated with a too high biogenic amine content",
+      "it can be a source of tyramine, histamine, putrescine, and beta-phenylethylamine",
+      "Tyramine and beta-phenylethylamine are particularly abundant in food from animal origin",
+      "As far as fermented meat products are concerned, tyramine, cadaverine, putrescine, and histamine can be found"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 4
+  },
+  {
+    "id": "q24",
+    "question": "Where is Lb. kefiri observed, how can its production of NH3 from arginine relate to cheese pH during ripening, and what kefiran-related role is reported for heterofermentative Lb. kefiranofaciens?",
+    "evidence": [
+      "Lb. kefiri is an important bacterium found in the cheese and easily observed from the kefir grains (Figure 2). It can produce NH3 from arginine, which could explain the pH value increase in the cheese during ripening",
+      "Lb. kefiranofaciens, a heterofermentative bacterium, has also been reported as a kefiran (exopolysaccharide) producer"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 2
+  },
+  {
+    "id": "q25",
+    "question": "How many volatile flavour compounds were detected, and what percentages are reported for 2-butanone and ethyl acetate? Which alcohol, ketone, ester, and aldehyde examples were detected?",
+    "evidence": [
+      "Eight volatile flavour compounds were detected, including ... 2-butanone (31.6%)",
+      "Eight volatile flavour compounds were detected, including ... ethyl acetate (8.9%)",
+      "alcohol (e.g., ethanol), ketone (e.g., 3-hydroxy-2-butanone (acetoin and 2-butanone), ester (e.g., ethyl acetate) and aldehyde (e.g., acetaldehyde) were detected"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 3
+  },
+  {
+    "id": "q26",
+    "question": "What inhibition spectrum is reported for casocidin-I (alpha-s-2 casein fragment 165–203), and what Gram-positive and Gram-negative pathogens are targeted by the antimicrobial peptide decrypted when Lactobacillus helveticus hydrolyzes beta casein via its PR4 proteinase?",
+    "evidence": [
+      "The alpha-s-2 casein fragment 165-203, called casocidin-I can inhibit both S. carnosus and E. coli",
+      "Lactobacillus helveticus can hydrolyze beta casein, by means of a PR4 proteinase, decrypting an antimicrobial peptide active toward several strains of Gram-positive bacteria (including S. aureus and Listeria innocua)",
+      "Lactobacillus helveticus ... decrypting an antimicrobial peptide active ... against Gram-negative pathogens such as E. coli, Salmonella, Yersinia"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 3
+  },
+  {
+    "id": "q27",
+    "question": "How do lactic acid bacteria synthesize γ-aminobutyric acid (GABA), and what culture conditions and genetic factors influence production? Cover the GAD pathway (Glu/GABA antiporter pumping Glu or MSG, GAD enzyme, gadB and gadA genes, gabT-mediated glutamate regeneration) versus the less common γ-aminobutyraldehyde/YdcW route (not commonly found in Lactobacillus or Bifidobacterium); GABA production and media/supplement effects reported for Lactobacillus rhamnosus (galactose), L. brevis (2% casein peptone or yeast extract; glucose as effective carbon source; peak amount at 30 h), L. plantarum (glucose; optimum at 60 h), and L. buchneri (higher GABA with xylose); factors such as MRS broth, coenzyme PLP, metal ions, Tween-80, and maltose and tryptone with MSG; and the relative impact of gadB versus gadA deletion?",
+    "evidence": [
+      "Lactobacillus rhamnosus synthesises a high amount of this amino acid using galactose",
+      "an increase in GABA synthesis by Lactobacillus brevis in the presence of 2% casein peptone or yeast extract",
+      "coenzyme PLP supplementation ... and the addition of metal ions ... enhance GAD activity",
+      "regulation of Tween-80 concentration ... enhance GAD activity",
+      "MRS broth ... is suitable to optimise GABA production due to its high concentration of nutrients",
+      "γ-aminobutyraldehyde ... subsequent oxidation to GABA by a γ-aminobutyraldehyde-dehydrogenase (Ydc W gene)",
+      "This pathway is not commonly found in Lactobacillus or Bifidobacterium strains",
+      "a Glu/GABA antiporter ... pumps the precursor Glu or its monosodium glutamate (MSG) into the microorganism",
+      "a GAD enzyme ... catalyses transformation of the precursor to GABA",
+      "GAD enzyme is generally codified by a gad B gene",
+      "L. brevis also possesses a gad A that presents a similar structure to the gad B gene",
+      "a GABA-aminotransferase, encoded by a gab T gene, catalyses the biotransformation of an α-ketoglutarate into Glu",
+      "deletion of gad B is associated with a more marked reduction in GABA production than deletion of gad A",
+      "maltose and tryptone in presence of MSG yielded a major increase in GABA production",
+      "glucose is the most effective carbon source for Lactobacillus plantarum",
+      "glucose is the most effective carbon source for Lactobacillus brevis",
+      "Lactobacillus buchneri produces a higher amount of GABA in the presence of xylose",
+      "highest amount of GABA was reached at 30 h [in Lactobacillus brevis]",
+      "optimum GABA production is reached after 60 h of cultivation using Lactobacillus plantarum"
+    ],
+    "difficulty": "hard",
+    "n_evidence": 19
+  },
+  {
+    "id": "q28",
+    "question": "What antimicrobial metabolites do kefir grain microorganisms produce (lactic acid, antibiotics, and bactericides that inhibit degrading and pathogenic microorganisms in kefir milk); against which pathogenic bacteria does kefir act; how can a mixture of kefir-isolated bacteria and yeast affect Clostridium difficile–triggered diarrhea and enterocolitis; and how effective is kefir against Aspergillus flavus spore formation and aflatoxin B1? Which diverse LAB/yeast communities are reported from kefir grains; what bioactivities are reported for Lactobacillus plantarum Lp27, L. plantarum CIDCA 83114, Lactobacillus kefir CIDCA 8348, L. plantarum ST8KF, and Lactobacillus lactis CIDCA 8221; and how does adding Saccharomyces sp. affect net kefiran quantity?",
+    "evidence": [
+      "The microorganisms in the kefir grains produce lactic acid, antibiotics and bactericides, which inhibit the development of degrading and pathogenic microorganisms in kefir milk",
+      "Kefir acts against the pathogenic bacteria Salmonella, Helicobacter, Shigella, Staphylococcus, Escherichia coli, Enterobacter aerogenes, Proteus vulgaris, Bacillus subtilis, Micrococcus luteus, Listeria monocytogenes, Streptococcus pyrogenes, Streptococcus faecalis KR6",
+      "a mixture of kefir isolated bacteria and yeast is able to prevent diarrhea and enterocolitis triggered by Clostridium difficile",
+      "kefir showed good efficacy in inhibiting spore formation and aflatoxin B1 produced by the fungus Aspergillus flavus",
+      "Lactobacillus brevis, Lactobacillus delbrueckii ssp. bulgaricus, Lactobacillus helveticus, Streptococcus thermophilus, Lactobacillus casei ssp. pseudoplantarum, Kluyveromyces marxianus var. lactis, Saccharomyces cerevisiae, Candida inconspicua, Candida maris, Lactobacillus lactis ssp. lactis",
+      "Lactobacillus paracasei, Lactobacillus parabuchneri, Lactobacillus casei, Lactobacillus kefiri, Lactococcus lactis, Acetobacter lovaniensis, Kluyveromyces lactis, Kazachstania aerobia, Saccharomyces cerevisiae, Lachancea meyersii",
+      "Lactobacillus plantarum Lp27 ... Inhibited cholesterol absorption",
+      "Lactobacillus plantarum CIDCA 83114 ... Inhibit the growth of Shigella sonnei",
+      "Lactobacillus plantarum CIDCA 83114 ... Inhibit ... the cytotoxicity of C. difficile toxins",
+      "Lactobacillus kefir CIDCA 8348 ... Inhibit the growth of Shigella sonnei",
+      "Lactobacillus kefir CIDCA 8348 ... Inhibit ... the cytotoxicity of C. difficile toxins",
+      "Lactobacillus plantarum ST8KF ... Bactericida effect against: Lactobacillus casei, Lactobacillus salivarius, Lactobacillus curvatus, Listeria innocua",
+      "Lactobacillus lactis CIDCA 8221 ... Inhibit the growth of Shigella sonnei",
+      "Lactobacillus lactis CIDCA 8221 ... Inhibit ... the cytotoxicity of Clostridium difficile toxins",
+      "the addition of Saccharomyces sp. to the culture improves the net quantity of kefiran"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 15
+  },
+  {
+    "id": "q29",
+    "question": "What microbiota fermentation products of kefir are reported (lactic acid, CO2, alcohol, acetaldehyde, acetone, and diacetyl); what CO2 levels are given for kefirs containing S. cerevisiae versus a starter containing S. unisponus, S. italicus, L. kefir, L. kefiranofaciens, L. lactis, and E. durans; what CO2 content is stated for a good kefir; which yeasts in kefir granules ferment lactose versus which do not; how do yeasts and LAB contribute to taste, aroma, texture, and CO2-related taste; how do acidity-index values compare for kefirs with K. marxianus/K. lactis; what FFA acidity-index range is reported for C. kefyr; and what ranges are reported for total carbohydrate and ash content of kefir, including expected carbohydrate decrease during fermentation and variation of acidity, CO2, and alcohol with storage conditions?",
+    "evidence": [
+      "the highest CO2 amount (151.40 +/- 1.07 mg/100 mL) was determined in kefirs containing S. cerevisiae",
+      "the microbiota of kefir ferments milk and creates lactic acid, CO2, small amounts of alcohol, acetaldehyde, acetone, and diacetyl",
+      "the amount of acidity, CO2, and alcohol in kefir varies depending on storage conditions",
+      "A good kefir should contain 50 g/100 mL CO2 (by volume)",
+      "yeasts and lactic acid bacteria (LAB) in kefir grains significantly contribute to the taste, aroma, and texture of traditional kefir",
+      "Kefir granules generally contain lactose-fermenting yeasts (Kluyveromyces lactis, Kluyveromyces marxianus, and Torula kefir)",
+      "Kefir granules generally contain ... yeasts that cannot ferment lactose (Saccharomyces cerevisiae)",
+      "LAB is more effective than yeast in the formation of taste and aroma substances during fermentation",
+      "the sharp acid taste and yeasty taste of kefir are due to the CO2 produced by the yeast",
+      "the average CO2 amount of kefir produced with starter culture containing S. unisponus, S. italicus, L. kefir, L. kefiranofaciens, L. lactis, and E. durans was 0.44 g/L",
+      "Kefirs containing K. marxianus and K. lactis have higher acidity index values",
+      "C. kefyr ... it was determined that the acidity index (FFAs) varied in a wide range of 0.95-12.56 KOH/g",
+      "it is expected that the total carbohydrate amount of milk will decrease in kefir because of the breakdown that occurs during fermentation",
+      "the total carbohydrate content of kefir varies between 5.27% and 4.82%",
+      "the ash content of kefir varies between 0.69% and 0.59%"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 15
+  },
+  {
+    "id": "q30",
+    "question": "According to shotgun metagenomics of the studied water kefir fermentation ecosystem, which microbial species were present and how did their predicted amino acid, vitamin, and cofactor biosynthesis capabilities differ? Include aromatic amino acid pathways in S. cerevisiae and B. aquikefiri (including the B. aquikefiri aspartate kinase nonsense mutation limiting L-threonine, L-methionine, and L-lysine synthesis), vitamin and cofactor production (phosphopantothenate, tetrahydrofolate, thiamine pyrophosphate, riboflavin, pyridoxal 5-phosphate), metabolic interdependencies among LAB, yeast (e.g., S. cerevisiae, Zygotorulaspora florentina), and fig-derived nutrients, citrate and malic acid metabolism by specific LAB species, glutamine and proline biosynthesis from glutamate, chorismate biosynthesis genes, and pyruvate-to-acetoin conversion.?",
+    "evidence": [
+      "genes for the full biosynthetic pathways of aromatic amino acids were found for S. cerevisiae and B. aquikefiri",
+      "A nonsense mutation in the aspartate kinase gene of B. aquikefiri made it incapable of L-threonine, L-methionine, and L-lysine biosynthesis",
+      "Full biosynthetic pathways for phosphopantothenate, tetrahydrofolate, thiamine pyrophosphate, and riboflavin by S. cerevisiae were found",
+      "the bacterial species would depend on the precursors pantothenate, thiamine, and folic acid to produce phosphopantothenate, thiamine pyrophosphate, or tetrahydrofolate, respectively",
+      "the capability of pyridoxal 5-phosphate production from glutamate and glyceraldehyde 3-phosphate was found for B. aquikefiri, L. hilgardii, L. paracasei, and Candidatus O. aquikefiri",
+      "Differences in the amino acid biosynthesis capabilities between microbial species may make them depend on each other to supply limiting amino acids, such as tryptophan, tyrosine, methionine, and histidine",
+      "none of the LAB species reported were predicted to synthesize aromatic amino acids, which could be supplied by the dried figs or, when those were depleted, by S. cerevisiae or possibly B. aquikefiri",
+      "LAB species likely depended on the figs or S. cerevisiae for their vitamin and cofactor requirements",
+      "L. hordei and L. nagelii benefit from amino acids and pyridoxal phosphate released by the yeast Zygotorulaspora florentina",
+      "L. harbinensis ... enabling the conversion of malic acid into fumarate, and further into succinate",
+      "Genes necessary for citrate lyase activity were attributed to L. nagelii, L. paracasei, and Candidatus O. aquikefiri, enabling these LAB species to metabolize citrate to oxaloacetate and acetate",
+      "Complete biosynthetic pathways for all amino acids, except for L-arginine, were found for S. cerevisiae",
+      "all microbial species ... to produce L-glutamine from L-glutamate",
+      "all microbial species ... to produce L-proline from L-glutamate",
+      "Genes for chorismate biosynthesis were found in L. hilgardii and L. nagelii",
+      "The water kefir ecosystem of the present study contained B. aquikefiri",
+      "The water kefir ecosystem of the present study contained L. harbinensis",
+      "The water kefir ecosystem of the present study contained L. hilgardii",
+      "The water kefir ecosystem of the present study contained L. nagelii",
+      "The water kefir ecosystem of the present study contained L. paracasei",
+      "The water kefir ecosystem of the present study contained D. bruxellensis",
+      "The water kefir ecosystem of the present study contained S. cerevisiae",
+      "a possibly novel Lactobacillus species related to L. hordei and L. mali ... were present",
+      "a novel Oenococcus sp., Candidatus O. aquikefiri, were present",
+      "genes responsible for the conversion of pyruvate into acetoin were linked with Lactobacillus species and Candidatus O. aquikefiri"
+    ],
+    "difficulty": "hard",
+    "n_evidence": 25
+  },
+  {
+    "id": "q31",
+    "question": "In multi-omics characterization of water kefir fermentation, which main microbial groups are found (lactic acid bacteria, acetic acid bacteria, and yeasts), and what population patterns are reported—Lactobacillus as dominant lactic acid genus, Acetobacter as dominant acetic acid bacteria genus, a hybrid matrix with major presence of Lactobacillus sp. and Acetobacter sp., high abundance of P. membranifaciens, Pichia kudriavzevii, and K. exigua, L. hilgardii ~90% of the grain sample, grains mostly lactic acid bacteria, acetic acid bacteria increasing from 1%–12%–~40% between 34 and 48 h, Acetobacteraceae rising from almost non-detectable to ~40%, and A. orientalis and L. buchneri increasing significantly after 72 h—and what metabolite–microbe correlations are reported (bile acid conjugates with Acetobacter tropicalis; glycerolipids decreasing in correlation with L. hilgardii, L. buchneri, and L. harbinensis; A. orientalis and A. tropicalis positively correlated with four of six chemical families)?",
+    "evidence": [
+      "Metataxonomics results revealed Lactobacillus ... as the dominant genera for lactic acid",
+      "Metataxonomics results revealed ... Acetobacter as the dominant genera for ... acetic acid bacteria",
+      "the main microbial groups found belong to lactic acid bacteria, acetic acid bacteria, and yeasts",
+      "we found in our WK a hybrid matrix with a major presence of Lactobacillus sp. and Acetobacter sp",
+      "we found a high abundance of P. membranifaciens, Pichia kudriavzevii, and K. exigua",
+      "Lactobacillus hilgardii, L. buchneri, and L. harbinensis decrease in a direct correlation with glycerolipids",
+      "Acetobacter orientalis and A. tropicalis were positively correlated with four out of six chemical families",
+      "A. tropicalis and bile acids conjugate correlate directly",
+      "L. hilgardii was dominant in the grain sample, representing ~90% of it",
+      "For acetic acid bacteria instead, they increased from 1%-12%-~40% between 34 and 48 h of fermentation",
+      "The kefir grains that were used as fermentation inoculum were mostly represented by lactic acid bacteria",
+      "Acetobacter orientalis and Lactobacillus buchneri ... increased significantly after 72 h",
+      "For the members of the family Acetobacteraceae, ... passing from almost non detectable to representing ~40% of the microbial community in the matrix"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 13
+  },
+  {
+    "id": "q32",
+    "question": "In kefir fermentations comparing fresh versus freeze-dried starters, which LAB and yeast species are described as key metabolic players; what finished-fermentation community abundances are reported for Lactococcus cremoris, Ln. kefiri, and minor taxa; how do FD milk starters compare with fresh or FD trehalose for time to reach pH <4.6, early metabolism, and final pH; which volatile organic compound classes are identified; what does HPLC show for sugars and fermentation products across the three preparations; and how do trehalose as lyoprotectant, β-galactosidase, and exopolysaccharide production relate to culture viability during freeze-drying?",
+    "evidence": [
+      "the key players that contribute to the metabolic outcomes include lactic acid bacteria such as Lactobacillus kefiranofaciens and Lentilactobacillus kefiri",
+      "the key players that contribute to the metabolic outcomes include yeasts such as Saccharomyces cerevisiae, Pichia fermentans, Monosporozyma unispora, Kluyveromyces marxianus, and Kluyveromyces lactis",
+      "FD Milk starters required longer to reach a pH value of <4.6",
+      "a slight delay in the metabolism of the FD milk organisms at the beginning of fermentation",
+      "the finished kefir was dominated by Lactococcus cremoris (~95% abundance)",
+      "Ln. kefiri also present at ~5%",
+      "L. mesenteroides, M. unispora, K. marxianus, and P. fermentans were also detected although they were all present at <=0.5%",
+      "trehalose is the preferable lyoprotectant for this particular set of microorganisms and fermentation",
+      "Identified compounds included organic acids, esters, and aldehydes including butanoic, octanoic, and hexanoic acid, butanoic acid ethyl ester, and butanal-3-methyl",
+      "HPLC analysis revealed that there was no difference in the concentration of any of glucose, galactose, acetic acid, lactic acid, or ethanol when comparing the three kefir preparations",
+      "Another enzyme important for both kefir fermentation protection during freeze drying is β-galactosidase",
+      "the production of exopolysaccharide by the lactobacilli present plays a role in their high level of viability and survival of the freeze-drying process",
+      "the final pH of the FD Milk fermentations did not differ from either fresh or FD Trehalose"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 13
+  },
+  {
+    "id": "q33",
+    "question": "In pilot-scale cheese production under aseptic conditions in a sterilized 2 m3 cheese-making chamber where a kefir beverage was used (and a synthetic medium sterilized at 121uC for 20 min), what roles are reported for cheese- and kefir-associated microbes: Lb. kefiri producing NH3 from arginine and the suggested link to cheese pH; heterofermentative kefiran-producing Lb. kefiranofaciens; S. cerevisiae isolation from cheese, reduction of lactic acid, and synthesis of acetate esters such as ethyl acetate via acetyl-CoA; K. servazzii assimilation of some LAB acids; D. hansenii increasing pH for less acid-tolerant coryneform bacteria; K. lactis not fermenting lactose or producing lactic acid, producing ethyl acetate as major ester via alcoholysis/esterification, with proteolysis correlated with growth of K. lactis, G. candidum and Pen. Crustosum; ethyl acetate also in more limited proportions in G. candidum; favorable conditions for Lb. paracasei during cheese-making; release of intracellular proteolytic and esterolytic enzymes upon Lactococcus lysis during ripening; and LAB attention for inhibiting spoilage and pathogenic microorganisms?",
+    "evidence": [
+      "Lb. kefiri is an important bacterium found in the cheese and easily observed from the kefir grains (Figure 2). It can produce NH3 from arginine, which could explain the pH value increase in the cheese during ripening",
+      "Lb. kefiranofaciens, a heterofermentative bacterium, has also been reported as a kefiran (exopolysaccharide) producer",
+      "K. servazzii ... assimilation of some acids produced by lactic acid bacteria",
+      "D. hansenii increases pH, which enables the growth of less acid-tolerant coryneform bacteria",
+      "K. lactis ... did not ferment lactose and did not therefore produce any lactic acid",
+      "the occurrence of proteolysis was correlated with the growth of K. lactis, G. candidum and Pen. Crustosum",
+      "K. lactis ... produces esters through alcoholysis of acyl-Co A and esterification of an organic acid with an alcohol",
+      "Ethyl acetate is by far the major ester produced by K. lactis",
+      "Ethyl acetate ... also detected in more limited proportions in G. candidum",
+      "S. cerevisiae was also isolated from the cheese",
+      "Lb. paracasei seems to find favorable conditions during the cheese-making process",
+      "the lysis of Lactococcus during cheese ripening results in the release of intracellular proteolytic and esterolytic enzymes",
+      "S. cerevisiae ... reduces the concentration of lactic acid",
+      "Acetate esters such as ethyl acetate ... are mainly synthesized by acetyl-coenzyme A (acetyl-Co A) in S. cerevisiae",
+      "kefir beverage was used in the present study",
+      "The synthetic medium was sterilized at 121uC for 20 min prior to use",
+      "Pilot-scale cheese production ... was carried out under aseptic conditions in a sterilized, 2 m3 cheese-making chamber",
+      "Lactic acid bacteria ... have attracted a lot of attention because of their ability to inhibit the development of spoilage and the growth of pathogenic microorganisms"
+    ],
+    "difficulty": "hard",
+    "n_evidence": 18
+  },
+  {
+    "id": "q34",
+    "question": "What composition and aflatoxin B1 removal findings are reported for water kefir grains? What related mycotoxin or AFB1 findings are reported for milk kefir microorganisms, microbial bio-adsorbents, selected Lactobacillus strains, and Tibetan kefir grains?",
+    "evidence": [
+      "water kefir grains (WKGs) ... contain a probiotic consortium that is primarily composed of lactic acid bacteria in the Lactobacillus genus, acetic acid bacteria in the Acetobacter genus, and yeasts in the Saccharomyces genus",
+      "predominant genera were Lactobacillus (88.35%), Acetobacter (6.32%), Phenylobacterium (1.15%), and Sediminibacterium (0.66%)",
+      "HPLC analysis demonstrated that the WKGs effectively removed AFB1 at pH values ranging from 3 to 9",
+      "HPLC analysis demonstrated that the WKGs effectively removed AFB1 at temperatures ranging from 4 to 45 degrees C",
+      "the removal of AFB1 mainly depended on absorption",
+      "only 49.63% of AFB1 was released from the AFB1-WKG complex after four washes",
+      "reduced more than 54% of AFB1 in cow milk and three tea soups",
+      "Lactobacillus spp., Acetobacter spp., and Saccharomyces cerevisiae can remove AFB1 through absorption",
+      "WKGs could degrade some of AFB1 into unknown metabolites",
+      "The removal of AFB1 decreased as the concentration of AFB1 increased from 2 to 20 ug/mL",
+      "Acidic conditions with pH values that varied from 3 to 5 could facilitate the removal of AFB1 mediated by WKGs",
+      "milk kefir grains and their microorganisms, such as Kazachstania unisporus, Lactobacillus, and Saccharomyces cerevisiae, could remove mycotoxins",
+      "bacteria and fungi, such as Lactobacillus, Bacillus, Enterococcus, and Saccharomyces, have been reported to act as bio-adsorbents to remove AFB1",
+      "Lactobacillus buchneri 93 to absorb and biotransform zearalenone",
+      "Lactobacillus plantarum ... AFB1 detoxification activity",
+      "Aflatoxin B1 adsorption/desorption dynamics in the presence of Lactobacillus rhamnosus RC007",
+      "the increase in the removal of ochratoxin A when the inoculation of Tibetan kefir grains increased from 2 to 3%"
+    ],
+    "difficulty": "hard",
+    "n_evidence": 17
+  },
+  {
+    "id": "q35",
+    "question": "In sequencing-based comparisons of kefir grains and resultant kefir milks, what community patterns are reported: Kluyveromyces as the third most commonly assigned genus, significantly higher Dekkera in milks than grains (p = 0.004), more genera often at trace levels in milks, very low or absent acetic acid bacteria with the suggestion they may not be strictly required for fermentation, poor milk proliferation of grain-associated Lachnospiraceae and Ruminococcaceae, Bifidobacterium detection only in grains Ir9 and UK2 and implied need for encapsulation if used for supplementation, successful fermentation indicated by pH reduction and coagulation after 24-48 hours, previously unreported taxa (Faecalibacterium, Allistipes, Rickenellaceae, Allobaculum and Enterococcus), absence of Pseudomonas spp., Ascomycota as the only fungal phylum in grains and 89.38%-100% dominance in milks, low Basidiomycota and uncultured fungi in some milks, >=99% Saccharomycetaceae in all but unusual Sp1 milk (34.27% Pichiaceae versus <=0.48% elsewhere), Dothioraceae only in grains and Wallemiomycetes only in milks, bacterial dominance by Firmicutes and Proteobacteria with LAB (Lactobacillus, Lactococcus, Leuconostoc, Streptococcus) and Acetobacter, fungal dominance by Kazachstania, Kluyveromyces and Naumovozyma, and isolation of health-associated genera plus Saccharomyces cerevisiae and Kluyveromyces lactis/Candida kefyr strains with related potential?",
+    "evidence": [
+      "The third most commonly assigned genus was Kluyveromyces",
+      "the only significant difference related to a higher proportion of Dekkera in the milks than in the grains (p = 0.004)",
+      "The kefir milks also contained a larger number of different genera, often at trace levels",
+      "genera to which many strains with health-beneficial or probiotic properties are assigned, such as Lactobacillus, Bifidobacterium, Enterococcus, Bacillus and Streptococcus, have been isolated from kefir",
+      "Strains of Saccharomyces cerevisiae, as well as Kluyveromyces lactis/Candida kefyr, commonly associated with kefir, also show potential in this regard",
+      "acetic acid bacteria were present at only very low levels (e.g. Bel1, Ir2, UK1) or were not detected (e.g. Fr1, UK3)",
+      "it may be that acetic acid bacteria are not strictly required for the fermentation process but rather contribute in some other way",
+      "Lachnospiraceae and Ruminococcaceae are present in several grains but not detected in the milk samples implies a poor ability to proliferate in the milk medium",
+      "Bifidobacteria were detected in two grains only (Ir9, 0.81% and UK2, 0.10%)",
+      "its poor endurance in the kefir milk suggests that it would need to be added in an encapsulated, or other such form, if kefir were to be employed as a vehicle for Bifidobacterium supplementation",
+      "kefir milks ... underwent a successful fermentation, as determined by a reduction in pH and milk coagulation after 24-48 hours",
+      "Faecalibacterium, Allistipes, Rickenellaceae, Allobaculum and Enterococcus have not been identified in kefir previously",
+      "Pseudomonas spp. ... were not identified in these kefirs",
+      "The only fungal phylum assigned in the grain was Ascomycota",
+      "Ascomycota were also shown to dominate within the kefir milk, ranging from a high of 100% in Ger1 to a low of 89.38% in Ir10",
+      "Basidiomycota ... was found in 9 milk samples at relatively low read numbers",
+      "9 of the milk samples also harboured trace amounts of uncultured fungi",
+      "all but one sample (Sp1) contain .99% Saccharomycetaceae",
+      "the fungal composition of kefir milk Sp1 was unusual by virtue of containing 34.27% Pichiaceae",
+      "the next highest proportion of Pichiaceae was 0.48% (in milk UK3)",
+      "Dothioraceae were only detected in the grains",
+      "Wallemiomycetes were only detected in the milks",
+      "the bacterial populations in kefir are dominated by 2 phyla, the Firmicutes and the Proteobacteria",
+      "the fungal populations of kefir were dominated by the genera Kazachstania, Kluyveromyces and Naumovozyma",
+      "the bacterial composition of kefir predominantly consists of the lactic acid bacteria (LAB) Lactobacillus, Lactococcus, Leuconostoc and Streptococcus as well as acetic acid bacteria from the genus Acetobacter"
+    ],
+    "difficulty": "hard",
+    "n_evidence": 25
+  },
+  {
+    "id": "q36",
+    "question": "In soybean-based kefir fermentation using kefir grains as a multi-strain symbiotic starter, how do the bacterial and fungal communities in conventional kefir grains versus soybean kefir grains compare—including Lactobacillus as the most abundant bacterial genus, Lactobacillus kefiranofaciens and Lactobacillus kefiri as the top two species (with a larger proportion of L. kefiri in soybean kefir grains and L. kefiranofaciens most abundant in kefir grains), and Kazachstania (especially Kazachstania unispora) as the major fungal genus in both groups, while Saccharomyces, Candida, and Kluyveromyces were also dominant in the fungal community of kefir grains—and what biochemical and flavor changes occur in the soybean solution and soybean kefir (significantly increased glutamic acid; leucine and proline as major free amino acids with slightly decreased valine; decreased beany flavor compounds; beneficial aglycone formation and absorption), including the proposed mechanisms by which beany odors arise from hexanal binding to protein hydrophobic regions and unpleasant volatile sulfur substances are produced from metabolism of methionine and other sulfur-containing amino acids, and how milk kefir fermentation confers bioactive properties such as antioxidant, antiallergic, and anti-inflammatory effects?",
+    "evidence": [
+      "Lactobacillus was the most abundant bacterial genus in both kefir and soybean kefir grains.",
+      "The major fungal genus was Kazachstania in both groups.",
+      "Saccharomyces, Candida, and Kluyveromyces were also the dominant genera of the fungal community in kefir grains.",
+      "Lactobacillus kefiranofaciens and Lactobacillus kefiri comprised the top two species in both groups.",
+      "Kazachstania unispora dominated the fungal community in both groups.",
+      "the proportion of Lactobacillus kefiri in soybean kefir grains was larger.",
+      "Lactobacillus kefiranofaciens was the most abundant species in kefir grains",
+      "the quantification of free amino acids and volatile flavor compounds in soybean solution and soybean kefir have shown the increased content of glutamic acid",
+      "a decreased amount of unpleasant beany flavor compounds",
+      "fermentation is beneficial for aglycone formation and absorption",
+      "Leucine (Leu) ... were also detected as major free amino acids in soybean kefir",
+      "proline (Pro) were also detected as major free amino acids in soybean kefir",
+      "the contents of free amino acids such as ... valine (Val) ... decreased slightly in the kefir fermentation process",
+      "the existence of beany odors was probably due to the binding of some volatile compounds such as hexanal with the hydrophobic regions of proteins",
+      "the production of some unpleasant flavor chemicals, such as volatile sulfur substances, was related to the metabolism of amino acids during the fermentation process",
+      "Methionine and other sulfur-containing amino acids could serve as the substrate for microbial metabolism and become the source of sulfur-containing flavor compounds",
+      "milk kefir is conferred plenty of bioactive properties during fermentation, such as antioxidant, antiallergic, and anti-inflammatory effects"
+    ],
+    "difficulty": "hard",
+    "n_evidence": 17
+  },
+  {
+    "id": "q37",
+    "question": "What phenotype claim is made for microbial communities from Costa Rican domestic kefir grains? Under the reported optimized fermentation settings, how do lactic versus acetic acid levels and minor formic and orotic acids compare; how are minor ethanol relative to acetic acid and AAB–ethanol interactions explained; when is acetic acid production favored; how does LAB growth respond at low versus higher agitation; what specific growth rate is reported at high initial biomass; and what colony-enumeration media showed distinct formations?",
+    "evidence": [
+      "microbial communities associated with Costa Rican domestic kefir grains may exhibit enhanced phenotypes compared to other starter cultures",
+      "Optimized fermentation conditions were established at 25 degrees C, 0 rpm, and 5 g/L initial biomass",
+      "lactic acid constitutes approximately 80% of total acid content in the sample, indicating that lactic acid is the primary product, and that LAB are favored under these optimized culturing conditions",
+      "Acetic acid ... Percentage m/m in supernatant (0.199+/-0.001)",
+      "Formic acid ... Percentage m/m in supernatant (0.008+/-0.002)",
+      "Orotic acid ... Percentage m/m in supernatant (0.007+/-0.003)",
+      "the acetic acid production was significantly less than lactic acid, indicating a dominance of LAB over acetic acid bacteria",
+      "the minor quantities of ethanol relative to the production of acetic acid may be attributed to the presence of Acetobacter spp., consistent with the microbiota typically found in kefir grains",
+      "AAB consumes ethanol that, in larger amounts, could deplete the LAB population",
+      "acetic acid production is favored with higher inoculum of bacteria and high oxygen levels",
+      "the growth of LAB increases significantly with both lower and higher incubation temperatures at a low agitation rate",
+      "at higher agitation rates, increased growth of LAB populations is noted at medium temperatures",
+      "the specific growth rate for kefir biomass ... is 0.042 1/h at ... an initial biomass concentration of 42 g/L",
+      "microbial enumeration on glucose-yeast extract, calcium carbonate agar, and Rogosa agar showed distinct colony formations"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 14
+  },
+  {
+    "id": "q38",
+    "question": "What antimicrobial activity has been reported for kefir and kefir-derived lactobacilli across published studies—including Santos et al. (2003) antagonism against Escherichia coli, Listeria monocytogenes, Salmonella Typhimurium, S. Enteritidis, Shigella flexneri, and Yersinia enterocolitica; Silva et al. (2009) inhibition of Candida albicans, Salmonella Typhi, Shigella sonnei, Staphylococcus aureus, and E. coli by brown-sugar-cultured kefir; and Chifiriuc et al. (2011) activity against Bacillus subtilis, Enterococcus faecalis, and S. Enteritidis but not Pseudomonas aeruginosa in milk fermented with kefir grains—and through which mediators (organic acids, bacteriocin peptides, and hydrogen peroxide) is this activity associated, alongside contamination risks from kefir grain pathogens and spoilage organisms such as Dipodascus capitus, Trichosporon coremiiforme, Pseudomonas spp., Enterobacteriaceae, and Clostridiaceae linked to improper beverage preparation practices?",
+    "evidence": [
+      "Santos et al. (2003) observed the antagonistic behavior of lactobacilli isolated from kefir grains against E. coli",
+      "Santos et al. (2003) observed the antagonistic behavior of lactobacilli isolated from kefir grains against L. monocytogenes",
+      "Santos et al. (2003) observed the antagonistic behavior of lactobacilli isolated from kefir grains against Salmonella Typhimurium",
+      "Santos et al. (2003) observed the antagonistic behavior of lactobacilli isolated from kefir grains against S. Enteritidis",
+      "Santos et al. (2003) observed the antagonistic behavior of lactobacilli isolated from kefir grains against Shigella flexneri",
+      "Santos et al. (2003) observed the antagonistic behavior of lactobacilli isolated from kefir grains against Y. enterocolitica",
+      "Silva et al. (2009) observed the inhibition of Candida albicans by kefir cultured in brown sugar",
+      "Silva et al. (2009) observed the inhibition of Salmonella Typhi by kefir cultured in brown sugar",
+      "Silva et al. (2009) observed the inhibition of Shigella sonnei by kefir cultured in brown sugar",
+      "Silva et al. (2009) observed the inhibition of Staphylococcus aureus by kefir cultured in brown sugar",
+      "Silva et al. (2009) observed the inhibition of E. coli by kefir cultured in brown sugar",
+      "Chifiriuc et al. (2011) observed that all milk fermented with kefir grains had antimicrobial activity against Bacillus subtilis",
+      "Chifiriuc et al. (2011) observed that all milk fermented with kefir grains had antimicrobial activity against E. faecalis",
+      "Chifiriuc et al. (2011) observed that all milk fermented with kefir grains had antimicrobial activity against S. Enteritidis",
+      "Chifiriuc et al. (2011) observed that all milk fermented with kefir grains did not inhibit P. aeruginosa",
+      "All these studies indicate that kefir antimicrobial activity is associated with the production of organic acids",
+      "All these studies indicate that kefir antimicrobial activity is associated with the production of peptides (bacteriocins)",
+      "All these studies indicate that kefir antimicrobial activity is associated with the production of hydrogen peroxide",
+      "the fungi Dipodascus capitus and Trichosporon coremiiforme, considered pathogens, were identified in kefir grains",
+      "bacterial contaminants have also been described, such as Pseudomonas spp.",
+      "bacterial contaminants have also been described, such as ... members of the Enterobacteriaceae ... families",
+      "bacterial contaminants have also been described, such as ... members of the ... Clostridiaceae ... families",
+      "The presence of these microorganisms may be associated with ... improper practices adopted during the preparation of the kefir beverage"
+    ],
+    "difficulty": "hard",
+    "n_evidence": 23
+  },
+  {
+    "id": "q39",
+    "question": "How do L. kefiranofaciens (including strain M1) and TLR-2 relate to DSS-induced colitis and cytokine changes (IL-1β, TNF-α, IL-10); how do the cell-free kefir fraction and a 100 mM lactic acid solution at pH 7 compare for immune modulation, including NFκ-B and chemokine effects of the lactic acid solution; what antimicrobial producers and pathogen targets are reported for Lacticin 3147, bacteriocin F1, L. kefiri B6 with galactooligosaccharide, Leite et al. (2015) bacteriocin-like substances, and L. kefiranofaciens 8U; and what cytokine increases are reported for solid kefir fractions containing live bacteria and for lactobacilli isolated from kefir?",
+    "evidence": [
+      "L. kefiranofaciens was able to ameliorate colitis in a DSS induced mouse model",
+      "L. kefiranofaciens M1 decreased the production of pro-inflammatory cytokines IL-1β and TNF-α",
+      "L. kefiranofaciens M1 ... increasing the production of IL-10 in vivo",
+      "L. kefiranofaciens M1 was unable to improve DSS colitis in TLR-2 knockout mice",
+      "The cell free fraction of kefir is also capable of modulating the immune system",
+      "a 100 mM lactic acid solution at pH 7 was able to elicit a comparable level of immune modulation",
+      "the lactic acid solution was also found to lower the level of NFκ-B activation in Caco-2 cells stimulated with Fli C",
+      "the lactic acid solution ... was even able to down regulate the expression of pro-inflammatory cytokines ccl20, IL-8, CXCL 2, and CXCL 10",
+      "Lacticin 3147 is produced by a strain of L. lactis isolated from kefir",
+      "Lacticin 3147 ... has an extremely broad range of antimicrobial activity, affecting B. cereus, B. subtilis, C. sporogenes, C. tyrobutyricum, Enterococcus faecium, E. faecalis, L. innocua, L. monocytogenes, S. aureus, and C. difficile",
+      "Another bacteriocin of kefir origin is F1, which is produced by the Lactobacillus paracasei subsp. tolerans strain",
+      "L. kefiri B6 ... was also capable of inhibiting and inactivating L. monocytogenes when in the presence of galactooligosaccharide",
+      "Leite et al. (2015) isolated multiple strains of L. lactis and Lb. paracasei from kefir capable of producing bacteriocin-like substances that were inhibitory to E. coli, S. enterica, S. aureus, and L. monocytogenes",
+      "L. kefiranofaciens 8U showed the ability to inhibit multiple pathogens including P. aeruginosa, L. monocytogenes, and E. faecalis",
+      "solid fractions of kefir that contained live bacteria have been shown to increase the levels of IFN-γ",
+      "lactobacilli isolated from kefir have shown that they induce higher secretion levels of IL-1β"
+    ],
+    "difficulty": "hard",
+    "n_evidence": 16
+  },
+  {
+    "id": "q40",
+    "question": "How does L. kefiranofaciens modulate immune responses in colitis and germ-free mouse models—including amelioration of DSS-induced colitis, enhanced Th1 responses with increased IFN-γ and IL-12, M1-strain reduction of IL-1β and TNF-α and increase of IL-10, and loss of efficacy in TLR-2 knockout mice—and what immune-modulating effects are reported for the cell-free fraction of kefir versus a 100 mM lactic acid solution at pH 7, including that the lactic acid solution elicits a comparable level of immune modulation and specifically lowers NFκ-B activation in FliC-stimulated Caco-2 cells and downregulates pro-inflammatory chemokines and cytokines (ccl20, IL-8, CXCL2, and CXCL10)?",
+    "evidence": [
+      "L. kefiranofaciens was able to ameliorate colitis in a DSS induced mouse model",
+      "enhance Th1 responses to TLR agonists in germ free mice by increasing the production of IFN-γ and IL-12 upon stimulation",
+      "L. kefiranofaciens M1 decreased the production of pro-inflammatory cytokines IL-1β and TNF-α",
+      "L. kefiranofaciens M1 ... increasing the production of IL-10 in vivo",
+      "L. kefiranofaciens M1 was unable to improve DSS colitis in TLR-2 knockout mice",
+      "The cell free fraction of kefir is also capable of modulating the immune system",
+      "a 100 mM lactic acid solution at pH 7 was able to elicit a comparable level of immune modulation",
+      "the lactic acid solution was also found to lower the level of NFκ-B activation in Caco-2 cells stimulated with Fli C",
+      "the lactic acid solution ... was even able to down regulate the expression of pro-inflammatory cytokines ccl20, IL-8, CXCL 2, and CXCL 10"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 9
+  },
+  {
+    "id": "q41",
+    "question": "How do Lactobacillus acidophilus strains inhibit Helicobacter pylori through organic acid production and reduced urease activity; how do acid and bile tolerance of L. acidophilus and bifidobacteria (pH 3 and 2–8% bile acid) compare with conventional yogurt bacteria; and what effects are reported for yogurt containing Lactobacillus and/or Bifidobacterium (including Bb12 and La5) on H. pylori infection or eradication rates?",
+    "evidence": [
+      "inhibition of H. pylori growth occurred as a result of organic acid production by Lactobacillus acidophilus strains",
+      "L acidophilus supernatant ... decreased urease activity",
+      "conventional yogurt bacteria have a poor resistance to acid and bile",
+      "L acidophilus and bifidobacteria can tolerate pH 3 environments",
+      "L acidophilus and bifidobacteria can tolerate ... 2-8% concentrations of bile acid",
+      "supplement with yogurt containing Lactobacillus ... could improve the intention-to-treat eradication rate of H. pylori",
+      "supplement with yogurt containing ... Bifidobacterium could improve the intention-to-treat eradication rate of H. pylori",
+      "Regular intake of yogurt containing Bb12 and La5 effectively suppressed H. pylori infection in humans",
+      "the triple-plus-yogurt group had a higher H. pylori eradication rate than the triple-only group"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 9
+  },
+  {
+    "id": "q42",
+    "question": "Which kefir-associated microbial strains are reported to produce exopolysaccharides (EPS)—including Lactobacillus nagelii, L. hilgardii, and L. hordei from water kefir; L. plantarum YW11 from Tibet kefir; L. acidophilus Z1L from Turkish homemade kefir; L. helveticus Z5L and L. casei Z7Ll; Lactococcus cremoris Z11S and L. lactis Z3S from Turkish homemade kefirs; Pediococcus dextrinicus ZN1P, P. acidilactici ZN10P, and P. pentosaceus ZN13P; and L. kefiranofaciens DN1 (EPS_DN1)—and which other metabolites are produced by kefir microbes, specifically H2O2 from L. acidophilus Z1L and L. cremoris Z11S (Turkish homemade kefir), and pyruvate, propionate, acetate, and succinate from the L. hilgardii–Saccharomyces florentinus co-culture in sugar kefir?",
+    "evidence": [
+      "Lactobacillus nagelii, Lactobacillus hilgardii & Lactobacillus hordei (Water kefir) ... Exopolysaccharides (EPS)",
+      "Lactobacillus plantarum YW11 (Tibet Kefir) ... Exopolysaccharides (EPS)",
+      "Lactobacillus acidophilus Z1L (Turkish homemade kefir) ... Exopolysaccharides (EPS)",
+      "Lactobacillus helveticus Z5L ... Exopolysaccharides (EPS)",
+      "Lactobacillus casei Z7Ll ... Exopolysaccharides (EPS)",
+      "Lactococcus cremoris Z11S & Lactococcus lactis Z3S (Turkish homemade kefirs) ... Exopolysaccharides (EPS)",
+      "Pediococcus dextrinicus ZN1P ... Exopolysaccharides (EPS)",
+      "Pediococcus acidilactici ZN10P ... Exopolysaccharides (EPS)",
+      "Pediococcus pentosaceus ZN13P ... Exopolysaccharides (EPS)",
+      "Lactobacillus kefiranofaciens DN1 New exopolysaccharide (EPS), EPS_DN1",
+      "Lactobacillus acidophilus Z1L & Lactococcus cremoris Z11S (Turkish homemade kefir) ... H2O2",
+      "Lactobacillus hilgardii Saccharomyces florentinus (Sugar kefir) Pyruvate",
+      "Lactobacillus hilgardii Saccharomyces florentinus (Sugar kefir) Propionate",
+      "Lactobacillus hilgardii Saccharomyces florentinus (Sugar kefir) Acetate",
+      "Lactobacillus hilgardii Saccharomyces florentinus (Sugar kefir) Succinate"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 15
+  },
+  {
+    "id": "q43",
+    "question": "What roles do amino acid decarboxylation systems play in lactic acid bacteria as adaptive responses to energy depletion and acid stress, how do decarboxylation products differ between spoilage biogenic amines (putrescine and cadaverine, which can enhance toxicity) and bioactive amines from tyrosine and histidine (tyramine and histamine, with beneficial effects on mood and appetite/satiety), and which LAB species—L. bulgaricus, L. acidophilus, L. casei, and L. plantarum—can synthesize melatonin?",
+    "evidence": [
+      "expression (by transcriptional induction) and/or activation (by catalytic modulation) of amino acid decarboxylation systems are non-essential adaptive responses to energy depletion but also strategies to counteract acid stress",
+      "most of them only act as spoilage compounds (putrescine, cadaverine)",
+      "sometimes enhancing the toxicity of true bioactive molecules",
+      "the decarboxylation of certain amino acids, as tyrosine and histidine, can give rise to bioactive molecules (tyramine and histamine)",
+      "can exert beneficial actions (such as mood control and appetite/satiety balance regulation)",
+      "several LAB (L. bulgaricus, L. acidophilus, L. casei, L. plantarum) can synthesize melatonin"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 6
+  },
+  {
+    "id": "q44",
+    "question": "In which microbes is GAD found—including E. coli, lactic acid bacteria, S. salivarius, Bacillus megaterium, Aspergillus oryzae, Pyrococcus horikoshii, Neurospora crass, Monascus purpureus, and Rhizopus microspores—and how is GABA produced from glucose via glycolysis and the TCA cycle (through pyruvate, Acetyl-CoA, and α-ketoglutamic acid), from L-glutamate formed when α-ketoglutamic acid is catalyzed by glutamate dehydrogenase (GDH), or by direct intake of L-glutamate catalyzed by GAD, and subsequently metabolized in the mitochondrial matrix to succinate semialdehyde and succinate by succinic semialdehyde dehydrogenase (SSADH)?",
+    "evidence": [
+      "GAD can be found from a wide range of microbes, including E. coli, lactic acid bacteria (LAB), S. salivarius, and Bacillus megaterium, Aspergillus oryzae, Pyrococcus horikoshii, Neurospora crass Monascus purpureus and Rhizopus microspores",
+      "GABA in bacteria is produced by two ways which are direct intake of L-glutamate as a substrate that will be catalyzed by GAD enzyme to produce GABA",
+      "L-glutamate is formed when α-ketoglutamic acid is catalyzed by the glutamate dehydrogenase (GDH)",
+      "Glucose as a substrate through the glycolysis pathway is transformed into pyruvate before it is converted into Acetyl-Co A which then through the TCA cycle produces α-ketoglutamic acid",
+      "The existing GABA in the mitochondrial matrix is converted into succinate semialdehyde (SSA) which is irreversibly oxidized to succinate by succinic semialdehyde dehydrogenase (SSADH) that entered the TCA cycle"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 5
+  },
+  {
+    "id": "q45",
+    "question": "Which fungi and yeasts are reported to produce or increase GABA—including Rhizopus oligosporus and R. oryzae during tempeh fermentation, R. monosporus strain 5351 in soybean and mung bean, marine Pichia guilliermondii and P. anomala, Actinomucor elegans AS 3.227 in SUFU, and Aspergillus oryzae NSK as a starter—and in which yeasts has glutamic acid decarboxylase been identified or GAD activity reported (Saccharomyces cerevisiae, Kluyveromyces marxianus, and wild yeasts Kazachstania unispora, Sporobolomyces carnicolor, S. ruberrimus, Nakazawaea holstii, and Pichia scolyti)? Which A. oryzae var. effuses 3.2825, A. oryzae 3.5232, and R. oryzae 3.2751 oat fermentations are recommended as tempeh-like functional foods with higher GABA?",
+    "evidence": [
+      "Some Rhizopus oligosporus and R. oryzae strains have been shown to produce GABA during tempeh fermentation",
+      "R. monosporus strain 5351 has been reported to increase GABA content in soybean and mung bean",
+      "Marine yeasts Pichia guilliermondii and P. anomala isolated from the Pacific Ocean off Japan have high GABA-producing abilities",
+      "Actinomucor elegans AS 3.227 has been reported to increase the GABA concentration in SUFU manufacturing",
+      "Glutamic acid decarboxylase has also been identified in yeasts such as Saccharomyces cerevisiae",
+      "Glutamic acid decarboxylase has also been identified in yeasts such as Kluyveromyces marxianus",
+      "Wild yeast, such as Kazachstania unispora, have GAD activity",
+      "Wild yeast, such as Sporobolomyces carnicolor, have GAD activity",
+      "Wild yeast, such as Sporobolomyces ruberrimus, have GAD activity",
+      "Wild yeast, such as Nakazawaea holstii, have GAD activity",
+      "Wild yeast, such as Pichia scolyti, have GAD activity",
+      "Aspergillus oryzae NSK is a GABA-generating mould used as a starter culture",
+      "oats fermented by A. oryzae var. effuses 3.2825 ... can be recommended as tempeh-like functional foods with higher GABA",
+      "oats fermented by ... A. oryzae 3.5232 ... can be recommended as tempeh-like functional foods with higher GABA",
+      "oats fermented by ... R. oryzae 3.2751 ... can be recommended as tempeh-like functional foods with higher GABA"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 15
+  },
+  {
+    "id": "q46",
+    "question": "Which kefir-derived strains show antimicrobial activity against foodborne pathogens—specifically L. kefiri B6 inhibition and inactivation of Listeria monocytogenes (including in the presence of galactooligosaccharide and relative to E. coli), bacteriocin-like activity from kefir L. lactis and Lb. paracasei isolates, and pathogen inhibition by L. kefiranofaciens 8U?",
+    "evidence": [
+      "L. kefiri B6 ... was also capable of inhibiting and inactivating L. monocytogenes when in the presence of galactooligosaccharide",
+      "L. kefiri B6 ... was also capable of inhibiting and inactivating L. monocytogenes ... however, this effect was not observed with E. coli",
+      "Leite et al. (2015) isolated multiple strains of L. lactis and Lb. paracasei from kefir capable of producing bacteriocin-like substances that were inhibitory to E. coli, S. enterica, S. aureus, and L. monocytogenes",
+      "L. kefiranofaciens 8U showed the ability to inhibit multiple pathogens including P. aeruginosa, L. monocytogenes, and E. faecalis"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 4
+  },
+  {
+    "id": "q47",
+    "question": "Which dairy-origin bacteriocins and enterocins show broad antimicrobial spectra—including bacteriocins from L. plantarum and Lactobacillus delbrueckii subsp. bulgaricus and enterocins from Enterococcus faecalis and E. faecium—and against which foodborne pathogens are they active, specifically Listeria monocytogenes, Escherichia coli, Shigella spp., Staphylococcus aureus, Escherichia aerogenes, and Bacillus spp.?",
+    "evidence": [
+      "various bacteriocins produced by L. plantarum species",
+      "bacteriocins produced by Lactobacillus delbrueckii subsp. bulgaricus",
+      "bacteriocins showed broad inhibition spectra including some pathogenic organisms in foods such as Listeria monocytogenes",
+      "bacteriocins showed broad inhibition spectra including some pathogenic organisms in foods such as Escherichia coli",
+      "bacteriocins showed broad inhibition spectra including some pathogenic organisms in foods such as Shigella spp.",
+      "bacteriocins showed broad inhibition spectra including some pathogenic organisms in foods such as Staphylococcus aureus",
+      "bacteriocins showed broad inhibition spectra including some pathogenic organisms in foods such as Escherichia aerogenes",
+      "Some Enterococci also of dairy origin (Enterococcus faecalis and Enterococcus faecium) have also been reported to produce different types of bacteriocins (enterocins)",
+      "enterocins ... with antimicrobial activity limiting food spoilage or inhibiting pathogenic bacteria such as L. monocytogenes",
+      "enterocins ... with antimicrobial activity limiting food spoilage or inhibiting pathogenic bacteria such as ... Staphylococcus aureus",
+      "enterocins ... with antimicrobial activity limiting food spoilage or inhibiting pathogenic bacteria such as ... Bacillus spp."
+    ],
+    "difficulty": "medium",
+    "n_evidence": 11
+  },
+  {
+    "id": "q48",
+    "question": "What biological activities are reported for the named Lactobacillus strains—specifically cholesterol absorption inhibition by L. plantarum Lp27; inhibition of Shigella sonnei growth and Clostridium difficile toxin cytotoxicity by L. plantarum CIDCA 83114, L. kefir CIDCA 8348, and L. lactis CIDCA 8221; and bactericidal effects of L. plantarum ST8KF?",
+    "evidence": [
+      "Lactobacillus plantarum Lp27 ... Inhibited cholesterol absorption",
+      "Lactobacillus plantarum CIDCA 83114 ... Inhibit the growth of Shigella sonnei",
+      "Lactobacillus plantarum CIDCA 83114 ... Inhibit ... the cytotoxicity of C. difficile toxins",
+      "Lactobacillus kefir CIDCA 8348 ... Inhibit the growth of Shigella sonnei",
+      "Lactobacillus kefir CIDCA 8348 ... Inhibit ... the cytotoxicity of C. difficile toxins",
+      "Lactobacillus plantarum ST8KF ... Bactericida effect against: Lactobacillus casei, Lactobacillus salivarius, Lactobacillus curvatus, Listeria innocua",
+      "Lactobacillus lactis CIDCA 8221 ... Inhibit the growth of Shigella sonnei",
+      "Lactobacillus lactis CIDCA 8221 ... Inhibit ... the cytotoxicity of Clostridium difficile toxins"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 8
+  },
+  {
+    "id": "q49",
+    "question": "Which lactic acid bacteria and streptococci are associated with Italian cheeses in the evidence—L. paracasei UB2 and L. brevis UB5 with Ubriaco di Raboso; L. plantarum CCV1/CCV2 and L. casei CCV3 with Caciocavallo; S. thermophilus GZ1–GZ4 with Gorgonzola; L. plantarum PPV1/PPV8 and L. pseudomesenteroides PPV6 with Pecorino Piemontese; L. plantarum PM8/PM13, L. paracasei PM1/PM4, and L. brevis PM17 with Pecorino Marchigiano; L. lactis PU1, L. paracasei PU4/PU18/PU15/PU20, and Lactobacillus sp. PU14 with Pecorino Umbro; L. delbrueckii subsp. bulgaricus PR1/PR7, L. plantarum PR11/PR12/PR20, and L. pseudomesenteroides PR22 with Pecorino del Reatino; L. paracasei PS1/PS11, L. plantarum PS15, and L. mesenteroides PS4 with Pecorino Sardo; and L. paracasei PF6/PF8/PF13, L. plantarum PF14, Lactobacillus sp. PF7, and E. durans PF15 with Pecorino di Filiano?",
+    "evidence": [
+      "Ubriaco di Raboso .......................L. paracasei UB2, L. brevis UB5",
+      "Caciocavallo ..................................L. plantarum CCV1 and CCV2, L. casei CCV3",
+      "Gorgonzola....................................S. thermophilus GZ1, GZ2, GZ3, and GZ4",
+      "Pecorino Piemontese....................L. plantarum PPV1 and PPV8, L. pseudomesenteroides PPV6",
+      "Pecorino Marchigiano..................L. plantarum PM8 and PM13, L. paracasei PM1 and PM4, L. brevis PM17",
+      "Pecorino Umbro ...........................L. lactis PU1; L. paracasei PU4, PU18, PU15, and PU20; Lactobacillus sp. strain PU14",
+      "Pecorino del Reatino ...................L. delbrueckii subsp. bulgaricus PR1 and PR7; L. plantarum PR11, PR12, and PR20; L. pseudomesenteroides PR22",
+      "Pecorino Sardo .............................L. paracasei PS1 and PS11, L. plantarum PS15, L. mesenteroides PS4",
+      "Pecorino di Filiano.......................L. paracasei PF6, PF8, and PF13; L. plantarum PF14; Lactobacillus sp. strain PF7; E. durans PF15"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 9
+  }
+]

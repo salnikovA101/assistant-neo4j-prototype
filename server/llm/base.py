@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import json
 import logging
 import re
@@ -281,7 +280,7 @@ class BaseLLMProvider(ABC):
     """
     Базовый провайдер LLM на основе OpenAI-совместимого SDK.
 
-    Содержит конкретную реализацию generate_response — общую для всех
+    Содержит конкретную реализацию generate_response_stream — общую для всех
     провайдеров (OpenAI, Gemini и др.).
 
     Подклассы обязаны реализовать unload() и warmup().
@@ -298,49 +297,9 @@ class BaseLLMProvider(ABC):
             f"model={profile.model}, url={profile.base_url}"
         )
 
-    async def generate_response(
-        self,
-        user_text: str,
-        image_bytes: Optional[bytes] = None,
-        prompt: str = "",
-        history: Optional[List[Any]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_map: Optional[Dict[str, Callable]] = None,
-        think_effort: Optional[str] = None,
-    ) -> str:
-        """
-        Генерирует текстовый ответ на основе входных данных.
-
-        Collects generate_response_stream events and returns final content.
-        """
-        final = ""
-        try:
-            async for event in self.generate_response_stream(
-                user_text=user_text,
-                image_bytes=image_bytes,
-                prompt=prompt,
-                history=history,
-                tools=tools,
-                tool_map=tool_map,
-                think_effort=think_effort,
-            ):
-                if event.type == "content":
-                    final += event.data.get("delta") or ""
-                elif event.type == "error":
-                    return f"Ошибка: {event.data.get('message', 'unknown')}"
-                elif event.type == "done":
-                    # Prefer assembled final_content if present.
-                    if event.data.get("final_content") is not None:
-                        final = event.data["final_content"]
-            return final
-        except Exception as e:
-            logger.error(f"[{self.__class__.__name__}] Ошибка generate_response: {e}")
-            return f"Ошибка: {e}"
-
     async def generate_response_stream(
         self,
         user_text: str,
-        image_bytes: Optional[bytes] = None,
         prompt: str = "",
         history: Optional[List[Any]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
@@ -364,14 +323,6 @@ class BaseLLMProvider(ABC):
                 messages.extend(history)
 
             content: List[Dict[str, Any]] = [{"type": "text", "text": user_text}]
-            if image_bytes:
-                b64 = base64.b64encode(image_bytes).decode()
-                content.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
-                    }
-                )
             messages.append({"role": "user", "content": content})
 
             kwargs: Dict[str, Any] = _merge_request_kwargs(
@@ -552,7 +503,6 @@ class BaseLLMProvider(ABC):
                 "done",
                 {
                     "final_content": text,
-                    "has_graph": False,
                     "history_tool_messages": history_tool_messages,
                 },
             )
@@ -594,25 +544,6 @@ class BaseLLMProvider(ABC):
             label,
             reasoning_tokens,
             bool("".join(reasoning_parts)),
-        )
-
-    def _log_reasoning_usage(self, label: str, response: Any) -> None:
-        usage = getattr(response, "usage", None)
-        details = getattr(usage, "completion_tokens_details", None) if usage else None
-        reasoning_tokens = (
-            getattr(details, "reasoning_tokens", None) if details else None
-        )
-        msg = response.choices[0].message
-        has_rc = bool(
-            getattr(msg, "reasoning_content", None)
-            or (getattr(msg, "model_extra", None) or {}).get("reasoning_content")
-            or (getattr(msg, "model_extra", None) or {}).get("reasoning")
-        )
-        logger.info(
-            "LLM %s reasoning_tokens=%s has_reasoning_content=%s",
-            label,
-            reasoning_tokens,
-            has_rc,
         )
 
     @abstractmethod

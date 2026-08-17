@@ -1,0 +1,423 @@
+[
+  {
+    "id": "o0",
+    "question": "Recommend how to describe a water kefir grain inoculum at the level of major microbial groups, and what fermentation products the evidence links to pathogen inhibition?",
+    "evidence": [
+      "water kefir, which is a fermented sugary beverage based on kefir grains (symbiotic colonies of yeast, lactic acid and acetic acid bacteria)",
+      "The kefir grains that were used as fermentation inoculum were mostly represented by lactic acid bacteria",
+      "inhibitory effects against pathogens have been associated with the production of protective organic acids by lactic acid bacteria and ethanol produced by yeasts"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 3
+  },
+  {
+    "id": "o1",
+    "question": "Propose a lactic acid fermentation approach for sorghum products that supports GABA enrichment, and describe what happens to free and bound phenolic acids based on the available evidence?",
+    "evidence": [
+      "malted sorghum enriched in GABA plus lactic acid fermentation could be a good strategy to provide GABA-enriched food",
+      "the product containing RS, without and with lactic acid fermentation (P1c and P1), had a higher content of the bound 4-hydroxybenzoic, vanillic and ferulic acids, compared to the same phenolic acids in P2c and P2",
+      "In the case of P1, only free p-coumaric acid increased after fermentation",
+      "free caffeic, ferulic and sinapic acid contents decreased, which is reflected as a lower value of the sum of"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 4
+  },
+  {
+    "id": "o2",
+    "question": "Recommend selection criteria for lactic cultures in a fermented milk targeting gastric pathogen antagonism, including acid/GI fitness and how positive versus negative anti-H. pylori strain evidence should weigh culture choice?",
+    "evidence": [
+      "L. acidophilus ... can tolerate very low acidic pH",
+      "L. acidophilus ... can survive passage through the gastrointestinal tract",
+      "a fermented milk product containing selected lactic acid bacteria with anti-H. pylori properties (including L. casei, L. acidophilus, and S. thermophilus)",
+      "L. acidophilus P38, B. longum P29, and L. lactis M92 did not inhibit H. pylori"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 4
+  },
+  {
+    "id": "o3",
+    "question": "Propose a microbial control strategy to limit biogenic amine accumulation in foods, and justify it from the formation pathways and adaptive microbial responses described in the evidence?",
+    "evidence": [
+      "the introduction of starter strains that possess amine oxidase activity might be a way of bigger decrease of the amount of biogenic amines produced in situ",
+      "biogenic amines derived from the amino acids tyrosine, histidine, phenylalanine, lysine, ornithine, and glutamate by decarboxylation",
+      "spoilage bacteria ... release free amino acids undergoing decarboxylation",
+      "expression (by transcriptional induction) and/or activation (by catalytic modulation) of amino acid decarboxylation systems are non-essential adaptive responses to energy depletion but also strategies to counteract acid stress"
+    ],
+    "difficulty": "easy",
+    "n_evidence": 4
+  },
+  {
+    "id": "o4",
+    "question": "Propose a practical approach to remove aflatoxin B1 using water kefir grains, and justify the process conditions you would prioritize from the available evidence?",
+    "evidence": [
+      "HPLC analysis demonstrated that the WKGs effectively removed AFB1 at pH values ranging from 3 to 9",
+      "the initial pH values affected the ability of WKGs to remove AFB1",
+      "Acidic conditions with pH values that varied from 3 to 5 could facilitate the removal of AFB1 mediated by WKGs",
+      "WKGs removed 35.27% of AFB1 at 45 degrees C",
+      "WKGs could degrade some of AFB1 into unknown metabolites",
+      "dead cells of WKGs ... the most effective ... in removing AFB1",
+      "WKGs decreased the content of AFB1 by 54.90%, 58.85%, 58.96%, and 56.75%",
+      "WKGs was incubated with 5 mL of brown sugar solution supplemented with AFB1",
+      "kefir grains could reduce more than 56% of AFB1 in three different tea soups",
+      "WKGs could remove 54.90% of AFB1 from cow milk"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 10
+  },
+  {
+    "id": "o5",
+    "question": "Recommend microbial options for GABA enrichment in plant-based fermented foods represented in the evidence, and justify which organisms are actually supported as producers or GAD-active strains?",
+    "evidence": [
+      "Some Rhizopus oligosporus and R. oryzae strains have been shown to produce GABA during tempeh fermentation",
+      "R. monosporus strain 5351 has been reported to increase GABA content in soybean and mung bean",
+      "Actinomucor elegans AS 3.227 has been reported to increase the GABA concentration in SUFU manufacturing",
+      "Glutamic acid decarboxylase has also been identified in yeasts such as Saccharomyces cerevisiae",
+      "Glutamic acid decarboxylase has also been identified in yeasts such as Kluyveromyces marxianus",
+      "Aspergillus oryzae NSK is a GABA-generating mould used as a starter culture",
+      "oats fermented by A. oryzae var. effuses 3.2825 ... can be recommended as tempeh-like functional foods with higher GABA",
+      "oats fermented by ... A. oryzae 3.5232 ... can be recommended as tempeh-like functional foods with higher GABA",
+      "oats fermented by ... R. oryzae 3.2751 ... can be recommended as tempeh-like functional foods with higher GABA"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 9
+  },
+  {
+    "id": "o6",
+    "question": "Design an experimental and product-level plan to evaluate lactic acid bacteria-based H. pylori antagonism, covering in vitro assay choices, metabolite-related inhibition, and fermented dairy supplementation outcomes supported by the evidence?",
+    "evidence": [
+      "Plates were incubated for 48 to 72 h under microaerophilic conditions at 37 degrees C",
+      "Depending on the experimental design, 50-µl aliquots of fresh o/n L. casei strain Shirota cultures, cell-free culture supernatants, or washed cells resuspended in fresh MRS broth were suspended in the agar wells",
+      "H. pylori in gastric tissue was detected by quantitative culturing",
+      "In the presence of 10% L. casei strain Shirota cell-free supernatant at pH 4.5, ... inhibition of H. pylori viability",
+      "concentrations of more than 10 mM lactic acid produced by the lactobacilli in the incubation medium strongly inhibited urease activity and H. pylori viability",
+      "the addition of an L. casei strain Shirota culture supernatant (pH 4.5) ... decreased the final incubation pH to 5.1, resulting in the inhibition of urease activity and H. pylori viability",
+      "L. casei strain Shirota-containing milk administered to H. pylori-colonized subjects had a slight but nonsignificant suppressive effect on H. pylori",
+      "inhibition of H. pylori growth occurred as a result of organic acid production by Lactobacillus acidophilus strains",
+      "supplement with yogurt containing Lactobacillus ... could improve the intention-to-treat eradication rate of H. pylori",
+      "supplement with yogurt containing ... Bifidobacterium could improve the intention-to-treat eradication rate of H. pylori",
+      "Bb12 had an inhibitory effect on H. pylori"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 11
+  },
+  {
+    "id": "o7",
+    "question": "Propose a freshness monitoring scheme for meat and seafood during cold storage that combines chemical indices with sensor or colorimetric indicator approaches for spoilage volatiles, justified by the available evidence?",
+    "evidence": [
+      "pH, TVB-N, and color are important indicators for measuring the freshness of meat products",
+      "the pH and TVB-N of the meat increased from 6.0 and 12.7 mg/100 g to 6.3 and 25.6 mg/100 g, respectively",
+      "the TVB-N value of shrimp meat was higher than that of chicken meat and increased significantly (P < 0.05) with the storage time",
+      "total volatile basic nitrogen (TVB-N) can be considered the best index to determine food freshness",
+      "spoilage onset is considered for values over 0.28 mg g-1, which is classified as nonacceptable for human consumption",
+      "the pH shifts from low to high with the increase of TVB-N",
+      "the concentration of released gas rapidly exceeded 6 ppm, indicating the fish spoilage",
+      "conductive PANI thin films ... displays a modulation in the conductivity in response to the total volatile nitrogen compounds (including ammonia and biogenic amines)",
+      "R/(R + G + B) gray value was used to detect TVB-N with a LOD low as 2 x 10-9 mol dm-3 TMA vapor",
+      "the color change of the CPMB label ... is more extensive, more uniform, and deeper than the CPB label ... indicating that the CPMB film can be used as a fish freshness indicator",
+      "The spoilage process was followed by packing the squid samples and the colorimetric array in cold storage for 12 days.",
+      "Volatile amines are generated by the degradation of proteins"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 12
+  },
+  {
+    "id": "o8",
+    "question": "Propose an ammonia-responsive freshness sensing or packaging-indicator concept for perishable seafood or meat, and justify the chemical readout and validation context from the available evidence?",
+    "evidence": [
+      "the resultant materials have been proven to respond to ... NH3",
+      "the formation of NH3 and accumulation of hydroxide radicals promoting deprotonation of BW anthocyanins and the formation of quinonoids and chalcone bases",
+      "the color of the indicator film at 2 d was similar to the apparent color of the film immersed in 2.5 x 10^3 ppm NH3 solution",
+      "NH3 released from 25 g pangasius fillet",
+      "the sensor was able to detect ammonia, DMA, and TMA in the ppb regime within 1 min",
+      "water molecules adhere to the CCM-loaded indicator films, where they react with NH3 vapor to form NH4+ and OH- ions"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 6
+  },
+  {
+    "id": "o9",
+    "question": "Design a preclinical evaluation of lactobacilli against H. pylori that integrates colonization endpoints, culture conditions, and urease-related assays, and justify the study design from the available evidence?",
+    "evidence": [
+      "potential inhibitory effect of Lactobacillus casei strain Shirota ... on Helicobacter pylori",
+      "significant reduction in the levels of H. pylori colonization",
+      "H. pylori colonization was inhibited in Lactobacillus salivarius-fed gnotobiotic BALB/c mice",
+      "H. pylori-specific antibody titers became marginal",
+      "an L. acidophilus culture supernatant was effective in vitro and had a partial, long-term suppressive effect on H. pylori in humans",
+      "L. casei strain Shirota administered in vivo was evaluated for its ability to reduce colonizing H. pylori viable counts",
+      "H. pylori strains were grown at 37 degrees C for 48 h under microaerophilic conditions",
+      "H. pylori liquid cultures were prepared in brain heart infusion broth ... under the same conditions",
+      "H. pylori SS1 cells (108 CFU/ml) suspended in BHIB ... incubated under microaerophilic conditions at 37 degrees C",
+      "H. pylori SS1 cells ... incubated ... in the presence of a 10% volume of L. casei strain Shirota culture supernatant",
+      "Urease activity was determined by a modification of the phenol red method",
+      "H. pylori cell suspension was added to ... urease reaction buffer ... and the plate was incubated for 1 h",
+      "A fresh o/n H. pylori SS1 culture grown in BHIB was resuspended in phosphate-buffered saline at a concentration of 107 CFU/ml",
+      "Aliquots (100 l, 106 CFU) were administered to mice under light ether anesthesia via orogastric inoculation"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 14
+  },
+  {
+    "id": "o10",
+    "question": "Propose a colorimetric freshness-indicator concept for refrigerated meat packaging based on natural pigments that respond to spoilage-related chemical changes, and justify materials and readout from the available evidence?",
+    "evidence": [
+      "colour changes in such dyes are due to the presence of phenolic or conjugated substances, such as anthocyanins",
+      "the resultant materials have been proven to respond to ... NH3",
+      "promotes the formation of colorless carbinol pseudo bases",
+      "At pH between 7 and 8, the purple of the BW solutions deepened, which could be caused by more violquinone bases due to proton transfer reactions",
+      "The color of the BW solutions shifted from light purple and blue to yellowish green because of the deprotonation of quinonoidal bases and the formation of quinonoids (green or yellowish green) at pH between 9 and 11",
+      "The color of the BW solutions changed from yellow/green and yellow to dark yellow as the solution pH increased from 12 to 13 because of further deprotonation and the formation of a large amount of chalcone bases (yellow)",
+      "the absorption peaks of the BW solution near 530 nm at pH between 2 and 4 is related to the presence of flavonoid cations",
+      "addition of BW anthocyanins enhanced the absorbance of PVOH/MC/BW-5 % and PVOH/MC/BW-10 % at 520-550 nm",
+      "the formation of NH3 and accumulation of hydroxide radicals promoting deprotonation of BW anthocyanins and the formation of quinonoids and chalcone bases",
+      "the sensor response increased almost linearly with the methylamine concentration from 2 to 10 ppm",
+      "the black rice pigment sensitized Ti O2 thin film was employed to monitor the freshness of pork meat during storage at 4-6 degrees C"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 11
+  },
+  {
+    "id": "o11",
+    "question": "Propose how to select lactic acid bacteria for a GABA-enriched fermented product that must also tolerate acidic and bile stress, and justify the selection criteria and supporting physiological evidence?",
+    "evidence": [
+      "Acid tolerance of L. plantarum FBT215 at pH 2.5",
+      "Acid tolerance of L. plantarum FBT215 at pH 3.0",
+      "FBT215 was shown to be acid and bile tolerant",
+      "Fructose was the best carbon source (553.57 +/- 8.65 ug/ml)",
+      "GABA production ... was enhanced in sucrose-containing broth (387.36 +/- 19.85 ug/ml) when compared to that with glucose (286.17 +/- 9.00 ug/ml)",
+      "GABA production by Lactobacillus sp. Makhdzir Naser-1 was optimized with a focus on temperature, pH, glutamic acid concentration, and incubation time",
+      "GABA production decreased with the addition of inulin and raffinose",
+      "L. plantarum FBT215 was vulnerable at low pH (< 3.0)",
+      "MRS broth ... containing 50 mM MSG (pH 6.5) and incubated at 37 degrees C",
+      "Microbial GABA production is efficient at a low pH; however, GABA production is optimal at neutral pH in some Lactobacillus spp.",
+      "Microbial GABA production is influenced by factors, such as fermentation time, initial pH, glutamate concentration, and medium composition",
+      "The GABA production increased steadily from 9 h (33.28 +/- 0.43 ug/ml) to 72 h (151.42 +/- 1.96 ug/ml)",
+      "The optimal fructose concentration was 1% (w/v, 1502.40 +/- 21.04 ug/ml",
+      "The survival of probiotic bacteria in the gastrointestinal tract is incumbent on their acid and bile tolerance",
+      "Tryptone was the best nitrogen source for GABA production",
+      "optimization of GABA production by L. plantarum FBT215 was performed using RSM with a BBD model",
+      "the addition of fructooligosaccharides (FOS) enhanced GABA production",
+      "1% (w/v) glucose plus 1% fructose for L. brevis CRL 2013",
+      "2% glucose for L. plantarum KCTC 3103",
+      "2% maltose for L. brevis HYE1",
+      "3% glucose for L. plantarum N5",
+      "L. plantarum FBT215 ... had tolerance to bile salts"
+    ],
+    "difficulty": "hard",
+    "n_evidence": 22
+  },
+  {
+    "id": "o12",
+    "question": "Design a pH-responsive intelligent packaging indicator strategy for fresh meat and fish using natural food colorants, and recommend how spoilage metabolites, pigment chemistry and stability, indicator formats, and visual readout should inform material selection from the evidence?",
+    "evidence": [
+      "Dyes are the main components that change color with changes in pH",
+      "Films with PRE showed a noticeable color change when the pH increased from the initial value of 6.15 to 6.33",
+      "It is believed that the naphthoquinone moiety acts as a breakdown point and induces hydrolysis and degradation of naphthoquinone structure at neutral and alkaline pH.",
+      "Metabolites released by microbial growth (i.e., organic acids, amines, hydrogen chloride, sulfur compounds, carbon dioxide, etc.)",
+      "Metabolites released by microbial growth ... change the pH of the food or the environment around the food",
+      "One of the sachets contains fat absorbed by vinyl chloride powder, suspended in an aqueous mixture of the pH-sensitive colorimetric compound",
+      "The alizarin-starch-cellulose indicator (ASC) showed a color change from yellow to purple",
+      "The color and stability of anthocyanins are greatly affected by ... UV radiation",
+      "The enantiomeric naphthoquinone colorant present in Arnebia euchroma root extract is pH sensitive",
+      "The films showed a distinctive color change within the pH range 2-13",
+      "The increase in the pH value of fish products is due to ... the action of endogenous enzymes",
+      "The initial pH values of rainbow trout and carp fillets were 6.36 and 6.24, respectively, gradually increased during storage at 4 degrees C, and reached 7.09 and 7.22, respectively",
+      "The naphthazarin core is essential because of its high chemical reactivity. It is readily susceptible and polymerized in the presence of oxygen, light, heat, or treatment with acids or bases.",
+      "These compounds accumulate in the packaging headspace, and the pH of the indicator film changes due to its alkaline nature",
+      "a package containing a pH indicator provides visual information on the freshness of a product to consumers by detecting and recording changes in pH value",
+      "due to the deprotonation of anthocyanins by volatile ammonia compounds",
+      "microbial metabolism products such as volatile basic nitrogen ... are produced",
+      "natural pigments ... show color changes in response to pH",
+      "pH ... is one of the vital signs of food spoilage",
+      "the color of the indicator film changed dramatically from purple to yellow, with increasing pH upon exposure to volatile amines released due to microbial growth"
+    ],
+    "difficulty": "hard",
+    "n_evidence": 20
+  },
+  {
+    "id": "o13",
+    "question": "Recommend a milk prematuration strategy using mixed lactic starter cultures ahead of cheesemaking, and justify culture and incubation choices plus effects on acidification, coagulation, indigenous microflora, free amino acids, and subsequent starter performance from the evidence?",
+    "evidence": [
+      "Changes in ... staphylococci ... in control () and samples prematured with culture B () or C () at 12 °C during 24 h",
+      "Decreasing pH in the range 7.0 to 5.2 causes ... the aggregation of casein",
+      "Four cultures for prematuration (coded A, B, C and D) ... undefined mixed strain mesophilic lactic acid cultures",
+      "Lactic acid bacteria have been used for their acidifying activity and their antagonistic properties against other microflora (strongly proteolytic bacteria, spoilage organisms and some pathogens)",
+      "Milk (9.1%, w/w, LLHSM; autoclaved at 115 oC x 10 min) was prematured without (control) or with starter culture A, B, C or D at 12 oC for 24 h",
+      "One unit (U) is the amount of starter cells which cause a decrease of at least 0.8 pH units of milk after 5 h at 35 oC",
+      "Prematuration of cheesemilk involves the addition of cultures of lactic acid bacteria to milk",
+      "Significant differences were found between the control and prematured milk samples with regard to the concentration of at least some of the free amino acids in milk",
+      "Starter cell numbers (cfu.mL-1) in the prematured milk samples after pasteurization (72 oC x 15 s)",
+      "The RCTs of milks prematured using culture B were shorter than those of samples incubated at similar temperature x time regimes but prematured using culture A",
+      "The pH of milk prematured at 16 oC x 17 h with either culture A or B was considerably lower than the pH of the other samples",
+      "The pH of the control (i.e., without prematuration starter) decreased only slightly during the later stages of incubation, having a pH of 6.626 at the end of prematuration",
+      "The rate of aggregation and gel formation ... increased with decreasing pH",
+      "The samples were then incubated according to either a mesophilic or thermophilic temperature gradient",
+      "any decrease in rennet coagulation time observed in this study was due to the effect of pH alone and not to a biological effect of prematuration",
+      "control the growth of adventitious microorganisms in the milk",
+      "indigenous microflora (i.e., lactobacilli, coliforms, enterococci, staphylococci and pseudomonads) ... increased ... by between 1 and 3.5 log cycles during the incubation period",
+      "may increase the free amino acid pool in cheesemilk",
+      "prematuration conditions used in this study (i.e., 12 oC x 24 h using culture A, B, C or D) had no effect on the growth of these cheesemaking starters",
+      "prematured without (one control and 3 samples) or with prematuration starter cultures, A, B or C (0.4%, v/v, inoculum) at 12 oC for 16 h",
+      "slow acidification of milk which may assist curd formation during cheesemaking",
+      "stimulation of the growth of the cheesemaking starter by increasing the level of available peptides/free amino acids",
+      "temperature, individually (p < 0.01) or in combination with starter type (p < 0.05) or time (p < 0.01), had a significant effect on the pH of milk"
+    ],
+    "difficulty": "hard",
+    "n_evidence": 23
+  },
+  {
+    "id": "o14",
+    "question": "Propose a kefir antimicrobial beverage or culture concept, and justify which microbial groups, metabolite classes, inhibition spectrum, grain handling, and secondary flavour or immune factors should guide design from the evidence?",
+    "evidence": [
+      "AAB species have been isolated and identified in both kefir grain and the kefir beverage",
+      "All these studies indicate that kefir antimicrobial activity is associated with the production of hydrogen peroxide",
+      "All these studies indicate that kefir antimicrobial activity is associated with the production of organic acids",
+      "All these studies indicate that kefir antimicrobial activity is associated with the production of peptides (bacteriocins)",
+      "Assadi et al. (2000) tested several ratios of starter cultures isolated from the grains (LAB, yeast, AAB)",
+      "Chifiriuc et al. (2011) observed that all milk fermented with kefir grains did not inhibit P. aeruginosa",
+      "Chifiriuc et al. (2011) observed that all milk fermented with kefir grains had antimicrobial activity against Bacillus subtilis",
+      "Chifiriuc et al. (2011) observed that all milk fermented with kefir grains had antimicrobial activity against S. Enteritidis",
+      "Competitive exclusion of Campylobacter jejuni by kefir fermented milk",
+      "Dried grains maintain their activity for 12-18 months while wet grains maintain activity for 8-10 days",
+      "Kefiran produced by L. kefiranofaciens",
+      "LAB isolated from kefir grains, suggesting their influence on the secretion of the proinflammatory cytokines IL-6 and TNF-by TLR-2",
+      "Minor components can also be found, including ... acetaldehyde",
+      "Minor components can also be found, including diacetyl",
+      "Non-lactose fermenting yeast and acetic acid bacteria (AAB) also participate in the process",
+      "Santos et al. (2003) observed the antagonistic behavior of lactobacilli isolated from kefir grains against E. coli",
+      "Santos et al. (2003) observed the antagonistic behavior of lactobacilli isolated from kefir grains against L. monocytogenes",
+      "Santos et al. (2003) observed the antagonistic behavior of lactobacilli isolated from kefir grains against Salmonella Typhimurium",
+      "Silva et al. (2009) observed the inhibition of Candida albicans by kefir cultured in brown sugar",
+      "Silva et al. (2009) observed the inhibition of E. coli by kefir cultured in brown sugar"
+    ],
+    "difficulty": "hard",
+    "n_evidence": 20
+  },
+  {
+    "id": "o15",
+    "question": "Design a probiotic fermented-milk supernatant strategy to reduce Helicobacter pylori infection of gastric epithelial cells, and justify strain screening criteria, organic-acid contributions versus neutralized controls, and experimental validation methods from the evidence?",
+    "evidence": [
+      "A 1 mL aliquot of fresh F-12 medium containing 100 uL of PBS (pH 7.2), LY5-SCS, neutralised LY5-SCS (pH 7) or artificial LY5-SCS was added to each well in triplicate and allowed to incubate for 1 h to exclude adherent H. pylori from the AGS cells",
+      "H. pylori strains BCRC 17 021 and CMU83 were grown in Brucella broth supplemented with 50 mL L-1 FBS at 37 degrees C for 48 h under microaerophilic conditions",
+      "Helicobacter pylori strains BCRC 17 021 and CMU83 were used as indicators",
+      "In the AGS cell culture test, fermented LY5-SCS significantly reduced H. pylori infection.",
+      "L. salivarius ... producing organic acids to inhibit H. pylori infection",
+      "LAB strain LY5 had a lower pH and higher TA after 48 h of culture in milk medium than the other LAB strains tested",
+      "LAB strains used in study: Lactobacillus rhamnosus, Lactobacillus bulgaricus, Lactobacillus acidophilus, Lactobacillus plantarum, Lactobacillus paracasei, Enterococcus faecalis, Enterococcus faecium, Pediococcus pentosaceus",
+      "LY5-SCS produced a higher concentration of lactic acid after 48 h of incubation than the other LAB strains",
+      "Samples of SCS in fermented milk were obtained by centrifugation (4000xg,10 min,4 degrees C) of the 12, 24 and 48 h LAB cultures",
+      "TA (lactic acid %) = titratable volume (mL) of 0.1 mol L-1 Na OH x 0.009 x titre of 0.1 mol L-1 Na OH/weight of sample (g)",
+      "The LAB strains used in this study were isolated from various samples such as yogurt and infant faeces",
+      "The pH values of the 12, 24 and 48 h supernatants of fermented milk were measured with a pH meter",
+      "The production of organic acids is dependent on the LAB strain, growth rate and fermentation pathway",
+      "The results showed that three LAB strains, LY1, LY5 and IF22, had better anti-Helicobacter effects than the other strains, with lower pH and more efficient bactericidal activity",
+      "The titratable acidity assay... titrated with 0.1 mol L-1 NaOH to a final pH of 8.3",
+      "artificial LY5-SCS (111.5 mmol L-1 lactic acid and 11.2 mmol L-1 acetic acid in PBS, pH 2.91)",
+      "bactericidal activity of formic acid was more effective than that of lactic acid or acetic acid",
+      "lactic acid and other potentially inhibitory metabolites in fermented milk and culture supernatant fractions have a direct effect on pathogens and parasites",
+      "lactic acid, acetic acid and formic acid at 100 mmol L-1 were also confirmed as having bactericidal activity",
+      "neutralised LY5-SCS (adjusted to pH 7 with 1.0 mol L-1 Na OH)",
+      "neutralised SCS (pH 7) did not show an exclusion effect for H.pylori infection of AGS cells"
+    ],
+    "difficulty": "hard",
+    "n_evidence": 21
+  },
+  {
+    "id": "o16",
+    "question": "Recommend a fermentation design strategy to maximize GABA production by lactic acid bacteria, and justify organism selection, pathway cofactors and substrate supplements, and process conditions from the evidence?",
+    "evidence": [
+      "As different culture conditions would influence the GABA yield of certain LAB, screening the effects of various fermentation conditions is a prerequisite for more efficient GABA production",
+      "GABA productions by L. fermentum were enhanced from 3.9 g/L to 4.74 g/L when glucose concentration was raised from 0.5 % to 1 %",
+      "GABA was significantly reduced (79.86 ug/mL) when the temperature was below 30 degrees C",
+      "GABA-producing Lactobacillus plantarum CGMCC 1.2437 T",
+      "GAD ... catalyses an enzymatic reaction ... that transforms the L-glutamic acid to GABA",
+      "Gad A contributes to efficient GABA synthesis toward cytosolic near-neutral pH",
+      "L. brevis CD 0817 attained the maximum GABA yields at the incubation temperature of 45 degrees C",
+      "L. bulgaricus CFR 2028 showed a higher cell growth with a lower GABA yield with the supplementation of 1 % (w/v) MSG",
+      "L. plantarum B7 reached the highest GABA yield at the stationary phase",
+      "L. plantarum BC114 were able to attain the highest amount of GABA corresponding to 3.45 g/L at the temperature of 30 degrees C.",
+      "L. plantarum DSM 19463 were able to attain the highest amount of GABA corresponding to 0.497 g/L at the temperature of 30 degrees C.",
+      "L. plantarum NDC 75017 resulted with a maximum concentration of GABA (314. 56 mg/100 g) at 36 degrees C",
+      "L. plantarum Y7 was able to produce the maximum GABA concentration (375.29 ug/mL) at pH 6.5 under the temperature of 37 degrees C",
+      "Lactiplantibacillus plantarum B13 ... exhibited the optimal GABA production",
+      "MSG concentration added into the MRS medium was varied (0, 1, 3, 5, 7, and 9 % (w/v))",
+      "PLP is an essential co-factor for enhancing the GABA yield by LAB",
+      "PLP may recover the activity of GAD especially during the later stages of bacterial growth",
+      "Several LABs that are known as GABA-producing species include Lactobacillus brevis, Lactobacillus paracasei, Lactococcus lactis, Streptococcus thermophilus, and Lactobacillus plantarum",
+      "Streptococcus thermophilus QYW-LYS1 attained the maximum GABA yields at the incubation temperature of 34 degrees C"
+    ],
+    "difficulty": "hard",
+    "n_evidence": 19
+  },
+  {
+    "id": "o17",
+    "question": "Recommend how lactic acid bacteria meet amino acid and peptide nutrition needs during growth, and which proteolytic and transport systems the evidence indicates should guide medium design?",
+    "evidence": [
+      "Di- and tripeptide transport occurs by a secondary transport system",
+      "Different peptides with up to 6 amino acid residues can be incorporated to meet the several amino acid deficiencies of lactococci",
+      "Lactococci, at least, possess separate transport systems for amino acids and peptides",
+      "Most of the amino acids are taken up by secondary transport systems in which uptake is coupled to the proton-motive force (pmf)",
+      "Extracellular protein hydrolysis into various long oligopeptides is initiated by a cell-envelope proteinase",
+      "taken up by the cells via specific peptide transport systems",
+      "Aminopeptidases (Pep N and Pep C) and X-prolyl dipeptidyl aminopeptidase (Pep X) are the first enzymes that act on oligopeptides",
+      "peptides and free amino acids, as a nitrogen source",
+      "Lactobacillus helveticus also has a Dtp T-coding gene that is driven by the PMF protein pump",
+      "Lb. bulgaricus breaks down milk casein into smaller peptides and amino acids"
+    ],
+    "difficulty": "medium",
+    "n_evidence": 10
+  },
+  {
+    "id": "o18",
+    "question": "Propose a casein-derived antimicrobial peptide production concept using lactic acid bacteria proteolysis of milk proteins, and recommend how to choose strains, hydrolysis conditions, activity readouts, and co-benefits for digestibility or allergenicity from the evidence?",
+    "evidence": [
+      "80-90% of b-casein was digested by all the strains tested, as estimated by using Quantity One Bio Rad Software.",
+      "A variety of LAB isolated from fermented milk products have been previously reported as displaying antimicrobial activities",
+      "ANTIMICROBIAL ACTIVITY AGAINST ESCHERICHIA COLI OF STRAINS CULTIVATED FOR 48 H ON 2% SODIUM CASEINATE, 2% GLUCOSE IN 100-mM PHOSPHATE BUFFER",
+      "ANTIMICROBIAL ACTIVITY AGAINST LISTERIA INNOCUA OF STRAINS CULTIVATED FOR 48 H ON 2% SODIUM CASEINATE, 2% GLUCOSE IN 100-mM PHOSPHATE BUFFER",
+      "LAB ... may ... decrease milk allergenicity",
+      "LAB ... may have important effects on milk digestibility",
+      "LAB possess a complex system of proteinases and peptidases, which enable them to produce essential amino acids during their growth in milk",
+      "Lactobacillus strains ... able to reduce the allergenicity of fermented milk products",
+      "Proteolysis of 0.1% BLG after 24-h cultivation of the different strains tested is shown in Fig. 3.",
+      "RP-HPLC analysis confirmed that, as a result of proteolysis by the tested strains, b-casein was cleaved into more hydrophilic protein",
+      "Some of the 21 Lactobacillus strains ... may be used to proteolyze milk proteins in order to produce peptides with an antibacterial effect against Escherichia coli",
+      "Strains \"K,\" \"O\" and \"B\" are issued from yogurts made with cow, sheep and buffalo milk, respectively.",
+      "The ability of the studied LAB strains to hydrolyze the whey proteins ALA and BLG after 24 h of incubation is shown by SDS-PAGE.",
+      "The best conditions allowing casein hydrolysis without precipitation are 0.8% casein in 50-mM phosphate buffer.",
+      "The capacity of the strains to hydrolyze b-lactoglobulin was lower as compared with hydrolysis of b-casein.",
+      "The resulting peptides obtained after hydrolysis of milk proteins have a high antibacterial activity (zone of inhibition) against E. coli only after 24-h growth.",
+      "The strain K27 showed the highest proteolytic activity",
+      "The strains K14 and K27 showed the highest proteolytic activity being able to reduce the concentration of ALA approximately by 50%.",
+      "The strains tested showed proteolytic activity toward ALA.",
+      "The three strains K5, K19 and K27 showed similar results. They were growing on medium containing either sodium caseinate or b-casein."
+    ],
+    "difficulty": "hard",
+    "n_evidence": 20
+  },
+  {
+    "id": "o19",
+    "question": "Design a yogurt texturization strategy that combines acid-induced casein gelation with exopolysaccharides or added polysaccharides as stabilizers, and justify how pH, polymer–protein interactions, starter choice, and process steps affect gel properties from the evidence?",
+    "evidence": [
+      "Acid milk gels made with different bacterial strains were studied",
+      "Addition of DS resulted in stiffer gel at lower pH levels but very weak gels at higher pH levels",
+      "After yogurt has reached desired pH value, i.e., pH 4.6, the yogurt is then rapidly cooled at < 10 degrees C and often stored at <= 5 degrees C",
+      "As pH decreases, the net negative charge of casein micelles is reduced, and colloidal calcium phosphate (CCP) is solubilized resulting in coagulation of caseins close to their isoelectric point at pH 4.6, where the texture of yogurt forms.",
+      "At pH 5.3, all types of pectin adsorbed onto casein micelles",
+      "Caseins did not gel at lower pH values when held at low temperature (~ 0 degrees C)",
+      "DS associatively interacted with caseins at low pH values",
+      "DS interacted with caseins through electrostatic interactions",
+      "DS molecules might be adsorbed onto casein patches to form protein-polysaccharide complexes",
+      "DX interacted with caseins through depletion type mechanism",
+      "EPS can be uncharged or negatively charged and vary in terms of molar mass, radius of gyration, structure, and sugar composition.",
+      "EPS have been reported to increase viscosity, smoothness and creaminess, as well as reduce whey separation of fermented dairy products",
+      "EPS produced by some lactic acid bacteria can act as a natural stabilizer",
+      "EPS produced in situ during bacterial fermentation",
+      "EPS-producing strains had higher gelation pH values than the control gel",
+      "Each starter strain exhibits specific acidification rate during growth, dependent on conditions, such as, incubation temperature and composition of growth medium",
+      "Exopolysaccharide producing cultures are often used in yogurt production as a stabilizer",
+      "Gels made with EPS-producing strains gelled at significantly higher pH values"
+    ],
+    "difficulty": "hard",
+    "n_evidence": 18
+  }
+]

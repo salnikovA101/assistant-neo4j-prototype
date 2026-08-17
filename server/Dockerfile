@@ -16,6 +16,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
 COPY server/ ./server/
+COPY prompts/ ./prompts/
 
 EXPOSE 8000
 CMD ["python3", "-m", "uvicorn", "server.core.app:app", "--host", "0.0.0.0", "--port", "8000"]

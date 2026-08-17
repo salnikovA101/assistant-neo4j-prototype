@@ -40,6 +40,7 @@ const effortMenu = document.getElementById('effort-menu');
 const effortLabel = document.getElementById('effort-label');
 
 const EFFORT_STORAGE_KEY = 'reasoning_effort';
+const SESSION_STORAGE_KEY = 'assistant_session_id';
 const EFFORT_OPTIONS = {
     low: { label: 'Low' },
     medium: { label: 'Medium' },
@@ -47,6 +48,32 @@ const EFFORT_OPTIONS = {
 };
 let currentReasoningEffort = 'xhigh';
 let reasoningEffortEnabled = true;
+
+function getSessionId() {
+    try {
+        let id = sessionStorage.getItem(SESSION_STORAGE_KEY);
+        if (!id) {
+            id = (crypto.randomUUID && crypto.randomUUID()) ||
+                'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+                    const r = (Math.random() * 16) | 0;
+                    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+                    return v.toString(16);
+                });
+            sessionStorage.setItem(SESSION_STORAGE_KEY, id);
+        }
+        return id;
+    } catch (_) {
+        if (!window.__assistantSessionId) {
+            window.__assistantSessionId = (crypto.randomUUID && crypto.randomUUID())
+                || String(Date.now());
+        }
+        return window.__assistantSessionId;
+    }
+}
+
+function withSessionHeaders(headers) {
+    return Object.assign({ 'X-Session-Id': getSessionId() }, headers || {});
+}
 
 // ===== Audio Utilities =====
 
@@ -294,33 +321,10 @@ async function processAudioBlob(blob) {
         const sttData = await sttResponse.json();
         const recognizedText = sttData.text;
 
-        // Показываем текст пользователя сразу
         addMessage('user', recognizedText);
 
-        // === Шаг 2: LLM + TTS — отправляем текст на /process_text ===
-        showThinking();
-
-        const response = await fetch('/process_text', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(processTextPayload(recognizedText)),
-            signal: currentAbortController.signal
-        });
-
-        removeThinking();
-
-        if (!response.ok) {
-            let errMsg = 'Ошибка сервера';
-            try {
-                const errData = await response.json();
-                errMsg = errData.error || errMsg;
-            } catch (_) {}
-            addMessage('system', `⚠️ ${errMsg}`);
-            setUIState('idle');
-            return;
-        }
-
-        await consumeProcessTextResponse(response);
+        // Same SSE as text input so done.graph_run_id can show the graph button.
+        await consumeProcessTextStream(recognizedText, currentAbortController.signal);
     } catch (err) {
         if (err.name === 'AbortError') {
             console.log('Fetch aborted.');
@@ -368,10 +372,10 @@ async function consumeProcessTextStream(text, signal) {
     const myController = currentAbortController;
     const response = await fetch('/process_text_stream', {
         method: 'POST',
-        headers: {
+        headers: withSessionHeaders({
             'Content-Type': 'application/json',
             Accept: 'text/event-stream',
-        },
+        }),
         body: JSON.stringify(processTextPayload(text)),
         signal,
     });
@@ -1835,7 +1839,7 @@ async function clearHistory() {
     try {
         const response = await fetch('/clear_history', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+            headers: withSessionHeaders({ 'Content-Type': 'application/json' })
         });
 
         if (response.ok) {

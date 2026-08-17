@@ -23,10 +23,11 @@ venv/
 Thumbs.db
 .DS_Store
 
-other
-*.json
+# Local / generated
 docs/
 logs/
-scripts/
 reports/
+tests/reports/
+tests/test_results.txt
+db_dump_*.json
 .env.ragas-testing

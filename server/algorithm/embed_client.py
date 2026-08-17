@@ -1,16 +1,14 @@
-"""Embedding HTTP client + Neo4j vector-index discovery for V6 (no v4 imports)."""
+"""Embedding HTTP client + Neo4j vector-index discovery for V6."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
-from functools import lru_cache
 
 import httpx
 from neo4j import AsyncDriver
 
-from server.utils.config import GraphEmbeddingsConfig, load_config
 from server.utils.constants import EmbeddingBackend
 
 logger = logging.getLogger(__name__)
@@ -21,11 +19,8 @@ TEI_DEFAULT_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 TEI_DEFAULT_BASE_URL = "http://localhost:7998/v1"
 _MAX_RETRIES = 5
 _RETRY_BASE_SEC = 2.0
-
-
-@lru_cache(maxsize=1)
-def _graph_embeddings_config() -> GraphEmbeddingsConfig:
-    return load_config().graph_embeddings
+_BATCH_SIZE = 32
+_MAX_INPUT_CHARS = 8192
 
 
 def _ensure_env_loaded() -> None:
@@ -35,7 +30,7 @@ def _ensure_env_loaded() -> None:
 
     from dotenv import load_dotenv
 
-    root = Path(__file__).resolve().parents[3]
+    root = Path(__file__).resolve().parents[2]
     for name in (".env.ragas-testing", ".env"):
         path = root / name
         if path.exists():
@@ -47,36 +42,32 @@ def _resolve_embed_settings(
     url: str | None = None,
     backend: EmbeddingBackend | str | None = None,
 ) -> tuple[EmbeddingBackend, str, str, dict[str, str]]:
-    """Resolve backend, model, embeddings URL, and request headers."""
-    cfg = _graph_embeddings_config()
-    resolved_backend = EmbeddingBackend(backend or cfg.backend)
+    """Resolve backend, model, embeddings URL, and request headers.
+
+    Defaults match embed.py (OpenRouter nemotron). TEI only if caller passes it.
+    """
+    resolved_backend = EmbeddingBackend(backend or EmbeddingBackend.OPENROUTER)
 
     if resolved_backend == EmbeddingBackend.TEI:
-        defaults_model, defaults_base = TEI_DEFAULT_MODEL, TEI_DEFAULT_BASE_URL
-        cfg_model = cfg.model if cfg.backend == EmbeddingBackend.TEI else ""
-        cfg_base = cfg.base_url if cfg.backend == EmbeddingBackend.TEI else ""
-        model = model_id or cfg_model or defaults_model
-        base = (url or os.environ.get("EMBEDDING_URL") or cfg_base or defaults_base).rstrip("/")
+        model = model_id or TEI_DEFAULT_MODEL
+        base = (
+            url or os.environ.get("EMBEDDING_URL") or TEI_DEFAULT_BASE_URL
+        ).rstrip("/")
         headers = {"Content-Type": "application/json"}
-        if cfg.api_key and cfg.backend == EmbeddingBackend.TEI:
-            headers["Authorization"] = f"Bearer {cfg.api_key}"
+        tei_key = os.environ.get("EMBEDDING_API_KEY")
+        if tei_key:
+            headers["Authorization"] = f"Bearer {tei_key}"
     else:
         _ensure_env_loaded()
-        defaults_model, defaults_base = OPENROUTER_DEFAULT_MODEL, OPENROUTER_DEFAULT_BASE_URL
-        cfg_model = cfg.model if cfg.backend == EmbeddingBackend.OPENROUTER else ""
-        cfg_base = cfg.base_url if cfg.backend == EmbeddingBackend.OPENROUTER else ""
-        model = model_id or cfg_model or defaults_model
-        base = (url or cfg_base or defaults_base).rstrip("/")
-        key = (
-            (cfg.api_key if cfg.backend == EmbeddingBackend.OPENROUTER else "")
-            or os.environ.get("GRAPH_EMBEDDINGS__API_KEY")
-            or os.environ.get("OPENROUTER_API_KEY")
-            or os.environ.get("LLM__PROFILES__OTHER__API_KEY")
+        model = model_id or OPENROUTER_DEFAULT_MODEL
+        base = (url or OPENROUTER_DEFAULT_BASE_URL).rstrip("/")
+        key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get(
+            "LLM__PROFILES__OTHER__API_KEY"
         )
         if not key:
             raise RuntimeError(
                 "OpenRouter API key not found "
-                "(GRAPH_EMBEDDINGS__API_KEY, OPENROUTER_API_KEY, or LLM__PROFILES__OTHER__API_KEY)"
+                "(OPENROUTER_API_KEY or LLM__PROFILES__OTHER__API_KEY)"
             )
         headers = {
             "Authorization": f"Bearer {key}",
@@ -144,15 +135,11 @@ async def get_embeddings_batch(
     url: str | None = None,
     backend: EmbeddingBackend | str | None = None,
 ) -> list[list[float]]:
-    """Fetch embeddings from configured backend (tei or openrouter). Returns [] on hard failure."""
+    """Fetch embeddings (OpenRouter by default, or TEI if backend=tei). [] on hard failure."""
     if not texts:
         return []
 
-    cfg = _graph_embeddings_config()
-    batch_size = max(1, int(getattr(cfg, "max_client_batch_size", 1) or 1))
-    max_chars = max(0, int(getattr(cfg, "max_input_chars", 2048) or 0))
-    prepared = [_truncate_for_tei(t, max_chars) for t in texts]
-
+    prepared = [_truncate_for_tei(t, _MAX_INPUT_CHARS) for t in texts]
     resolved_backend, model, embeddings_url, headers = _resolve_embed_settings(
         model_id=model_id, url=url, backend=backend
     )
@@ -162,13 +149,13 @@ async def get_embeddings_batch(
         model,
         embeddings_url,
         len(prepared),
-        batch_size,
+        _BATCH_SIZE,
     )
 
     out: list[list[float]] = []
     async with httpx.AsyncClient(trust_env=False) as client:
-        for i in range(0, len(prepared), batch_size):
-            chunk = prepared[i : i + batch_size]
+        for i in range(0, len(prepared), _BATCH_SIZE):
+            chunk = prepared[i : i + _BATCH_SIZE]
             payload: dict = {"model": model, "input": chunk}
             if resolved_backend == EmbeddingBackend.OPENROUTER:
                 payload["encoding_format"] = "float"

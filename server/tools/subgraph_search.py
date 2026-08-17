@@ -3,6 +3,7 @@ from typing import Any, Sequence
 
 from server.core.db import get_driver
 from server.core.graph_runs import record_accepted_chains
+from server.core.sessions import current_sources
 from server.tools.source_registry import (
     SourceRegistry,
     collect_source_files,
@@ -80,16 +81,9 @@ class SubgraphSearchAgent:
     Decomposition and effort selection are done by the assistant LLM.
     """
 
-    def __init__(
-        self,
-        llm_profile=None,
-        run_id: str = "",
-        source_registry: SourceRegistry | None = None,
-    ):
-        self.run_id = run_id
-        self.llm_profile = llm_profile
+    def __init__(self, source_registry: SourceRegistry | None = None):
         self.source_registry = source_registry if source_registry is not None else SourceRegistry()
-        logger.info("SubgraphSearchAgent initialized run_id=%r", self.run_id)
+        logger.info("SubgraphSearchAgent initialized")
 
     async def query(
         self,
@@ -125,7 +119,8 @@ class SubgraphSearchAgent:
                 )
                 accepted = result.get("accepted") or []
                 record_accepted_chains(accepted)
-                res_str = _format_accepted_chains(accepted, self.source_registry)
+                registry = current_sources() or self.source_registry
+                res_str = _format_accepted_chains(accepted, registry)
                 set_span_ok(span, res_str)
                 return res_str
             except Exception as e:

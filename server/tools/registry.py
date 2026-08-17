@@ -2,7 +2,6 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from server.tools.graph_qa import GraphQA
 from server.tools.source_registry import SourceRegistry
 from server.tools.subgraph_search import SubgraphSearchAgent
 from server.utils.config import AppConfig
@@ -31,49 +30,11 @@ class Tools:
         Args:
             config (AppConfig): Полный объект конфигурации приложения.
         """
-        cypher_profile_name = config.llm.cypher_profile
-        llm_profile = getattr(config.llm.profiles, cypher_profile_name, None)
-
-        if not llm_profile:
-            logger.warning(f"Профиль {cypher_profile_name} не найден. Используем профиль по умолчанию.")
-            llm_profile = getattr(config.llm.profiles, config.llm.current_profile)
-
-        tool_profile_name = config.llm.tool_profile or cypher_profile_name
-        tool_llm_profile = getattr(config.llm.profiles, tool_profile_name, None)
-        if not tool_llm_profile:
-            logger.warning(f"Профиль {tool_profile_name} не найден. Используем cypher-профиль.")
-            tool_llm_profile = llm_profile
-
-        self.graph_qa = GraphQA(config.neo4j, llm_profile, config.llm.history_len, config.run_id, config.limit)
+        _ = config
         self.source_registry = SourceRegistry()
         self.subgraph_search = SubgraphSearchAgent(
-            tool_llm_profile,
-            config.run_id,
             source_registry=self.source_registry,
         )
-
-    async def ask_database(self, question: str) -> str:
-        """
-        Queries the knowledge graph database in natural language.
-        Use for ANY question about entities, relationships, properties, or paths in the graph.
-        Returns structured data including provenance: evidence (verbatim quote), source_file.
-
-        Args:
-            question (str): Natural language question to the database.
-        """
-        with tracer.start_as_current_span("ask_database") as span:
-            span.set_attribute(OI_SPAN_KIND, OISpanKind.TOOL)
-            span.set_attribute(OI_INPUT_VALUE, question)
-            span.set_attribute("question", question)
-            logger.info(f"Вызов инструмента: ask_database с вопросом '{question}'")
-
-            try:
-                result = await self.graph_qa.query(question)
-                set_span_ok(span, result)
-                return result
-            except Exception as e:
-                set_span_error(span, str(e))
-                raise
 
     async def ask_subgraph(
         self,
@@ -124,8 +85,7 @@ class Tools:
                 raise
 
     def clear_history(self) -> None:
-        """Очищает историю успешных Cypher-запросов и сессионный source-реестр."""
-        self.graph_qa.successful_queries.clear()
+        """Очищает сессионный source-реестр."""
         self.source_registry.clear()
 
     def get_tools_list(self) -> list[Callable]:

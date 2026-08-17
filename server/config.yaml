@@ -1,7 +1,7 @@
 debug_mode: false
 audio_enabled: false
-run_id: "full_corpus_20260713"
-limit: 30
+# Corpus currently loaded in Neo4j. V6 ANN does not filter on run_id.
+# run_id: "full_corpus_20260713"
 
 server:
   host: "0.0.0.0"
@@ -36,18 +36,10 @@ tts:
     model: "openai/gpt-4o-mini-tts-2025-12-15"
     voice: "alloy"
 
-# Graph retrieval embeddings (must match Neo4j vector index dimensions).
 # Algorithm knobs (L, effort K, rerank_url, …) live only in server/algorithm/params.py.
-graph_embeddings:
-  backend: "openrouter"
-  model: "nvidia/nemotron-3-embed-1b:free"
-  base_url: "https://openrouter.ai/api/v1"
-  max_client_batch_size: 32
-  max_input_chars: 8192
-
+# V6 embeddings: hardcoded OpenRouter nemotron in server/algorithm/embed.py (not yaml).
 llm:
   current_profile: "other"
-  cypher_profile: "other"
   tool_profile: "other"
   history_len: 30
   prompt_folder: "prompts"

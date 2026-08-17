@@ -6,24 +6,13 @@ import yaml
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from server.utils.constants import EmbeddingBackend, LLMProviderType, TTSModes
+from server.utils.constants import LLMProviderType, TTSModes
 
 
 class Neo4jConfig(BaseModel):
     uri: str = "bolt://localhost:7687"
     user: str = "neo4j"
     password: str = "password123"
-
-
-class GraphEmbeddingsConfig(BaseModel):
-    """Embeddings for Neo4j vector search (must match index dimensions)."""
-
-    backend: EmbeddingBackend = EmbeddingBackend.OPENROUTER
-    model: str = "nvidia/nemotron-3-embed-1b:free"
-    base_url: str = "https://openrouter.ai/api/v1"
-    api_key: str = ""
-    max_client_batch_size: int = 32
-    max_input_chars: int = 8192
 
 
 class OpenAIProfile(BaseModel):
@@ -38,7 +27,6 @@ class OpenAIProfile(BaseModel):
     presence_penalty: float | None = None
     repetition_penalty: float | None = None
     max_output_tokens: int = 4096
-    context_length: int = 4096
     max_turns: int = 2
     think: bool = False
     # Gemma/LM Studio: inject into system message so thinking stays on after tool results.
@@ -59,7 +47,6 @@ class LlmProfiles(BaseModel):
 
 class LlmConfig(BaseModel):
     current_profile: str = "other"
-    cypher_profile: str = "other"
     # Nested LLM for mock_decompose / tools that need a second profile
     tool_profile: str = "other"
     history_len: int = 6
@@ -129,9 +116,6 @@ class AppConfig(BaseSettings):
     tts: TtsConfig = Field(default_factory=TtsConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     neo4j: Neo4jConfig = Field(default_factory=Neo4jConfig)
-    graph_embeddings: GraphEmbeddingsConfig = Field(default_factory=GraphEmbeddingsConfig)
-    run_id: str = ""
-    limit: int = 50
 
 
 def load_config() -> AppConfig:

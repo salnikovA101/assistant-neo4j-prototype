@@ -3,13 +3,18 @@ from typing import AsyncIterator
 
 from server.utils.config import AppConfig
 from server.utils.constants import LLMProviderType
+from server.core.sessions import current_session
 from server.llm.base import BaseLLMProvider
 from server.llm.history_manager import HistoryManager
 from server.llm.prompt_loader import PromptLoader
 from server.llm.providers.openai_provider import OpenAIProvider
 from server.llm.stream_events import StreamEvent
 from server.tools.registry import Tools
-from server.tools.source_registry import extract_cited_source_files, render_citations
+from server.tools.source_registry import (
+    SourceRegistry,
+    extract_cited_source_files,
+    render_citations,
+)
 from server.utils.tracing import (
     OI_INPUT_VALUE,
     OI_SPAN_KIND,
@@ -46,6 +51,14 @@ class LLMManager:
         self.history_manager = HistoryManager(self.config.history_len)
         self.tools = Tools(config)
         self.model: BaseLLMProvider = self._load(self.config.current_profile)
+
+    def _active_history(self) -> HistoryManager:
+        sess = current_session()
+        return sess.history if sess else self.history_manager
+
+    def _active_sources(self) -> SourceRegistry:
+        sess = current_session()
+        return sess.sources if sess else self.tools.source_registry
 
     async def generate_response(
         self, user_text: str, think_effort: str | None = None
@@ -87,7 +100,9 @@ class LLMManager:
                 span.set_attribute("think_effort", think_effort)
 
             prompt = self.prompt_manager.get_system_prompt()
-            history = self.history_manager.get_history()
+            history_manager = self._active_history()
+            sources = self._active_sources()
+            history = history_manager.get_history()
             logger.debug(prompt)
             logger.debug(history)
 
@@ -107,24 +122,19 @@ class LLMManager:
                         )
                         # History keeps raw (source:N) plus compact tool receipts.
                         # User/SSE get [n] + ### Источники; UNIT stays in live UI only.
-                        self.history_manager.add_entry(
+                        history_manager.add_entry(
                             user_text,
                             final_content,
                             tool_messages=event.data.get("history_tool_messages")
                             or [],
                         )
-                        cited = extract_cited_source_files(
-                            final_content, self.tools.source_registry
-                        )
-                        display = render_citations(
-                            final_content, self.tools.source_registry
-                        )
+                        cited = extract_cited_source_files(final_content, sources)
+                        display = render_citations(final_content, sources)
                         event = StreamEvent(
                             "done",
                             {
                                 "final_content": display,
                                 "cited_source_files": cited,
-                                "has_graph": event.data.get("has_graph", False),
                             },
                         )
                         set_span_ok(span, display)
