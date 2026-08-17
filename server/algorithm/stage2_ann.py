@@ -11,11 +11,15 @@ from neo4j import AsyncDriver
 from server.algorithm.cypher.edges import fetch_edge_properties, query_relationship_ann
 from server.algorithm.edge_keys import compute_edge_key
 from server.algorithm.embed import embed_texts
-from server.algorithm.embed_client import fetch_vector_indexes
+from server.algorithm.embed_client import EmbeddingError, fetch_vector_indexes
 from server.algorithm.models import EdgeRecord, SubQuestion
 from server.algorithm.params import Params
 
 logger = logging.getLogger(__name__)
+
+
+class AnnError(RuntimeError):
+    """Relationship ANN cannot run (no indexes, or every query failed)."""
 
 _REL_INDEX_CACHE: list[str] | None = None
 _REL_INDEX_CACHE_TS: float = 0.0
@@ -99,8 +103,7 @@ async def edge_ann_search(
     vectors = await embed_texts(ann_texts, embedding_cache)
     rel_indexes = await _get_rel_indexes(driver)
     if not rel_indexes:
-        logger.error("No relationship vector indexes found")
-        return {}
+        raise AnnError("No relationship vector indexes found")
 
     raw: dict[str, EdgeRecord] = {}
     sem = asyncio.Semaphore(max(1, params.ann_concurrency))
@@ -116,11 +119,18 @@ async def edge_ann_search(
     tasks = []
     for text, emb in zip(ann_texts, vectors):
         if not emb:
-            continue
+            raise EmbeddingError("ANN skipped: empty embedding vector")
         for index_name in rel_indexes:
             tasks.append(_query_one(emb, index_name))
 
-    results = await asyncio.gather(*tasks) if tasks else []
+    if not tasks:
+        raise EmbeddingError("ANN skipped: no embeddings to query")
+
+    results = await asyncio.gather(*tasks)
+    n_err = sum(1 for _, err in results if err is not None)
+    if n_err == len(results):
+        first_err = next(err for _, err in results if err is not None)
+        raise AnnError(f"all ANN queries failed: {first_err}")
     for hits, err in results:
         if err is not None:
             logger.error("ANN query failed: %s", err)

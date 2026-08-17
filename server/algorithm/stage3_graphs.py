@@ -121,6 +121,12 @@ async def _add_bridges(
     return out
 
 
+def _anchor_sort_key(edge: EdgeRecord) -> tuple[float, float]:
+    """Prefer CE when present; missing CE sorts below any scored logit."""
+    ce = float("-inf") if edge.rerank_score is None else float(edge.rerank_score)
+    return (ce, float(edge.sim))
+
+
 async def build_sq_graph(
     driver: AsyncDriver,
     sq: SubQuestion,
@@ -131,7 +137,7 @@ async def build_sq_graph(
     # Anchors: prefer CE rerank_score, then cosine; cap at L
     ranked = sorted(
         ann_hits.values(),
-        key=lambda e: (float(e.rerank_score), float(e.sim)),
+        key=_anchor_sort_key,
         reverse=True,
     )
     anchors = {e.edge_key: e for e in ranked[: params.L]}
@@ -171,19 +177,25 @@ async def build_global_graph(
                     start_label=e.start_label,
                     end_label=e.end_label,
                     sim=e.sim,
-                    rerank_score=float(e.rerank_score),
+                    rerank_score=e.rerank_score,
                     chunk_id=e.chunk_id,
                     evidence=e.evidence,
                     source_file=e.source_file,
                     source=e.source,
                     confidence=e.confidence,
                 )
-            elif prev is not None and float(e.rerank_score) > float(prev.rerank_score):
+            elif (
+                e.rerank_score is not None
+                and (
+                    prev.rerank_score is None
+                    or float(e.rerank_score) > float(prev.rerank_score)
+                )
+            ):
                 prev.rerank_score = float(e.rerank_score)
 
     ranked = sorted(
         union.values(),
-        key=lambda e: (float(e.rerank_score), float(e.sim)),
+        key=_anchor_sort_key,
         reverse=True,
     )
     anchors = {e.edge_key: e for e in ranked[: params.L]}

@@ -83,6 +83,7 @@ def best_path_for_graph(
     contrib, prize_keys = _contribs_for_graph(graph, p_store or {}, params)
     max_h = int(params.max_hops)
     min_h = max(1, min(int(params.min_path_len), max_h))
+    min_prize = max(0, int(params.s4_min_prize_edges))
 
     # best_sum[(e,h)] = max sum contrib along path of length h ending at e
     best_sum: dict[tuple[str, int], float] = {}
@@ -120,7 +121,11 @@ def best_path_for_graph(
             path = _reconstruct(e, h, prev)
             if not path or len(path) != h:
                 continue
-            # Maximize sum contrib only (bridge cost never zero → no free padding).
+            if sumc <= 0.0:
+                continue
+            n_prize = sum(1 for k in path if k in prize_keys)
+            if n_prize < min_prize:
+                continue
             if sumc > best_score:
                 best_path, best_score = path, float(sumc)
 
@@ -160,6 +165,7 @@ def hop_dp_paths(
     out: list[Chain] = []
     seen_spines: set[tuple[str, ...]] = set()
     min_len = max(1, int(params.min_path_len))
+    min_prize = max(0, int(params.s4_min_prize_edges))
 
     for i in range(1, k + 1):
         chain = best_path_for_graph(
@@ -171,12 +177,15 @@ def hop_dp_paths(
         )
         if chain is None:
             break
+        too_short = len(chain.all_edge_keys()) < min_len
+        too_few_prize = _n_prize_edges(chain) < min_prize
+        bad_score = chain.score <= 0.0
+        if too_short or too_few_prize or bad_score:
+            for ek in chain.all_edge_keys():
+                local_p[ek] = 0.0
+            continue
         for ek in chain.all_edge_keys():
             local_p[ek] = 0.0
-        if len(chain.all_edge_keys()) < min_len:
-            break
-        if _n_prize_edges(chain) < max(1, int(params.s4_min_prize_edges)) or chain.score <= 0.0:
-            break
         spine = chain.spine_evidence_seq()
         if spine in seen_spines:
             continue

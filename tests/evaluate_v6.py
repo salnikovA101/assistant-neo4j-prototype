@@ -377,7 +377,17 @@ def metrics_at_k(
     acc: set[str] = set()
     out: dict[str, dict[str, float | int]] = {}
     want = set(ks)
-    for i, c in enumerate(ranked or [], start=1):
+    if not ranked:
+        return {
+            str(k): {
+                "recall": 0.0,
+                "precision": 0.0,
+                "n_paths": 0,
+                "n_pred": 0,
+            }
+            for k in ks
+        }
+    for i, c in enumerate(ranked, start=1):
         acc |= _one_chain_evidences(c, key_to_ev)
         if i in want:
             out[str(i)] = {
@@ -402,6 +412,9 @@ def metrics_at_k(
 
 def mean_at_k(reports: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
     out: dict[str, dict[str, float]] = {}
+    n_reports = len(reports)
+    if n_reports == 0:
+        return out
     for k in RECALL_AT_KS:
         recs: list[float] = []
         precs: list[float] = []
@@ -409,16 +422,18 @@ def mean_at_k(reports: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
         for r in reports:
             row = (r.get("recall_at_k") or {}).get(str(k))
             if not row:
+                recs.append(0.0)
+                precs.append(0.0)
+                ns.append(0.0)
                 continue
             recs.append(float(row["recall"]))
             precs.append(float(row["precision"]))
             ns.append(float(row.get("n_paths") or 0))
-        if recs:
-            out[str(k)] = {
-                "mean_recall": sum(recs) / len(recs),
-                "mean_precision": sum(precs) / len(precs),
-                "mean_n_paths": sum(ns) / len(ns),
-            }
+        out[str(k)] = {
+            "mean_recall": sum(recs) / n_reports,
+            "mean_precision": sum(precs) / n_reports,
+            "mean_n_paths": sum(ns) / n_reports,
+        }
     return out
 
 
@@ -862,6 +877,10 @@ async def eval_one(
         "chain_gold": chain_gold,
         "subquestions": sqs,
     }
+    if result.get("error"):
+        metrics["error"] = result["error"]
+        if result.get("error_detail"):
+            metrics["error_detail"] = result["error_detail"]
     return {
         "metrics": metrics,
         "result": result,

@@ -32,3 +32,57 @@ def test_resolve_embed_requires_openrouter_key(monkeypatch):
     monkeypatch.delenv("LLM__PROFILES__OTHER__API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="OpenRouter API key"):
         _resolve_embed_settings()
+
+
+def test_post_embeddings_raises_after_retries(monkeypatch):
+    import asyncio
+
+    import httpx
+
+    from server.algorithm.embed_client import EmbeddingError, _post_embeddings_once
+    from server.utils.constants import EmbeddingBackend
+
+    monkeypatch.setattr("server.algorithm.embed_client._MAX_RETRIES", 2)
+    monkeypatch.setattr("server.algorithm.embed_client._RETRY_BASE_SEC", 0)
+
+    class FakeResp:
+        status_code = 500
+
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError(
+                "500", request=httpx.Request("POST", "http://x"), response=self
+            )
+
+        def json(self):
+            return {}
+
+    class FakeClient:
+        async def post(self, *_a, **_k):
+            return FakeResp()
+
+    async def _run():
+        await _post_embeddings_once(
+            FakeClient(),  # type: ignore[arg-type]
+            embeddings_url="http://x/embeddings",
+            headers={},
+            payload={"model": "m", "input": ["t"]},
+            resolved_backend=EmbeddingBackend.OPENROUTER,
+        )
+
+    with pytest.raises(EmbeddingError, match="retries"):
+        asyncio.run(_run())
+
+
+def test_embed_texts_does_not_pad_empty_vectors(monkeypatch):
+    import asyncio
+
+    from server.algorithm.embed import embed_texts
+    from server.algorithm.embed_client import EmbeddingError
+
+    async def boom(*_a, **_k):
+        raise EmbeddingError("backend down")
+
+    monkeypatch.setattr("server.algorithm.embed.get_embeddings_batch", boom)
+
+    with pytest.raises(EmbeddingError, match="backend down"):
+        asyncio.run(embed_texts(["hello"], {}))

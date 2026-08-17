@@ -8,6 +8,13 @@ from server.algorithm.models import EdgeRecord
 from server.algorithm.params import Params
 
 
+def ranking_relevance(edge: EdgeRecord) -> float:
+    """CE logit if scored, else ANN cosine. Missing CE is None, not 0.0."""
+    if edge.rerank_score is None:
+        return float(edge.sim)
+    return float(edge.rerank_score)
+
+
 def anchor_prize(
     sim: float,
     edge_key: str,
@@ -29,14 +36,10 @@ def edge_prize_weight(
     p_store: Mapping[str, float],
     params: Params,
 ) -> float:
-    """Rank weight: relevance · p (CE if set, else sim)."""
-    rel = float(edge.rerank_score) if float(edge.rerank_score) > 0.0 else float(edge.sim)
-    return anchor_prize(
-        rel,
-        edge.edge_key,
-        p_store=p_store,
-        params=params,
-    )
+    """Sort key: raw CE (or cosine if CE was not run) · p. Not clipped to [0, 1]."""
+    del params  # order uses raw logits; prize amounts still come from rank_contribs
+    p = float(p_store.get(edge.edge_key, 1.0))
+    return ranking_relevance(edge) * p
 
 
 def rank_contribs(

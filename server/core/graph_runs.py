@@ -27,14 +27,30 @@ def current_graph_collector() -> list[dict[str, Any]] | None:
     return _current_graph_collector.get()
 
 
-def record_accepted_chains(chains: list[dict[str, Any]] | None) -> None:
-    """Append accepted chain dicts to the active turn collector, if any."""
+def chain_unit_index(chain: dict[str, Any], fallback: int) -> int:
+    """UNIT [n] from chain_id ``a{n}``; else ``fallback``."""
+    cid = str(chain.get("chain_id") or "")
+    if len(cid) > 1 and cid[0] == "a" and cid[1:].isdigit():
+        return int(cid[1:])
+    return fallback
+
+
+def record_accepted_chains(chains: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Append accepted chains with turn-unique ``a{n}`` ids. Returns those copies."""
     if not chains:
-        return
+        return []
     collector = _current_graph_collector.get()
-    if collector is None:
-        return
-    collector.extend(copy.deepcopy(chains))
+    out: list[dict[str, Any]] = []
+    for chain in chains:
+        if not isinstance(chain, dict):
+            continue
+        item = copy.deepcopy(chain)
+        n = (len(collector) if collector is not None else len(out)) + 1
+        item["chain_id"] = f"a{n}"
+        if collector is not None:
+            collector.append(item)
+        out.append(item)
+    return out
 
 
 class GraphRunStore:

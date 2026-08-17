@@ -2,7 +2,7 @@ import logging
 from typing import Any, Sequence
 
 from server.core.db import get_driver
-from server.core.graph_runs import record_accepted_chains
+from server.core.graph_runs import chain_unit_index, record_accepted_chains
 from server.core.sessions import current_sources
 from server.tools.source_registry import (
     SourceRegistry,
@@ -47,6 +47,9 @@ def _format_accepted_chains(
         "label extrapolation or a GAP. List GAPS honestly.",
         "",
     ]
+    units: list[str] = []
+    first_unit: int | None = None
+    last_unit = 0
     n = 0
     for item in accepted:
         text = (item.get("text") or "").strip()
@@ -57,21 +60,32 @@ def _format_accepted_chains(
                 registry.register(sf)
             text = remap_filenames_to_source_ids(text, registry)
         n += 1
-        # Renumber UNIT label for citation-friendly display
+        unit_n = chain_unit_index(item, n)
+        if first_unit is None:
+            first_unit = unit_n
+        last_unit = unit_n
         if text.startswith("UNIT "):
             rest = text.split("\n", 1)
             body = rest[1] if len(rest) > 1 else ""
-            text = f"UNIT [{n}]\n{body}".rstrip()
+            text = f"UNIT [{unit_n}]\n{body}".rstrip()
         else:
-            text = f"UNIT [{n}]\n{text}"
+            text = f"UNIT [{unit_n}]\n{text}"
+        units.append(text)
+
+    if n == 0:
+        return "No relevant chains found in the graph for these subquestions."
+    if first_unit and first_unit > 1:
+        lines.append(
+            f"UNIT numbers continue this turn: this batch is UNIT [{first_unit}]–[{last_unit}]. "
+            "Do not reuse UNIT indices from an earlier ask_subgraph in this answer."
+        )
+        lines.append("")
+    for text in units:
         lines.append(text)
         lines.append("")
 
     while lines and lines[-1] == "":
         lines.pop()
-
-    if n == 0:
-        return "No relevant chains found in the graph for these subquestions."
     return "\n".join(lines)
 
 
@@ -117,8 +131,14 @@ class SubgraphSearchAgent:
                     subquestions=payload,
                     effort=effort_n,
                 )
-                accepted = result.get("accepted") or []
-                record_accepted_chains(accepted)
+                if result.get("error"):
+                    err_msg = f"Error in ask_subgraph: {result['error']}"
+                    detail = result.get("error_detail")
+                    if detail:
+                        err_msg = f"{err_msg}: {detail}"
+                    set_span_error(span, err_msg)
+                    return err_msg
+                accepted = record_accepted_chains(result.get("accepted") or [])
                 registry = current_sources() or self.source_registry
                 res_str = _format_accepted_chains(accepted, registry)
                 set_span_ok(span, res_str)

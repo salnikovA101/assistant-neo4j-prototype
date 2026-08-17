@@ -13,6 +13,11 @@ from server.utils.constants import EmbeddingBackend
 
 logger = logging.getLogger(__name__)
 
+
+class EmbeddingError(RuntimeError):
+    """Embedding HTTP/backend failed after retries."""
+
+
 OPENROUTER_DEFAULT_MODEL = "nvidia/nemotron-3-embed-1b:free"
 OPENROUTER_DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 TEI_DEFAULT_MODEL = "Qwen/Qwen3-Embedding-0.6B"
@@ -93,12 +98,14 @@ async def _post_embeddings_once(
     payload: dict,
     resolved_backend: EmbeddingBackend,
 ) -> list[list[float]]:
+    last_err: Exception | str | None = None
     for attempt in range(_MAX_RETRIES):
         try:
             response = await client.post(
                 embeddings_url, headers=headers, json=payload, timeout=60.0
             )
             if response.status_code in (429, 500, 502, 503, 504):
+                last_err = f"HTTP {response.status_code}"
                 wait = _RETRY_BASE_SEC * (2**attempt)
                 logger.warning(
                     "Embeddings HTTP %s (%s), retry in %.1fs (%s/%s)",
@@ -108,13 +115,18 @@ async def _post_embeddings_once(
                     attempt + 1,
                     _MAX_RETRIES,
                 )
+                if attempt + 1 >= _MAX_RETRIES:
+                    break
                 await asyncio.sleep(wait)
                 continue
             response.raise_for_status()
             data = response.json()["data"]
             data_sorted = sorted(data, key=lambda item: item.get("index", 0))
             return [item["embedding"] for item in data_sorted]
+        except EmbeddingError:
+            raise
         except Exception as e:
+            last_err = e
             wait = _RETRY_BASE_SEC * (2**attempt)
             logger.error(
                 "Error fetching embeddings via %s (attempt %s/%s): %s",
@@ -124,9 +136,11 @@ async def _post_embeddings_once(
                 e,
             )
             if attempt + 1 >= _MAX_RETRIES:
-                return []
+                break
             await asyncio.sleep(wait)
-    return []
+    raise EmbeddingError(
+        f"embeddings failed after {_MAX_RETRIES} retries: {last_err}"
+    )
 
 
 async def get_embeddings_batch(
@@ -135,7 +149,10 @@ async def get_embeddings_batch(
     url: str | None = None,
     backend: EmbeddingBackend | str | None = None,
 ) -> list[list[float]]:
-    """Fetch embeddings (OpenRouter by default, or TEI if backend=tei). [] on hard failure."""
+    """Fetch embeddings (OpenRouter by default, or TEI if backend=tei).
+
+    Raises EmbeddingError after retries instead of returning empty vectors.
+    """
     if not texts:
         return []
 
@@ -179,7 +196,15 @@ async def get_embeddings_batch(
                         payload=one_payload,
                         resolved_backend=resolved_backend,
                     )
-                    vectors.append(one[0] if one else [])
+                    if not one or not one[0]:
+                        raise EmbeddingError(
+                            "embedding backend returned an empty vector"
+                        )
+                    vectors.append(one[0])
+                if len(vectors) != len(chunk):
+                    raise EmbeddingError(
+                        f"embedding count mismatch: got {len(vectors)} want {len(chunk)}"
+                    )
             out.extend(vectors)
     return out
 

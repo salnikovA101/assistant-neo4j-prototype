@@ -267,3 +267,28 @@ def test_metrics_at_k_prefixes() -> None:
     assert out["5"]["recall"] == 1.0
     assert out["5"]["n_paths"] == 3
     assert RECALL_AT_KS[:3] == (1, 2, 3)
+
+
+def test_metrics_at_k_empty_pool_is_zero() -> None:
+    from tests.evaluate_v6 import metrics_at_k
+
+    out = metrics_at_k([], {"g1"}, ks=(1, 5, 20))
+    assert out["1"]["recall"] == 0.0
+    assert out["20"]["n_paths"] == 0
+    assert out["5"]["precision"] == 0.0
+
+
+def test_mean_at_k_counts_empty_reports() -> None:
+    from tests.evaluate_v6 import RECALL_AT_KS, mean_at_k, metrics_at_k
+
+    hit = {"recall_at_k": metrics_at_k(
+        [{"edges": [{"evidence": "g1"}], "score": 1}],
+        {"g1"},
+        ks=RECALL_AT_KS,
+    )}
+    miss = {"recall_at_k": metrics_at_k([], {"g1"}, ks=RECALL_AT_KS)}
+    avg = mean_at_k([hit, miss])
+    assert abs(avg["1"]["mean_recall"] - 0.5) < 1e-9
+    empty_row = {"recall_at_k": {}}
+    avg2 = mean_at_k([hit, empty_row])
+    assert abs(avg2["1"]["mean_recall"] - 0.5) < 1e-9

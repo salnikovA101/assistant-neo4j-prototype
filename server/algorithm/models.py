@@ -88,7 +88,7 @@ class EdgeRecord:
     start_label: str = ""
     end_label: str = ""
     sim: float = 0.0
-    rerank_score: float = 0.0
+    rerank_score: float | None = None
     embedding: list[float] = field(default_factory=list)
     chunk_id: str = ""
     evidence: str = ""

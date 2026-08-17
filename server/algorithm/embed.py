@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from server.algorithm.embed_client import get_embeddings_batch
+from server.algorithm.embed_client import EmbeddingError, get_embeddings_batch
 from server.utils.constants import EmbeddingBackend
 
 logger = logging.getLogger(__name__)
@@ -35,17 +35,24 @@ async def embed_texts(
             model_id=_V6_EMBED_MODEL,
         )
         if len(vectors) != len(missing_texts):
-            vectors = []
-            for t in missing_texts:
-                one = await get_embeddings_batch(
-                    [t],
-                    backend=_V6_EMBED_BACKEND,
-                    model_id=_V6_EMBED_MODEL,
-                )
-                vectors.append(one[0] if one else [])
+            raise EmbeddingError(
+                f"embedding count mismatch: got {len(vectors)} "
+                f"want {len(missing_texts)}"
+            )
         for i, vec in zip(missing_idx, vectors):
+            if not vec:
+                raise EmbeddingError("embedding backend returned an empty vector")
             out[i] = vec
-            if vec:
-                cache[texts[i].strip()] = vec
+            cache[texts[i].strip()] = vec
 
-    return [v or [] for v in out]
+    missing = [i for i, v in enumerate(out) if not v]
+    if missing:
+        raise EmbeddingError(
+            f"missing embeddings for {len(missing)} text(s)"
+        )
+    filled: list[list[float]] = []
+    for v in out:
+        if not v:
+            raise EmbeddingError("missing embeddings")
+        filled.append(v)
+    return filled

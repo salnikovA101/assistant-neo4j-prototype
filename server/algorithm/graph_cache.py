@@ -43,7 +43,9 @@ def edge_to_cache_dict(e: EdgeRecord) -> dict[str, Any]:
         "start_label": e.start_label,
         "end_label": e.end_label,
         "sim": float(e.sim),
-        "rerank_score": float(e.rerank_score),
+        "rerank_score": (
+            None if e.rerank_score is None else float(e.rerank_score)
+        ),
         "chunk_id": e.chunk_id or "",
         "evidence": e.evidence or "",
         "source_file": e.source_file or "",
@@ -64,7 +66,11 @@ def edge_from_cache_dict(d: dict[str, Any]) -> EdgeRecord:
         start_label=str(d.get("start_label") or ""),
         end_label=str(d.get("end_label") or ""),
         sim=float(d.get("sim") or 0.0),
-        rerank_score=float(d.get("rerank_score") or 0.0),
+        rerank_score=(
+            None
+            if d.get("rerank_score") is None
+            else float(d.get("rerank_score"))
+        ),
         chunk_id=str(d.get("chunk_id") or ""),
         evidence=str(d.get("evidence") or ""),
         source_file=str(d.get("source_file") or ""),

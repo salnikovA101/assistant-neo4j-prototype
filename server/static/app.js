@@ -40,7 +40,6 @@ const effortMenu = document.getElementById('effort-menu');
 const effortLabel = document.getElementById('effort-label');
 
 const EFFORT_STORAGE_KEY = 'reasoning_effort';
-const SESSION_STORAGE_KEY = 'assistant_session_id';
 const EFFORT_OPTIONS = {
     low: { label: 'Low' },
     medium: { label: 'Medium' },
@@ -50,25 +49,15 @@ let currentReasoningEffort = 'xhigh';
 let reasoningEffortEnabled = true;
 
 function getSessionId() {
-    try {
-        let id = sessionStorage.getItem(SESSION_STORAGE_KEY);
-        if (!id) {
-            id = (crypto.randomUUID && crypto.randomUUID()) ||
-                'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-                    const r = (Math.random() * 16) | 0;
-                    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-                    return v.toString(16);
-                });
-            sessionStorage.setItem(SESSION_STORAGE_KEY, id);
-        }
-        return id;
-    } catch (_) {
-        if (!window.__assistantSessionId) {
-            window.__assistantSessionId = (crypto.randomUUID && crypto.randomUUID())
-                || String(Date.now());
-        }
-        return window.__assistantSessionId;
+    if (!window.__assistantSessionId) {
+        window.__assistantSessionId = (crypto.randomUUID && crypto.randomUUID()) ||
+            'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+                const r = (Math.random() * 16) | 0;
+                const v = c === 'x' ? r : (r & 0x3) | 0x8;
+                return v.toString(16);
+            });
     }
+    return window.__assistantSessionId;
 }
 
 function withSessionHeaders(headers) {
@@ -779,6 +768,12 @@ const GRAPH_NODE_COLORS = {
     EnvironmentCondition: '#f0a85e',
 };
 const GRAPH_DEFAULT_NODE_COLOR = '#a5abb6';
+const GRAPH_LEGEND = [
+    { group: 'Microbe', label: 'Microbe' },
+    { group: 'Metabolite', label: 'Metabolite' },
+    { group: 'StarterCulture', label: 'StarterCulture' },
+    { group: 'EnvironmentCondition', label: 'EnvironmentCondition' },
+];
 const GRAPH_TOKEN_PALETTE = [
     '#f59e0b',
     '#34d399',
@@ -787,6 +782,32 @@ const GRAPH_TOKEN_PALETTE = [
     '#a78bfa',
     '#fb7185',
 ];
+const GRAPH_NETWORK_OPTIONS = {
+    physics: {
+        enabled: true,
+        solver: 'forceAtlas2Based',
+        forceAtlas2Based: {
+            gravitationalConstant: -90,
+            centralGravity: 0.01,
+            springLength: 180,
+            springConstant: 0.08,
+            damping: 0.4,
+            avoidOverlap: 0.6,
+        },
+        stabilization: { iterations: 120, fit: true },
+    },
+    interaction: {
+        hover: true,
+        tooltipDelay: 180,
+        zoomView: true,
+        dragView: true,
+        multiselect: false,
+    },
+    layout: { hierarchical: { enabled: false } },
+    edges: {
+        smooth: { enabled: true, type: 'cubicBezier', roundness: 0.35 },
+    },
+};
 const graphPayloadCache = new Map();
 const pendingHighlights = new Map();
 let graphModal = null;
@@ -831,47 +852,114 @@ function addGraphButton(contentWrapper, graphMeta) {
     contentWrapper.appendChild(btn);
 }
 
-// ----- Pure edge search engine -----
-
 function normalizeQuery(s) {
-    return String(s || '').trim().toLowerCase();
+    return String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function nodeCaption(node) {
+    const name = String((node && node.caption) || '').trim();
+    if (name) return name;
+    const group = String((node && node.group) || '').trim();
+    if (group && group !== 'Unknown') return `Без имени · ${group}`;
+    return 'Без имени';
+}
+
+function nodeRef(group, name) {
+    const nm = String(name || '').trim();
+    const grp = String(group || '').trim();
+    if (grp && grp !== 'Unknown' && nm) return `${grp}: ${nm}`;
+    return nm || nodeCaption({ caption: nm, group: grp });
+}
+
+function chainLabelForId(payload, chainId) {
+    const view = ((payload && payload.views) || []).find((v) => v.id === chainId);
+    return (view && view.label) || chainId;
 }
 
 function buildEdgeSearchIndex(payload) {
-    const nodeCaptions = new Map();
+    const nodeById = new Map();
+    const remember = (node) => {
+        if (!node || !node.id || nodeById.has(node.id)) return;
+        nodeById.set(node.id, node);
+    };
     for (const view of (payload && payload.views) || []) {
-        for (const node of view.nodes || []) {
-            if (!nodeCaptions.has(node.id)) {
-                nodeCaptions.set(node.id, node.caption || node.label || node.id);
-            }
-        }
+        for (const node of view.nodes || []) remember(node);
     }
     for (const node of ((payload && payload.all && payload.all.nodes) || [])) {
-        if (!nodeCaptions.has(node.id)) {
-            nodeCaptions.set(node.id, node.caption || node.label || node.id);
-        }
+        remember(node);
     }
+
+    const chainBits = (chainIds) => {
+        const bits = [];
+        for (const cid of chainIds || []) {
+            bits.push(String(cid));
+            const label = chainLabelForId(payload, cid);
+            bits.push(label);
+            bits.push(normalizeQuery(label));
+            const n = String(cid).replace(/^a/i, '');
+            if (n) {
+                bits.push(`цепь ${n}`);
+                bits.push(`chain ${n}`);
+            }
+        }
+        return bits;
+    };
 
     const byId = new Map();
     const consider = (edge) => {
         if (!edge || !edge.id) return;
         const props = edge.properties || {};
-        const fromCaption = nodeCaptions.get(edge.from) || edge.from || '';
-        const toCaption = nodeCaptions.get(edge.to) || edge.to || '';
+        const fromNode = nodeById.get(edge.from);
+        const toNode = nodeById.get(edge.to);
+        const fromName = String(edge.from_name || (fromNode && fromNode.caption) || '').trim();
+        const toName = String(edge.to_name || (toNode && toNode.caption) || '').trim();
+        const fromGroup = String(edge.from_group || (fromNode && fromNode.group) || '').trim();
+        const toGroup = String(edge.to_group || (toNode && toNode.group) || '').trim();
+        const fromCaption = nodeCaption({ caption: fromName, group: fromGroup });
+        const toCaption = nodeCaption({ caption: toName, group: toGroup });
         const evidence = String(props.evidence || '');
         const sourceFile = String(props.source_file || '');
         const label = String(edge.label || '');
         const chainIds = Array.isArray(edge.chain_ids) ? edge.chain_ids.slice() : [];
+        const haystack = normalizeQuery(
+            [
+                evidence,
+                label,
+                fromName,
+                toName,
+                fromCaption,
+                toCaption,
+                fromGroup,
+                toGroup,
+                sourceFile,
+                nodeRef(fromGroup, fromName),
+                nodeRef(toGroup, toName),
+                fromGroup && fromName ? `${fromGroup} ${fromName}` : '',
+                toGroup && toName ? `${toGroup} ${toName}` : '',
+                edge.hub_name || '',
+                ...chainBits(chainIds),
+            ].join(' ')
+        );
+
         const existing = byId.get(edge.id);
         if (existing) {
             for (const cid of chainIds) {
                 if (!existing.chainIds.includes(cid)) existing.chainIds.push(cid);
             }
+            if (evidence && evidence.length > String(existing.evidence || '').length) {
+                existing.evidence = evidence;
+            }
+            if (fromName && !existing.fromName) existing.fromName = fromName;
+            if (toName && !existing.toName) existing.toName = toName;
+            existing.fromCaption = existing.fromName
+                ? nodeCaption({ caption: existing.fromName, group: existing.fromGroup })
+                : existing.fromCaption;
+            existing.toCaption = existing.toName
+                ? nodeCaption({ caption: existing.toName, group: existing.toGroup })
+                : existing.toCaption;
+            existing.haystack = normalizeQuery(`${existing.haystack} ${haystack}`);
             return;
         }
-        const haystack = normalizeQuery(
-            [evidence, label, fromCaption, toCaption, sourceFile].join(' ')
-        );
         byId.set(edge.id, {
             edgeId: edge.id,
             haystack,
@@ -879,7 +967,11 @@ function buildEdgeSearchIndex(payload) {
             label,
             fromCaption,
             toCaption,
-            evidenceSnippet: evidence.length > 90 ? evidence.slice(0, 87) + '…' : evidence,
+            fromName,
+            toName,
+            fromGroup,
+            toGroup,
+            evidence,
             from: edge.from,
             to: edge.to,
         });
@@ -938,42 +1030,68 @@ function matchTokens(payload, tokens) {
         }
     };
 
-    for (const token of active) {
-        if (token.edgeId) {
-            addMatch(token, byEdgeId.get(token.edgeId));
-            continue;
-        }
-        const q = normalizeQuery(token.text);
+    const textTokens = active.filter((t) => !t.edgeId);
+    const edgeTokens = active.filter((t) => t.edgeId);
+
+    for (const token of edgeTokens) {
+        addMatch(token, byEdgeId.get(token.edgeId));
+    }
+    if (textTokens.length) {
         for (const item of index) {
-            if (!item.haystack.includes(q)) continue;
-            addMatch(token, item);
+            const matching = textTokens.filter((t) =>
+                item.haystack.includes(normalizeQuery(t.text))
+            );
+            if (matching.length !== textTokens.length) continue;
+            for (const token of matching) addMatch(token, item);
         }
     }
 
     return { perView, all, active: true };
 }
 
+function suggestScore(item, q) {
+    const from = normalizeQuery(item.fromCaption);
+    const to = normalizeQuery(item.toCaption);
+    const fromName = normalizeQuery(item.fromName);
+    const toName = normalizeQuery(item.toName);
+    const ev = normalizeQuery(item.evidence);
+    const label = normalizeQuery(item.label);
+    const names = [from, to, fromName, toName];
+    if (names.some((n) => n === q)) return 0;
+    if (names.some((n) => n.startsWith(q))) return 1;
+    if (names.some((n) => n.includes(q))) return 2;
+    if (ev.startsWith(q)) return 3;
+    if (label === q || label.startsWith(q)) return 4;
+    return 5;
+}
+
 function suggestEdges(index, query, limit) {
     const q = normalizeQuery(query);
     if (q.length < 2) return [];
     const max = limit || 8;
-    const out = [];
-    for (const item of index) {
-        if (!item.haystack.includes(q)) continue;
-        out.push(item);
-        if (out.length >= max) break;
-    }
-    return out;
+    return index
+        .filter((item) => item.haystack.includes(q))
+        .sort((a, b) => {
+            const d = suggestScore(a, q) - suggestScore(b, q);
+            if (d !== 0) return d;
+            return String(a.fromCaption).localeCompare(String(b.fromCaption));
+        })
+        .slice(0, max);
 }
 
 function nextTokenColor(tokens) {
     return GRAPH_TOKEN_PALETTE[tokens.length % GRAPH_TOKEN_PALETTE.length];
 }
 
+function edgeTriple(item) {
+    if (!item) return 'ребро';
+    return `${item.fromCaption} —${item.label}→ ${item.toCaption}`;
+}
+
 function edgeTokenLabel(item) {
-    if (!item) return 'edge';
-    const title = `${item.fromCaption} -[${item.label}]-> ${item.toCaption}`;
-    return title.length > 48 ? title.slice(0, 45) + '…' : title;
+    const full = edgeTriple(item);
+    const short = item && item.fromCaption ? item.fromCaption : (item && item.label) || 'ребро';
+    return short.length > 28 ? `${short.slice(0, 26)}…` : short;
 }
 
 function makeToken(opts, tokens) {
@@ -982,6 +1100,7 @@ function makeToken(opts, tokens) {
     return {
         id: `tok_${graphTokenSeq}`,
         text,
+        title: (opts && opts.title) || text,
         color: nextTokenColor(tokens || []),
         edgeId: (opts && opts.edgeId) || null,
     };
@@ -994,6 +1113,20 @@ function visibleViewsForModal(modal) {
         const bucket = modal.matches.perView.get(view.id);
         return bucket && bucket.edgeIds.size > 0;
     });
+}
+
+function unionViews(views) {
+    const nodes = new Map();
+    const edges = new Map();
+    for (const view of views || []) {
+        for (const node of view.nodes || []) {
+            if (!nodes.has(node.id)) nodes.set(node.id, node);
+        }
+        for (const edge of view.edges || []) {
+            if (!edges.has(edge.id)) edges.set(edge.id, edge);
+        }
+    }
+    return { nodes: Array.from(nodes.values()), edges: Array.from(edges.values()) };
 }
 
 function currentMatchBucket(modal) {
@@ -1016,6 +1149,14 @@ function firstTokenColorForEdge(modal, edgeId) {
     return GRAPH_TOKEN_PALETTE[0];
 }
 
+function graphTopologyKey(modal) {
+    if (modal.viewIndex >= 0) return `v:${modal.viewIndex}`;
+    if (modal.matches && modal.matches.active) {
+        return `all:${visibleViewsForModal(modal).map((v) => v.id).join(',')}`;
+    }
+    return 'all';
+}
+
 function ensureGraphModal() {
     if (graphModal) return graphModal;
 
@@ -1032,20 +1173,23 @@ function ensureGraphModal() {
             </div>
             <div class="graph-modal-search">
                 <div class="graph-modal-chips"></div>
-                <input class="graph-modal-search-input" type="search" placeholder="Поиск по evidence / рёбрам…" autocomplete="off" spellcheck="false">
-                <div class="graph-modal-suggest" style="display:none"></div>
+                <input class="graph-modal-search-input" type="search" role="combobox" aria-autocomplete="list" aria-expanded="false" placeholder="Поиск по цитатам и рёбрам…" autocomplete="off" spellcheck="false">
+                <div class="graph-modal-suggest" role="listbox" style="display:none"></div>
             </div>
             <div class="graph-modal-note" style="display:none"></div>
             <div class="graph-modal-toolbar">
                 <button class="graph-modal-nav" type="button" data-nav="prev" aria-label="Предыдущая цепь">‹</button>
-                <button class="graph-modal-all" type="button">Весь граф</button>
+                <button class="graph-modal-all" type="button">Все</button>
                 <button class="graph-modal-nav" type="button" data-nav="next" aria-label="Следующая цепь">›</button>
             </div>
-            <div class="graph-modal-canvas-wrap">
-                <div class="graph-modal-canvas"></div>
-                <div class="graph-modal-empty" style="display:none"></div>
+            <div class="graph-modal-body">
+                <div class="graph-modal-canvas-wrap">
+                    <div class="graph-modal-canvas"></div>
+                    <div class="graph-modal-empty" style="display:none"></div>
+                    <div class="graph-modal-legend"></div>
+                </div>
+                <aside class="graph-modal-inspector"></aside>
             </div>
-            <div class="graph-modal-details node-details-panel" style="display:none"></div>
         </div>`;
 
     document.body.appendChild(overlay);
@@ -1054,7 +1198,8 @@ function ensureGraphModal() {
         overlay,
         canvas: overlay.querySelector('.graph-modal-canvas'),
         empty: overlay.querySelector('.graph-modal-empty'),
-        details: overlay.querySelector('.graph-modal-details'),
+        details: overlay.querySelector('.graph-modal-inspector'),
+        legend: overlay.querySelector('.graph-modal-legend'),
         subtitle: overlay.querySelector('.graph-modal-subtitle'),
         allBtn: overlay.querySelector('.graph-modal-all'),
         navBtns: overlay.querySelectorAll('.graph-modal-nav'),
@@ -1063,6 +1208,8 @@ function ensureGraphModal() {
         suggestEl: overlay.querySelector('.graph-modal-suggest'),
         noteEl: overlay.querySelector('.graph-modal-note'),
         network: null,
+        visNodes: null,
+        visEdges: null,
         payload: null,
         runId: null,
         viewIndex: -1,
@@ -1070,8 +1217,15 @@ function ensureGraphModal() {
         spec: { tokens: [], note: '' },
         matches: null,
         suggestTimer: null,
+        suggestItems: [],
+        suggestIndex: 0,
         focusEdgeId: null,
+        selected: null,
+        renderedKey: '',
     };
+
+    renderGraphLegend(graphModal);
+    showInspectorEmpty();
 
     overlay.addEventListener('click', (event) => {
         if (event.target === overlay) closeGraphModal();
@@ -1090,11 +1244,27 @@ function ensureGraphModal() {
 
     graphModal.searchInput.addEventListener('input', () => {
         clearTimeout(graphModal.suggestTimer);
-        graphModal.suggestTimer = setTimeout(() => renderGraphSuggestions(), 120);
+        graphModal.suggestTimer = setTimeout(() => renderGraphSuggestions(), 80);
     });
     graphModal.searchInput.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter') {
+        const open = graphModal.suggestEl.style.display !== 'none';
+        const items = graphModal.suggestItems || [];
+        if (event.key === 'ArrowDown' && open && items.length) {
             event.preventDefault();
+            graphModal.suggestIndex = Math.min(graphModal.suggestIndex + 1, items.length - 1);
+            highlightGraphSuggestion();
+        } else if (event.key === 'ArrowUp' && open && items.length) {
+            event.preventDefault();
+            graphModal.suggestIndex = Math.max(graphModal.suggestIndex - 1, 0);
+            highlightGraphSuggestion();
+        } else if (event.key === 'Enter') {
+            event.preventDefault();
+            if (open && items.length) {
+                pinGraphEdgeToken(items[graphModal.suggestIndex] || items[0]);
+                graphModal.searchInput.value = '';
+                hideGraphSuggestions();
+                return;
+            }
             const text = graphModal.searchInput.value.trim();
             if (text.length >= 2) {
                 pinGraphTextToken(text);
@@ -1108,7 +1278,7 @@ function ensureGraphModal() {
                 removeGraphToken(tokens[tokens.length - 1].id);
             }
         } else if (event.key === 'Escape') {
-            if (graphModal.suggestEl.style.display !== 'none') {
+            if (open) {
                 event.preventDefault();
                 event.stopPropagation();
                 hideGraphSuggestions();
@@ -1132,6 +1302,14 @@ function ensureGraphModal() {
     return graphModal;
 }
 
+function renderGraphLegend(modal) {
+    modal.legend.innerHTML = GRAPH_LEGEND.map((item) => `
+        <span class="graph-modal-legend-item">
+            <span class="graph-modal-legend-dot" style="background:${GRAPH_NODE_COLORS[item.group]}"></span>
+            ${escapeHtml(item.label)}
+        </span>`).join('');
+}
+
 function renderGraphChips() {
     const modal = ensureGraphModal();
     modal.chipsEl.innerHTML = '';
@@ -1139,11 +1317,11 @@ function renderGraphChips() {
         const chip = document.createElement('button');
         chip.type = 'button';
         chip.className = 'graph-modal-chip';
+        chip.title = token.title || token.text || 'Убрать фильтр';
         chip.innerHTML = `
             <span class="graph-modal-chip-dot" style="background:${token.color}"></span>
             <span class="graph-modal-chip-text">${escapeHtml(token.text)}</span>
             <span class="graph-modal-chip-x" aria-hidden="true">×</span>`;
-        chip.title = 'Убрать фильтр';
         chip.addEventListener('click', () => removeGraphToken(token.id));
         modal.chipsEl.appendChild(chip);
     }
@@ -1165,6 +1343,21 @@ function hideGraphSuggestions() {
     const modal = ensureGraphModal();
     modal.suggestEl.style.display = 'none';
     modal.suggestEl.innerHTML = '';
+    modal.suggestItems = [];
+    modal.suggestIndex = 0;
+    modal.searchInput.setAttribute('aria-expanded', 'false');
+}
+
+function highlightGraphSuggestion() {
+    const modal = ensureGraphModal();
+    const buttons = modal.suggestEl.querySelectorAll('.graph-modal-suggest-item');
+    buttons.forEach((btn, i) => {
+        btn.classList.toggle('active', i === modal.suggestIndex);
+    });
+    const active = buttons[modal.suggestIndex];
+    if (active && active.scrollIntoView) {
+        active.scrollIntoView({ block: 'nearest' });
+    }
 }
 
 function renderGraphSuggestions() {
@@ -1175,26 +1368,32 @@ function renderGraphSuggestions() {
         return;
     }
     const items = suggestEdges(modal.searchIndex, query, 8);
+    modal.suggestItems = items;
+    modal.suggestIndex = 0;
+    modal.suggestEl.style.display = 'block';
+    modal.searchInput.setAttribute('aria-expanded', 'true');
     if (!items.length) {
-        modal.suggestEl.style.display = 'block';
-        modal.suggestEl.innerHTML = '<div class="graph-modal-suggest-empty">Нет совпадений</div>';
+        modal.suggestEl.innerHTML = '<div class="graph-modal-suggest-empty">Нет совпадений — Enter добавит текстовый фильтр</div>';
         return;
     }
-    modal.suggestEl.style.display = 'block';
-    modal.suggestEl.innerHTML = items.map((item) => {
-        const chains = (item.chainIds || []).join(', ');
+    modal.suggestEl.innerHTML = items.map((item, i) => {
+        const chains = (item.chainIds || [])
+            .map((cid) => chainLabelForId(modal.payload, cid))
+            .join(', ');
         return `
-            <button type="button" class="graph-modal-suggest-item" data-edge-id="${escapeHtml(item.edgeId)}">
-                <div class="graph-modal-suggest-title">${escapeHtml(item.fromCaption)} -[${escapeHtml(item.label)}]-> ${escapeHtml(item.toCaption)}</div>
-                <div class="graph-modal-suggest-meta">${escapeHtml(item.evidenceSnippet || '')}${chains ? ` · ${escapeHtml(chains)}` : ''}</div>
+            <button type="button" class="graph-modal-suggest-item${i === 0 ? ' active' : ''}" data-edge-id="${escapeHtml(item.edgeId)}" role="option">
+                <div class="graph-modal-suggest-title">${escapeHtml(edgeTriple(item))}</div>
+                <div class="graph-modal-suggest-meta">${escapeHtml(item.evidence || '')}${chains ? ` · ${escapeHtml(chains)}` : ''}</div>
             </button>`;
     }).join('');
-    modal.suggestEl.querySelectorAll('.graph-modal-suggest-item').forEach((btn) => {
+    modal.suggestEl.querySelectorAll('.graph-modal-suggest-item').forEach((btn, i) => {
+        btn.addEventListener('mouseenter', () => {
+            modal.suggestIndex = i;
+            highlightGraphSuggestion();
+        });
         btn.addEventListener('mousedown', (event) => {
             event.preventDefault();
-            const edgeId = btn.dataset.edgeId;
-            const item = modal.searchIndex.find((x) => x.edgeId === edgeId);
-            pinGraphEdgeToken(item || { edgeId, fromCaption: '?', label: 'REL', toCaption: '?' });
+            pinGraphEdgeToken(items[i]);
             modal.searchInput.value = '';
             hideGraphSuggestions();
         });
@@ -1221,7 +1420,7 @@ function pinGraphEdgeToken(item) {
     if (!exists) {
         modal.spec.tokens.push(
             makeToken(
-                { text: edgeTokenLabel(item), edgeId: item.edgeId },
+                { text: edgeTokenLabel(item), title: edgeTriple(item), edgeId: item.edgeId },
                 modal.spec.tokens
             )
         );
@@ -1234,6 +1433,14 @@ function removeGraphToken(tokenId) {
     const modal = ensureGraphModal();
     modal.spec.tokens = modal.spec.tokens.filter((t) => t.id !== tokenId);
     applyGraphSpec(modal.spec);
+}
+
+function resetGraphSpec(modal) {
+    modal.spec = { tokens: [], note: '' };
+    modal.matches = null;
+    modal.selected = null;
+    modal.focusEdgeId = null;
+    modal.suggestItems = [];
 }
 
 function applyGraphSpec(spec) {
@@ -1255,15 +1462,11 @@ function applyGraphSpec(spec) {
 
     if (modal.viewIndex !== -1) {
         const current = (modal.payload.views || [])[modal.viewIndex];
-        const stillVisible = current && visible.some((v) => v.id === current.id);
+        const stillVisible = current && visible.includes(current);
         if (!stillVisible) {
-            if (visible.length === 1) modal.viewIndex = (modal.payload.views || []).indexOf(visible[0]);
-            else if (visible.length) {
-                const first = visible[0];
-                modal.viewIndex = (modal.payload.views || []).findIndex((v) => v.id === first.id);
-            } else {
-                modal.viewIndex = -1;
-            }
+            modal.viewIndex = visible.length
+                ? (modal.payload.views || []).indexOf(visible[0])
+                : -1;
         }
     }
 
@@ -1295,6 +1498,12 @@ async function openGraphModal(graphMeta, btn) {
     if (spinner) spinner.style.display = 'inline-block';
     if (label) label.textContent = 'Загрузка...';
 
+    if (modal.runId && modal.runId !== graphMeta.runId) {
+        resetGraphSpec(modal);
+        renderGraphChips();
+        renderGraphNote();
+    }
+
     modal.overlay.classList.add('open');
     document.body.classList.add('graph-modal-open');
     setGraphModalMessage('Загрузка графа...', true);
@@ -1315,6 +1524,9 @@ async function openGraphModal(graphMeta, btn) {
         }
     } catch (err) {
         console.error('Graph viz error:', err);
+        modal.payload = null;
+        modal.searchIndex = [];
+        modal.renderedKey = '';
         setGraphModalMessage(err.message || 'Не удалось загрузить граф', false);
     } finally {
         if (btn) btn.disabled = false;
@@ -1331,36 +1543,49 @@ function closeGraphModal() {
     hideGraphSuggestions();
     graphModal.overlay.classList.remove('open');
     document.body.classList.remove('graph-modal-open');
-    if (graphModal.network) {
-        graphModal.network.destroy();
-        graphModal.network = null;
-    }
+    destroyGraphNetwork(graphModal);
 }
 
-function setGraphModalMessage(text, loading) {
-    const modal = ensureGraphModal();
+function destroyGraphNetwork(modal) {
     if (modal.network) {
         modal.network.destroy();
         modal.network = null;
     }
+    modal.visNodes = null;
+    modal.visEdges = null;
+    modal.renderedKey = '';
+}
+
+function setGraphModalMessage(text, loading) {
+    const modal = ensureGraphModal();
+    destroyGraphNetwork(modal);
     modal.canvas.innerHTML = '';
-    modal.details.style.display = 'none';
     modal.empty.style.display = 'flex';
+    modal.legend.style.display = 'none';
     modal.empty.innerHTML = loading
         ? '<span class="spinner-small"></span><span>' + escapeHtml(text) + '</span>'
         : escapeHtml(text);
+    showInspectorEmpty();
     updateGraphToolbar();
 }
 
 function currentGraphView() {
     const modal = ensureGraphModal();
     if (!modal.payload) return null;
+    const filtering = Boolean(modal.matches && modal.matches.active);
+    if (filtering) {
+        const visible = visibleViewsForModal(modal);
+        if (!visible.length) return { nodes: [], edges: [] };
+        if (modal.viewIndex === -1) return unionViews(visible);
+        return (modal.payload.views || [])[modal.viewIndex] || { nodes: [], edges: [] };
+    }
     if (modal.viewIndex === -1) return modal.payload.all;
     return (modal.payload.views || [])[modal.viewIndex] || null;
 }
 
 function stepGraphView(delta) {
     const modal = ensureGraphModal();
+    const views = (modal.payload && modal.payload.views) || [];
     const visible = visibleViewsForModal(modal);
     if (!visible.length) {
         modal.viewIndex = -1;
@@ -1368,14 +1593,21 @@ function stepGraphView(delta) {
         return;
     }
 
-    // Order: all (-1) then each visible view.
-    const order = [-1].concat(
-        visible.map((v) => (modal.payload.views || []).findIndex((x) => x.id === v.id))
-    );
-    let pos = order.indexOf(modal.viewIndex);
-    if (pos < 0) pos = 0;
-    const nextPos = (pos + delta + order.length) % order.length;
-    modal.viewIndex = order[nextPos];
+    const indices = visible
+        .map((v) => views.indexOf(v))
+        .filter((i) => i >= 0);
+    if (!indices.length) {
+        modal.viewIndex = -1;
+        renderGraphView();
+        return;
+    }
+
+    let pos = indices.indexOf(modal.viewIndex);
+    if (pos < 0) {
+        pos = delta > 0 ? -1 : 0;
+    }
+    const nextPos = (pos + delta + indices.length) % indices.length;
+    modal.viewIndex = indices[nextPos];
     renderGraphView();
 }
 
@@ -1401,21 +1633,198 @@ function updateGraphToolbar() {
 
     if (modal.viewIndex === -1) {
         const suffix = filtering
-            ? ` · совпадений: ${matchCount} · цепей: ${chainCount}/${allViews.length}`
-            : ` · ${allViews.length}`;
-        modal.subtitle.textContent = `Все цепи${suffix}`;
+            ? ` · ${chainCount} из ${allViews.length} · совпадений: ${matchCount}`
+            : (allViews.length ? ` · ${allViews.length}` : '');
+        modal.subtitle.textContent = `Все${suffix}`;
         modal.allBtn.classList.add('active');
     } else {
         const view = allViews[modal.viewIndex];
-        const visiblePos = visible.findIndex((v) => view && v.id === view.id) + 1;
-        const posLabel = filtering && visiblePos > 0
-            ? `${visiblePos} из ${chainCount}`
-            : `${modal.viewIndex + 1} из ${allViews.length}`;
+        const label = (view && view.label) || 'Цепь';
+        const visiblePos = visible.indexOf(view) + 1;
         const matchPart = filtering ? ` · совпадений: ${matchCount}` : '';
-        modal.subtitle.textContent = `${view ? view.label : 'Цепь'} ${posLabel}${matchPart} · score ${Number((view && view.score) || 0).toFixed(3)}`;
+        const scorePart = ` · score ${Number((view && view.score) || 0).toFixed(3)}`;
+        let title = label;
+        if (chainCount > 1 && visiblePos > 0) {
+            title = (visiblePos === modal.viewIndex + 1)
+                ? `${label} / ${chainCount}`
+                : `${label} · ${visiblePos} / ${chainCount}`;
+        }
+        modal.subtitle.textContent = `${title}${matchPart}${scorePart}`;
         modal.allBtn.classList.remove('active');
     }
-    modal.navBtns.forEach((btn) => { btn.disabled = allViews.length < 1; });
+    modal.navBtns.forEach((btn) => { btn.disabled = visible.length < 2; });
+}
+
+function visNodeRecord(modal, node, view, filtering, bucket) {
+    const color = node.color || GRAPH_NODE_COLORS[node.group] || GRAPH_DEFAULT_NODE_COLOR;
+    const caption = nodeCaption(node);
+    const matched = filtering && bucket.nodeIds.has(node.id);
+    let borderColor = color;
+    let borderWidth = 2;
+    if (matched) {
+        borderColor = GRAPH_TOKEN_PALETTE[0];
+        for (const edge of view.edges || []) {
+            if ((edge.from === node.id || edge.to === node.id) && bucket.edgeIds.has(edge.id)) {
+                borderColor = firstTokenColorForEdge(modal, edge.id);
+                break;
+            }
+        }
+        borderWidth = 4;
+    } else if (filtering) {
+        borderWidth = 1;
+    }
+    const group = node.group && node.group !== 'Unknown' ? node.group : '';
+    return {
+        id: node.id,
+        label: caption,
+        group: node.group,
+        title: group ? `${group}: ${caption}` : caption,
+        color: {
+            background: color,
+            border: borderColor,
+            highlight: { background: color, border: '#ffffff' },
+        },
+        font: {
+            color: filtering && !matched ? 'rgba(255,255,255,0.35)' : '#ffffff',
+            size: 13,
+            face: 'Inter, sans-serif',
+            strokeWidth: 3,
+            strokeColor: 'rgba(0,0,0,0.65)',
+        },
+        borderWidth,
+        borderWidthSelected: 3,
+        size: matched ? 30 : 26,
+        opacity: filtering && !matched ? 0.35 : 1,
+        shape: 'dot',
+        _rawData: node,
+    };
+}
+
+function visEdgeRecord(modal, edge, view, filtering, bucket) {
+    const isSpine = edge.role === 'spine';
+    const fromCap = nodeCaption({
+        caption: edge.from_name,
+        group: edge.from_group,
+    });
+    const toCap = nodeCaption({
+        caption: edge.to_name,
+        group: edge.to_group,
+    });
+    const evidence = edge.properties && edge.properties.evidence ? edge.properties.evidence : '';
+    const matched = filtering && bucket.edgeIds.has(edge.id);
+    const chipColor = matched ? firstTokenColorForEdge(modal, edge.id) : null;
+
+    let edgeColor;
+    let width;
+    let label = edge.label;
+    if (filtering && matched) {
+        edgeColor = chipColor;
+        width = 4;
+    } else if (filtering) {
+        edgeColor = 'rgba(255,255,255,0.08)';
+        width = 1;
+        label = '';
+    } else {
+        edgeColor = isSpine ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.22)';
+        width = isSpine ? 3 : 1.4;
+    }
+
+    return {
+        id: edge.id,
+        from: edge.from,
+        to: edge.to,
+        label,
+        title: `${fromCap} —${edge.label}→ ${toCap}${evidence ? `\n${evidence}` : ''}`,
+        dashes: !isSpine && !matched,
+        width,
+        color: {
+            color: edgeColor,
+            highlight: matched ? chipColor : 'rgba(255,255,255,0.85)',
+            hover: matched ? chipColor : 'rgba(255,255,255,0.55)',
+        },
+        font: {
+            color: matched ? '#e5e7eb' : '#9a9a9a',
+            size: 10,
+            face: 'Inter, sans-serif',
+            strokeWidth: 2,
+            strokeColor: 'rgba(0,0,0,0.5)',
+            align: 'top',
+        },
+        arrows: { to: { enabled: true, scaleFactor: 0.55, type: 'arrow' } },
+        _rawData: edge,
+    };
+}
+
+function bindGraphNetworkEvents(modal) {
+    modal.network.on('click', (params) => {
+        if (params.nodes.length > 0) {
+            const node = modal.visNodes.get(params.nodes[0]);
+            if (node && node._rawData) showInspector('node', node._rawData);
+        } else if (params.edges.length > 0) {
+            const edge = modal.visEdges.get(params.edges[0]);
+            if (edge && edge._rawData) showInspector('edge', edge._rawData);
+        } else {
+            modal.network.unselectAll();
+            showInspectorEmpty();
+        }
+    });
+}
+
+function freezeGraphPhysics(modal) {
+    if (!modal.network) return;
+    modal.network.setOptions({ physics: { enabled: false } });
+}
+
+function afterGraphStabilize(modal) {
+    freezeGraphPhysics(modal);
+    const focusId = modal.focusEdgeId;
+    modal.focusEdgeId = null;
+    if (focusId && modal.visEdges && modal.visEdges.get(focusId)) {
+        focusGraphEdge(modal, focusId);
+        return;
+    }
+    restoreGraphSelection(modal);
+    modal.network.fit({ animation: { duration: 280, easingFunction: 'easeInOutQuad' } });
+}
+
+function focusGraphEdge(modal, edgeId) {
+    if (!modal.network || !modal.visEdges) return;
+    const edge = modal.visEdges.get(edgeId);
+    if (!edge) return;
+    modal.network.selectEdges([edgeId]);
+    const focusNode = edge.from || edge.to;
+    if (focusNode) {
+        modal.network.focus(focusNode, {
+            scale: 1.2,
+            animation: { duration: 280, easingFunction: 'easeInOutQuad' },
+        });
+    }
+    if (edge._rawData) showInspector('edge', edge._rawData);
+}
+
+function restoreGraphSelection(modal) {
+    const selected = modal.selected;
+    if (!selected || !modal.visNodes || !modal.visEdges) {
+        showInspectorEmpty();
+        return;
+    }
+    if (selected.kind === 'node') {
+        const node = modal.visNodes.get(selected.id);
+        if (node && node._rawData) {
+            modal.network.selectNodes([selected.id]);
+            showInspector('node', node._rawData);
+            return;
+        }
+    }
+    if (selected.kind === 'edge') {
+        const edge = modal.visEdges.get(selected.id);
+        if (edge && edge._rawData) {
+            modal.network.selectEdges([selected.id]);
+            showInspector('edge', edge._rawData);
+            return;
+        }
+    }
+    showInspectorEmpty();
 }
 
 function renderGraphView() {
@@ -1426,7 +1835,7 @@ function renderGraphView() {
     if (!view || !view.nodes || !view.nodes.length) {
         setGraphModalMessage(
             (modal.matches && modal.matches.active)
-                ? 'Нет цепей с совпадениями'
+                ? 'Нет совпадений'
                 : 'Нет данных для визуализации',
             false
         );
@@ -1434,205 +1843,141 @@ function renderGraphView() {
     }
 
     modal.empty.style.display = 'none';
-    modal.details.style.display = 'none';
-    modal.canvas.innerHTML = '';
+    modal.legend.style.display = 'flex';
+
+    const bucket = currentMatchBucket(modal) || emptyMatchBucket();
+    const filtering = Boolean(modal.matches && modal.matches.active);
+    const topologyKey = graphTopologyKey(modal);
+    const nodeRecords = view.nodes.map((node) => visNodeRecord(modal, node, view, filtering, bucket));
+    const edgeRecords = view.edges.map((edge) => visEdgeRecord(modal, edge, view, filtering, bucket));
+
+    const canUpdateInPlace = Boolean(
+        modal.network &&
+        modal.visNodes &&
+        modal.visEdges &&
+        modal.renderedKey === topologyKey
+    );
+
+    if (canUpdateInPlace) {
+        modal.visNodes.update(nodeRecords);
+        modal.visEdges.update(edgeRecords);
+        if (modal.focusEdgeId) {
+            const id = modal.focusEdgeId;
+            modal.focusEdgeId = null;
+            focusGraphEdge(modal, id);
+        } else {
+            restoreGraphSelection(modal);
+        }
+        return;
+    }
 
     if (modal.network) {
         modal.network.destroy();
         modal.network = null;
     }
+    modal.canvas.innerHTML = '';
 
-    const bucket = currentMatchBucket(modal);
-    const filtering = Boolean(bucket && modal.matches && modal.matches.active);
-
-    const visNodes = new vis.DataSet(view.nodes.map((node) => {
-        const color = node.color || GRAPH_NODE_COLORS[node.group] || GRAPH_DEFAULT_NODE_COLOR;
-        const caption = node.caption || node.label || node.id;
-        const matched = filtering && bucket.nodeIds.has(node.id);
-        let borderColor = color;
-        let borderWidth = 2;
-        if (matched) {
-            // Prefer color of first token that touches any incident matched edge.
-            borderColor = GRAPH_TOKEN_PALETTE[0];
-            for (const edge of view.edges || []) {
-                if ((edge.from === node.id || edge.to === node.id) && bucket.edgeIds.has(edge.id)) {
-                    borderColor = firstTokenColorForEdge(modal, edge.id);
-                    break;
-                }
-            }
-            borderWidth = 4;
-        } else if (filtering) {
-            borderWidth = 1;
+    modal.visNodes = new vis.DataSet(nodeRecords);
+    modal.visEdges = new vis.DataSet(edgeRecords);
+    modal.renderedKey = topologyKey;
+    modal.network = new vis.Network(
+        modal.canvas,
+        { nodes: modal.visNodes, edges: modal.visEdges },
+        {
+            ...GRAPH_NETWORK_OPTIONS,
+            physics: { ...GRAPH_NETWORK_OPTIONS.physics, enabled: true },
         }
-        return {
-            id: node.id,
-            label: caption,
-            group: node.group,
-            title: `${node.group || 'Node'}: ${caption}`,
-            color: {
-                background: color,
-                border: borderColor,
-                highlight: { background: color, border: '#ffffff' },
-            },
-            font: {
-                color: filtering && !matched ? 'rgba(255,255,255,0.35)' : '#ffffff',
-                size: 12,
-                face: 'Inter, sans-serif',
-                strokeWidth: 3,
-                strokeColor: 'rgba(0,0,0,0.65)',
-            },
-            borderWidth,
-            borderWidthSelected: 3,
-            size: matched ? 30 : 26,
-            opacity: filtering && !matched ? 0.35 : 1,
-            shape: 'dot',
-            _rawData: node,
-        };
-    }));
-
-    const visEdges = new vis.DataSet(view.edges.map((edge) => {
-        const isSpine = edge.role === 'spine';
-        const chains = (edge.chain_ids || []).join(', ');
-        const evidence = edge.properties && edge.properties.evidence ? edge.properties.evidence : '';
-        const matched = filtering && bucket.edgeIds.has(edge.id);
-        const chipColor = matched ? firstTokenColorForEdge(modal, edge.id) : null;
-
-        let edgeColor;
-        let width;
-        let label = edge.label;
-        if (filtering && matched) {
-            edgeColor = chipColor;
-            width = 4;
-        } else if (filtering) {
-            edgeColor = 'rgba(255,255,255,0.06)';
-            width = 1;
-            label = '';
-        } else {
-            edgeColor = isSpine ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.22)';
-            width = isSpine ? 3 : 1.4;
-        }
-
-        return {
-            id: edge.id,
-            from: edge.from,
-            to: edge.to,
-            label,
-            title: `${edge.label} · ${chains}${evidence ? `\n${evidence}` : ''}`,
-            dashes: !isSpine && !matched,
-            width,
-            color: {
-                color: edgeColor,
-                highlight: matched ? chipColor : 'rgba(255,255,255,0.85)',
-                hover: matched ? chipColor : 'rgba(255,255,255,0.55)',
-            },
-            font: {
-                color: matched ? '#e5e7eb' : '#9a9a9a',
-                size: 10,
-                face: 'Inter, sans-serif',
-                strokeWidth: 2,
-                strokeColor: 'rgba(0,0,0,0.5)',
-                align: 'top',
-            },
-            arrows: { to: { enabled: true, scaleFactor: 0.55, type: 'arrow' } },
-            smooth: { enabled: true, type: 'dynamic' },
-            _rawData: edge,
-        };
-    }));
-
-    modal.network = new vis.Network(modal.canvas, { nodes: visNodes, edges: visEdges }, {
-        physics: {
-            enabled: true,
-            solver: 'forceAtlas2Based',
-            forceAtlas2Based: {
-                gravitationalConstant: -90,
-                centralGravity: 0.01,
-                springLength: 180,
-                springConstant: 0.08,
-                damping: 0.4,
-                avoidOverlap: 0.6,
-            },
-            stabilization: { iterations: 150, fit: true },
-        },
-        interaction: {
-            hover: true,
-            tooltipDelay: 150,
-            zoomView: true,
-            dragView: true,
-            multiselect: false,
-        },
-        layout: { hierarchical: { enabled: false } },
-    });
-
-    modal.network.on('click', (params) => {
-        if (params.nodes.length > 0) {
-            const node = visNodes.get(params.nodes[0]);
-            if (node && node._rawData) showGraphDetails('node', node._rawData);
-        } else if (params.edges.length > 0) {
-            const edge = visEdges.get(params.edges[0]);
-            if (edge && edge._rawData) showGraphDetails('edge', edge._rawData);
-        }
-    });
-
-    modal.network.once('stabilizationIterationsDone', () => {
-        const focusId = modal.focusEdgeId;
-        modal.focusEdgeId = null;
-        if (focusId) {
-            const edge = visEdges.get(focusId);
-            if (edge) {
-                const focusNode = edge.from || edge.to;
-                if (focusNode) {
-                    modal.network.focus(focusNode, {
-                        scale: 1.25,
-                        animation: { duration: 350, easingFunction: 'easeInOutQuad' },
-                    });
-                }
-                modal.network.selectEdges([focusId]);
-                if (edge._rawData) showGraphDetails('edge', edge._rawData);
-                return;
-            }
-        }
-        modal.network.fit({ animation: { duration: 350, easingFunction: 'easeInOutQuad' } });
-    });
+    );
+    bindGraphNetworkEvents(modal);
+    modal.network.once('stabilizationIterationsDone', () => afterGraphStabilize(modal));
 }
 
-function graphPropsTable(properties) {
-    const rows = Object.entries(properties || {})
-        .filter(([, value]) => value !== null && value !== undefined && value !== '')
-        .map(([key, value]) => {
-            const rendered = typeof value === 'object' ? JSON.stringify(value) : String(value);
-            return `<tr><td>${escapeHtml(key)}</td><td>${escapeHtml(rendered)}</td></tr>`;
-        })
-        .join('');
-    return rows ? `<table class="node-props-table">${rows}</table>` : '';
-}
-
-function showGraphDetails(kind, data) {
+function showInspectorEmpty() {
     const modal = ensureGraphModal();
-    const details = modal.details;
-    const isNode = kind === 'node';
-    const color = isNode ? (data.color || GRAPH_DEFAULT_NODE_COLOR) : '#8e8e8e';
-    const title = isNode ? (data.caption || data.label || 'Node') : (data.label || 'Relationship');
-    const properties = { ...(data.properties || {}) };
+    modal.selected = null;
+    modal.details.innerHTML = '<div class="graph-inspector-empty">Выберите узел или ребро</div>';
+}
 
-    if (!isNode) {
-        properties.role = data.role || '';
-        properties.chain_ids = (data.chain_ids || []).join(', ');
+function incidentEdgeCount(view, nodeId) {
+    return (view.edges || []).filter((e) => e.from === nodeId || e.to === nodeId).length;
+}
+
+function formatConfidence(value) {
+    if (value === null || value === undefined || value === '') return '—';
+    const n = Number(value);
+    return Number.isFinite(n) ? n.toFixed(2) : '—';
+}
+
+function formatChainList(payload, chainIds) {
+    return (chainIds || []).map((cid) => chainLabelForId(payload, cid)).join(', ');
+}
+
+function showInspector(kind, data) {
+    const modal = ensureGraphModal();
+    const view = currentGraphView() || { nodes: [], edges: [] };
+    modal.selected = { kind, id: data.id };
+
+    if (kind === 'node') {
+        const caption = nodeCaption(data);
+        const group = data.group && data.group !== 'Unknown' ? data.group : '';
+        const color = data.color || GRAPH_NODE_COLORS[group] || GRAPH_DEFAULT_NODE_COLOR;
+        const community = data.properties && data.properties.leiden_community;
+        const degree = incidentEdgeCount(view, data.id);
+        modal.details.innerHTML = `
+            <div class="graph-inspector-kicker">Узел</div>
+            <div class="graph-inspector-title">${escapeHtml(caption)}</div>
+            <div class="graph-inspector-badges">
+                ${group ? `<span class="graph-inspector-badge" style="border-color:${color}">${escapeHtml(group)}</span>` : ''}
+            </div>
+            <dl class="graph-inspector-meta">
+                <div class="graph-inspector-row"><dt>Рёбра</dt><dd>${degree}</dd></div>
+                ${community !== undefined && community !== null && community !== ''
+                    ? `<div class="graph-inspector-row"><dt>Community</dt><dd>${escapeHtml(String(community))}</dd></div>`
+                    : ''}
+            </dl>`;
+        return;
     }
 
-    details.innerHTML = `
-        <div class="node-details-header">
-            <span class="node-details-title">${escapeHtml(title)}</span>
-            <button class="node-details-close" type="button" aria-label="Закрыть">×</button>
+    const fromCap = nodeCaption({ caption: data.from_name, group: data.from_group });
+    const toCap = nodeCaption({ caption: data.to_name, group: data.to_group });
+    const fromRef = nodeRef(data.from_group, data.from_name || fromCap);
+    const toRef = nodeRef(data.to_group, data.to_name || toCap);
+    const evidence = data.properties && data.properties.evidence ? String(data.properties.evidence) : '';
+    const sourceFile = data.properties && data.properties.source_file ? String(data.properties.source_file) : '';
+    const confidence = data.properties ? data.properties.confidence : null;
+    const role = data.role === 'spine' ? 'остов' : data.role === 'fan' ? 'луч' : (data.role || '');
+    const chains = formatChainList(modal.payload, data.chain_ids);
+    const hub = data.hub_name ? String(data.hub_name) : '';
+
+    modal.details.innerHTML = `
+        <div class="graph-inspector-kicker">Ребро</div>
+        <div class="graph-inspector-title">${escapeHtml(data.label || 'RELATED')}</div>
+        <div class="graph-inspector-triple">${escapeHtml(fromRef)} —${escapeHtml(data.label || '')}→ ${escapeHtml(toRef)}</div>
+        <div class="graph-inspector-badges">
+            ${role ? `<span class="graph-inspector-badge">${escapeHtml(role)}</span>` : ''}
         </div>
-        <div class="node-label-badges">
-            <span class="node-label-badge" style="border-color: ${color}; background: ${color}22;">${escapeHtml(isNode ? (data.group || 'Node') : (data.label || 'REL'))}</span>
-            ${!isNode && data.role ? `<span class="node-label-badge graph-role-badge">${escapeHtml(data.role)}</span>` : ''}
-        </div>
-        ${graphPropsTable(properties)}`;
-    details.style.display = 'block';
-    details.querySelector('.node-details-close').addEventListener('click', () => {
-        details.style.display = 'none';
-    });
+        ${evidence ? `<div class="graph-inspector-quote">${escapeHtml(evidence)}</div>` : ''}
+        ${evidence ? `<button type="button" class="graph-inspector-copy">Копировать цитату</button>` : ''}
+        <dl class="graph-inspector-meta">
+            ${sourceFile ? `<div class="graph-inspector-row"><dt>Источник</dt><dd>${escapeHtml(sourceFile)}</dd></div>` : ''}
+            <div class="graph-inspector-row"><dt>Conf</dt><dd>${escapeHtml(formatConfidence(confidence))}</dd></div>
+            ${chains ? `<div class="graph-inspector-row"><dt>Цепи</dt><dd>${escapeHtml(chains)}</dd></div>` : ''}
+            ${hub ? `<div class="graph-inspector-row"><dt>Хаб</dt><dd>${escapeHtml(hub)}</dd></div>` : ''}
+        </dl>`;
+
+    const copyBtn = modal.details.querySelector('.graph-inspector-copy');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(evidence);
+                copyBtn.textContent = 'Скопировано';
+                setTimeout(() => { copyBtn.textContent = 'Копировать цитату'; }, 1400);
+            } catch (_) {
+                copyBtn.textContent = 'Ошибка';
+                setTimeout(() => { copyBtn.textContent = 'Копировать цитату'; }, 1400);
+            }
+        });
+    }
 }
 
 // ===== UI Helpers =====

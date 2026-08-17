@@ -7,11 +7,12 @@ from typing import Any
 
 from neo4j import AsyncDriver
 
+from server.algorithm.embed_client import EmbeddingError
 from server.algorithm.graph_cache import build_s3_bundle, load_s3_bundle_graphs
 from server.algorithm.models import CandidateGraph, Chain, SessionState, SubQuestion
 from server.algorithm.params import Params, merge_params
 from server.algorithm.stage1_embed import embed_subquestions
-from server.algorithm.stage2_ann import ann_for_subquestions
+from server.algorithm.stage2_ann import AnnError, ann_for_subquestions
 from server.algorithm.stage2b_rerank import rerank_ann_by_sq
 from server.algorithm.stage3_graphs import build_all_graphs
 from server.algorithm.stage4_hop_dp import run_s4_fill_budget
@@ -103,6 +104,35 @@ def emit_cut_chains(ranked: list[Chain], params: Params) -> list[Chain]:
     return out
 
 
+def _empty_run_result(
+    params: Params,
+    *,
+    error: str,
+    subquestions: list[SubQuestion] | None = None,
+    error_detail: str = "",
+) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "accepted": [],
+        "accepted_all": [],
+        "subquestions": [s.to_dict() for s in (subquestions or [])],
+        "trace": {},
+        "s3_keys": {},
+        "s3_keys_union": [],
+        "s3_edge_sims": {},
+        "ann_keys": {},
+        "ann_keys_union": [],
+        "ann_edge_sims": {},
+        "rerank_keys": {},
+        "rerank_keys_union": [],
+        "effort": params.effort,
+        "from_graph_cache": False,
+        "error": error,
+    }
+    if error_detail:
+        out["error_detail"] = error_detail
+    return out
+
+
 async def run(
     driver: AsyncDriver,
     *,
@@ -126,28 +156,15 @@ async def run(
     p = (params or merge_params()).with_effort(effort)
     state = SessionState(subquestions=_normalize_subquestions(subquestions, query))
 
-    empty = {
-        "accepted": [],
-        "accepted_all": [],
-        "subquestions": [],
-        "trace": {},
-        "s3_keys": {},
-        "s3_keys_union": [],
-        "s3_edge_sims": {},
-        "ann_keys": {},
-        "ann_keys_union": [],
-        "ann_edge_sims": {},
-        "rerank_keys": {},
-        "rerank_keys_union": [],
-        "effort": p.effort,
-        "from_graph_cache": False,
-        "error": "no_subquestions",
-    }
     if not state.subquestions:
-        return empty
+        return _empty_run_result(p, error="no_subquestions")
 
     from_graph_cache = False
     s3_bundle_out: dict[str, Any] | None = None
+    graphs: dict[str, CandidateGraph]
+    ann_keys: dict[str, list[str]]
+    rerank_keys: dict[str, list[str]]
+    ann_edge_sims: dict[str, float]
 
     if s3_bundle is not None:
         graphs = load_s3_bundle_graphs(s3_bundle, branch_cap=p.branch_cap)
@@ -168,30 +185,53 @@ async def run(
             sum(len(g.edges) for g in graphs.values()),
         )
     else:
-        sq_emb = await embed_subquestions(state.subquestions, state.embed_cache)
+        try:
+            sq_emb = await embed_subquestions(state.subquestions, state.embed_cache)
+            if any(not v for v in sq_emb.values()):
+                return _empty_run_result(
+                    p,
+                    error="embed_failed",
+                    subquestions=state.subquestions,
+                    error_detail="empty embedding for one or more subquestions",
+                )
+            ann_by_sq = await ann_for_subquestions(
+                driver, state.subquestions, sq_emb, state.embed_cache, p
+            )
+            ann_by_sq, ann_keys_map, rerank_keys_map, ann_edge_sims = await rerank_ann_by_sq(
+                state.subquestions, ann_by_sq, p
+            )
+            ann_keys = {k: list(v) for k, v in ann_keys_map.items()}
+            rerank_keys = {k: list(v) for k, v in rerank_keys_map.items()}
 
-        ann_by_sq = await ann_for_subquestions(
-            driver, state.subquestions, sq_emb, state.embed_cache, p
-        )
-        ann_by_sq, ann_keys_map, rerank_keys_map, ann_edge_sims = await rerank_ann_by_sq(
-            state.subquestions, ann_by_sq, p
-        )
-        ann_keys = {k: list(v) for k, v in ann_keys_map.items()}
-        rerank_keys = {k: list(v) for k, v in rerank_keys_map.items()}
-
-        graphs = await build_all_graphs(
-            driver, state.subquestions, ann_by_sq, sq_emb, p
-        )
-        if emit_s3_bundle:
-            s3_bundle_out = build_s3_bundle(
-                qid=cache_qid or "",
-                question=query,
-                params=p,
-                sqs=state.subquestions,
-                graphs=graphs,
-                ann_keys=ann_keys,
-                rerank_keys=rerank_keys,
-                ann_edge_sims=ann_edge_sims,
+            graphs = await build_all_graphs(
+                driver, state.subquestions, ann_by_sq, sq_emb, p
+            )
+            if emit_s3_bundle:
+                s3_bundle_out = build_s3_bundle(
+                    qid=cache_qid or "",
+                    question=query,
+                    params=p,
+                    sqs=state.subquestions,
+                    graphs=graphs,
+                    ann_keys=ann_keys,
+                    rerank_keys=rerank_keys,
+                    ann_edge_sims=ann_edge_sims,
+                )
+        except EmbeddingError as e:
+            logger.exception("V6 embed failed")
+            return _empty_run_result(
+                p,
+                error="embed_failed",
+                subquestions=state.subquestions,
+                error_detail=str(e),
+            )
+        except AnnError as e:
+            logger.exception("V6 ANN failed")
+            return _empty_run_result(
+                p,
+                error="ann_failed",
+                subquestions=state.subquestions,
+                error_detail=str(e),
             )
 
     s3_keys_sets = _s3_edge_keys(graphs)

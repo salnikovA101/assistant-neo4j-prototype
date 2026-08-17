@@ -45,6 +45,52 @@ def test_anchor_prize_ranking_weight():
     assert abs(w - 0.8) < 1e-9
 
 
+def _ce_edge(key: str, *, sim: float, ce: float | None) -> EdgeRecord:
+    return EdgeRecord(
+        edge_key=key,
+        element_id=key,
+        rel_type="R",
+        start_id=f"{key}_s",
+        end_id=f"{key}_e",
+        start_name=f"{key}_s",
+        end_name=f"{key}_e",
+        sim=sim,
+        rerank_score=ce,
+        source="ann",
+    )
+
+
+def test_s4_ranks_raw_ce_not_clipped():
+    params = Params()
+    hi = _ce_edge("hi", sim=0.1, ce=5.0)
+    mid = _ce_edge("mid", sim=0.99, ce=0.4)
+    assert edge_prize_weight(hi, p_store={}, params=params) > edge_prize_weight(
+        mid, p_store={}, params=params
+    )
+
+
+def test_s4_negative_ce_not_replaced_by_cosine():
+    params = Params()
+    neg = _ce_edge("neg", sim=0.95, ce=-1.5)
+    w = edge_prize_weight(neg, p_store={}, params=params)
+    assert w == -1.5
+
+
+def test_s4_missing_ce_uses_cosine():
+    params = Params()
+    e = _ce_edge("ann", sim=0.7, ce=None)
+    assert abs(edge_prize_weight(e, p_store={}, params=params) - 0.7) < 1e-9
+
+
+def test_s4_p_discount_moves_order_when_ce_unclipped():
+    params = Params()
+    a = _ce_edge("a", sim=0.2, ce=5.0)
+    b = _ce_edge("b", sim=0.2, ce=2.0)
+    wa = edge_prize_weight(a, p_store={"a": 0.3}, params=params)
+    wb = edge_prize_weight(b, p_store={}, params=params)
+    assert wa < wb
+
+
 def test_dedup_and_spine_seq_batch():
     e12a = EdgeRecord("e1", "1", "R", "a", "b", "A", "B", evidence="ev1")
     e12b = EdgeRecord("e2", "2", "R", "b", "c", "B", "C", evidence="ev2")
@@ -218,6 +264,102 @@ def test_hop_dp_single_and_two_hop():
     assert 1 <= len(paths[0].all_edge_keys()) <= 3
     # Prefer longer high-prize path: e1+e2 score > either alone
     assert set(paths[0].all_edge_keys()) == {"e1", "e2"}
+
+
+def test_hop_dp_skips_isolated_prize_continues_cluster():
+    iso = EdgeRecord(
+        "iso",
+        "iso",
+        "R",
+        "x",
+        "y",
+        "X",
+        "Y",
+        sim=0.99,
+        rerank_score=5.0,
+        evidence="isolated",
+        source="ann",
+    )
+    a = EdgeRecord(
+        "a",
+        "a",
+        "R",
+        "n1",
+        "n2",
+        "A",
+        "B",
+        sim=0.5,
+        rerank_score=0.8,
+        evidence="ev-a",
+        source="ann",
+    )
+    b = EdgeRecord(
+        "b",
+        "b",
+        "R",
+        "n2",
+        "n3",
+        "B",
+        "C",
+        sim=0.49,
+        rerank_score=0.7,
+        evidence="ev-b",
+        source="ann",
+    )
+    g = CandidateGraph(
+        source_graph="g",
+        edges={"iso": iso, "a": a, "b": b},
+        node_to_edges={
+            "x": ["iso"],
+            "y": ["iso"],
+            "n1": ["a"],
+            "n2": ["a", "b"],
+            "n3": ["b"],
+        },
+        transition_adj={"iso": [], "a": ["b"], "b": ["a"]},
+    )
+    params = Params(
+        min_path_len=1,
+        max_hops=5,
+        prize_top=10,
+        s4_paths_per_graph=2,
+        s4_min_prize_edges=2,
+    )
+    paths = hop_dp_paths(g, p_store={}, params=params)
+    assert len(paths) == 1
+    assert set(paths[0].all_edge_keys()) == {"a", "b"}
+
+
+def test_s4_min_prize_edges_zero_allows_single():
+    iso = EdgeRecord(
+        "iso",
+        "iso",
+        "R",
+        "x",
+        "y",
+        "X",
+        "Y",
+        sim=0.9,
+        rerank_score=2.0,
+        evidence="only",
+        source="ann",
+    )
+    g = CandidateGraph(
+        source_graph="g",
+        edges={"iso": iso},
+        node_to_edges={"x": ["iso"], "y": ["iso"]},
+        transition_adj={"iso": []},
+    )
+    params = Params(
+        min_path_len=1,
+        max_hops=3,
+        prize_top=10,
+        s4_paths_per_graph=1,
+        s4_min_prize_edges=0,
+    )
+    paths = hop_dp_paths(g, p_store={}, params=params)
+    assert len(paths) == 1
+    assert paths[0].all_edge_keys() == ["iso"]
 
 
 def test_s4_one_path_per_graph_global_start():
@@ -1114,3 +1256,43 @@ def test_graph_cache_edge_roundtrip():
     loaded = load_s3_bundle_graphs(bundle, branch_cap=20)
     assert set(loaded["sq1"].edges) == {"k1"}
     assert loaded["sq1"].edges["k1"].rerank_score == 0.42
+
+    missing = EdgeRecord(
+        edge_key="k2",
+        element_id="el2",
+        rel_type="R",
+        start_id="n3",
+        end_id="n4",
+        start_name="C",
+        end_name="D",
+        sim=0.5,
+        rerank_score=None,
+        source="ann",
+    )
+    d_none = edge_to_cache_dict(missing)
+    assert d_none["rerank_score"] is None
+    assert edge_from_cache_dict(d_none).rerank_score is None
+
+
+def test_run_embed_failure_sets_error():
+    import asyncio
+    from unittest.mock import patch
+
+    from server.algorithm.embed_client import EmbeddingError
+    from server.algorithm.pipeline import run
+
+    async def boom(*_a, **_k):
+        raise EmbeddingError("http 500")
+
+    async def _run():
+        with patch("server.algorithm.pipeline.embed_subquestions", boom):
+            return await run(
+                driver=None,  # type: ignore[arg-type]
+                subquestions=[{"id": "sq1", "text": "q"}],
+                effort="low",
+            )
+
+    result = asyncio.run(_run())
+    assert result["error"] == "embed_failed"
+    assert result["accepted"] == []
+    assert "http 500" in str(result.get("error_detail") or "")
