@@ -54,6 +54,7 @@ async def test_generate_response_stream_tool_loop(monkeypatch):
 
     turn0 = [
         _Chunk(_Delta(reasoning_content="plan ")),
+        _Chunk(_Delta(content="Let me look.")),
         _Chunk(
             _Delta(
                 tool_calls=[
@@ -101,9 +102,20 @@ async def test_generate_response_stream_tool_loop(monkeypatch):
     assert types[0] == "thinking"
     assert "tool_call" in types
     assert "tool_result" in types
-    assert types.count("content") >= 2
+    assert "content_rewind" in types
     assert types[-1] == "done"
     assert events[-1].data["final_content"] == "Final answer"
+
+    visible = ""
+    for ev in events:
+        if ev.type == "content":
+            visible += ev.data.get("delta") or ""
+        elif ev.type == "content_rewind":
+            text = ev.data.get("text") or ""
+            if text and visible.endswith(text):
+                visible = visible[: -len(text)]
+    assert visible == "Final answer"
+    assert "Let me look." not in events[-1].data["final_content"]
 
     tool_call = next(e for e in events if e.type == "tool_call")
     assert tool_call.data["name"] == "ask_subgraph"

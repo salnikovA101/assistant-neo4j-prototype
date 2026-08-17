@@ -13,6 +13,7 @@ StreamEventType = Literal[
     "tool_call",
     "tool_result",
     "content",
+    "content_rewind",
     "graph_highlight",
     "done",
     "error",

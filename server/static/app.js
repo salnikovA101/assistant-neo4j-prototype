@@ -1,11 +1,15 @@
 /**
- * Neo4j Assistant — Web Client (Minimal ChatGPT Style)
+ * Neo4j Assistant — Web Client
  *
- * Логика: Toggle-микрофон (с паузой при воспроизведении), текстовый ввод, отправка на сервер,
- * потоковое воспроизведение PCM int16 24kHz ответа через Web Audio API с поддержкой Barge-in.
+ * Текстовый чат по SSE. Аудио (STT/TTS) опционально и скрыто, пока audio_enabled=false.
  */
 
 const ASSISTANT_ICON = '<img src="icon.svg" alt="" width="32" height="32">';
+const WELCOME_COPY =
+    'Задайте вопрос по базе знаний Neo4j — отвечу с опорой на граф и источники.';
+const TOOL_LABELS = {
+    ask_subgraph: 'Поиск в графе',
+};
 
 // ===== State =====
 let isRecording = false;
@@ -27,6 +31,8 @@ let currentAbortController = null;
 const chatMessages = document.getElementById('chat-messages');
 const textInput = document.getElementById('text-input');
 const sendBtn = document.getElementById('send-btn');
+const sendIcon = document.getElementById('send-icon');
+const stopGenIcon = document.getElementById('stop-gen-icon');
 const micBtn = document.getElementById('mic-btn');
 const micIcon = document.getElementById('mic-icon');
 const stopIcon = document.getElementById('stop-icon');
@@ -41,12 +47,14 @@ const effortLabel = document.getElementById('effort-label');
 
 const EFFORT_STORAGE_KEY = 'reasoning_effort';
 const EFFORT_OPTIONS = {
-    low: { label: 'Low' },
-    medium: { label: 'Medium' },
-    xhigh: { label: 'Extra High' },
+    low: { label: 'Низкий' },
+    medium: { label: 'Средний' },
+    xhigh: { label: 'Максимум' },
 };
 let currentReasoningEffort = 'xhigh';
 let reasoningEffortEnabled = true;
+let audioEnabled = false;
+let activeStreamShell = null;
 
 function getSessionId() {
     if (!window.__assistantSessionId) {
@@ -165,13 +173,15 @@ async function playChunk(pcmBytes) {
 /**
  * Останавливает текущее воспроизведение, отменяет активный сетевой запрос и очищает очередь.
  */
+function abortActiveRequest() {
+    if (!currentAbortController) return;
+    try {
+        currentAbortController.abort();
+    } catch (_) {}
+}
+
 function stopPlayback() {
-    if (currentAbortController) {
-        try {
-            currentAbortController.abort();
-        } catch (_) {}
-        currentAbortController = null;
-    }
+    abortActiveRequest();
     activeSources.forEach(source => {
         try { source.stop(); } catch (_) {}
     });
@@ -328,6 +338,14 @@ async function processAudioBlob(blob) {
 
 // ===== Text Input =====
 
+function onComposerSubmit() {
+    if (currentUIState === 'processing') {
+        abortActiveRequest();
+        return;
+    }
+    sendText();
+}
+
 async function sendText() {
     const text = textInput.value.trim();
     if (!text || isProcessing) return;
@@ -337,63 +355,150 @@ async function sendText() {
     resizeTextInput();
     setUIState('processing');
 
-    // Перед отправкой нового запроса прерываем предыдущее воспроизведение
-    stopPlayback();
+    activeSources.forEach((source) => {
+        try { source.stop(); } catch (_) {}
+    });
+    activeSources = [];
+    nextStartTime = 0;
+    if (audioCtx) {
+        try { audioCtx.close(); } catch (_) {}
+        audioCtx = null;
+    }
     currentAbortController = new AbortController();
 
     try {
         await consumeProcessTextStream(text, currentAbortController.signal);
     } catch (err) {
-        if (err.name === 'AbortError') {
-            console.log('Fetch aborted.');
-            return;
-        }
+        if (err.name === 'AbortError') return;
         console.error('Send text error:', err);
-        addMessage('system', '⚠️ Ошибка соединения с сервером');
         setUIState('idle');
     }
 }
 
 /**
- * SSE: thinking / tool_call / tool_result / content / done / error
+ * SSE: thinking / tool_call / tool_result / content / content_rewind / done / error
  */
 async function consumeProcessTextStream(text, signal) {
     const myController = currentAbortController;
-    const response = await fetch('/process_text_stream', {
-        method: 'POST',
-        headers: withSessionHeaders({
-            'Content-Type': 'application/json',
-            Accept: 'text/event-stream',
-        }),
-        body: JSON.stringify(processTextPayload(text)),
-        signal,
-    });
-
-    if (!response.ok) {
-        let errMsg = 'Ошибка сервера';
-        try {
-            const errData = await response.json();
-            errMsg = errData.error || errMsg;
-        } catch (_) {}
-        addMessage('system', `⚠️ ${errMsg}`);
-        setUIState('idle');
-        return;
-    }
-
     const shell = createAssistantStreamShell();
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
+    startProcessTraceTimer(shell);
 
     const scheduleMarkdown = throttle(() => {
-        shell.answerEl.innerHTML = renderMarkdown(shell.answerText);
+        renderStreamingAnswer(shell, { streaming: true });
         scrollChatIfPinned();
     }, 50);
 
+    const handleEvent = (event, data) => {
+        if (shell.finished) return;
+
+        if (event === 'thinking') {
+            const delta = data.delta || '';
+            if (!delta) return;
+            ensureProcessTrace(shell);
+            ensureThinkingBlock(shell);
+            shell.thinkingText += delta;
+            shell.thinkingBody.textContent = shell.thinkingText;
+            shell.thinkingBody.scrollTop = shell.thinkingBody.scrollHeight;
+            if (shell.runningTools === 0) shell.tracePhase = 'think';
+            refreshProcessTraceLabel(shell);
+        } else if (event === 'tool_call') {
+            ensureProcessTrace(shell);
+            beginToolStep(shell);
+            shell.runningTools += 1;
+            shell.tracePhase = 'tool';
+            upsertToolCard(shell, data, 'running');
+            refreshProcessTraceLabel(shell);
+        } else if (event === 'tool_result') {
+            ensureProcessTrace(shell);
+            shell.runningTools = Math.max(0, shell.runningTools - 1);
+            if (shell.runningTools === 0) shell.tracePhase = 'think';
+            upsertToolCard(shell, data, data.ok === false ? 'error' : 'done');
+            refreshProcessTraceLabel(shell);
+        } else if (event === 'content') {
+            const delta = data.delta || '';
+            if (!delta) return;
+            shell.answerText += delta;
+            shell.answerEl.classList.add('streaming');
+            scheduleMarkdown();
+        } else if (event === 'content_rewind') {
+            const rewind = data.text || '';
+            if (rewind && shell.answerText.endsWith(rewind)) {
+                shell.answerText = shell.answerText.slice(0, -rewind.length);
+            } else if (rewind) {
+                const idx = shell.answerText.lastIndexOf(rewind);
+                if (idx !== -1) {
+                    shell.answerText =
+                        shell.answerText.slice(0, idx) +
+                        shell.answerText.slice(idx + rewind.length);
+                }
+            }
+            if (!shell.answerText) {
+                shell.answerEl.classList.remove('streaming');
+                shell.answerEl.innerHTML = '';
+            } else {
+                scheduleMarkdown();
+            }
+        } else if (event === 'graph_highlight') {
+            const runId = data.graph_run_id ? String(data.graph_run_id) : '';
+            if (!runId) return;
+            const tokens = Array.isArray(data.tokens)
+                ? data.tokens.map((t, i) => ({
+                      id: t.id || `ext_${i}`,
+                      text: String(t.text || t.edgeId || '').trim(),
+                      color: t.color || GRAPH_TOKEN_PALETTE[i % GRAPH_TOKEN_PALETTE.length],
+                      edgeId: t.edgeId || null,
+                  })).filter((t) => t.edgeId || t.text.length >= 2)
+                : [];
+            applyExternalGraphSpec(runId, {
+                tokens,
+                note: data.note || '',
+            });
+        } else if (event === 'done') {
+            finishStreamShell(shell, {
+                status: 'done',
+                finalContent: data.final_content,
+                graphMeta: graphMetaFromDone(data),
+            });
+            scrollChatIfPinned();
+        } else if (event === 'error') {
+            finishStreamShell(shell, {
+                status: 'error',
+                message: data.message || 'Ошибка стрима',
+            });
+        }
+    };
+
     try {
+        const response = await fetch('/process_text_stream', {
+            method: 'POST',
+            headers: withSessionHeaders({
+                'Content-Type': 'application/json',
+                Accept: 'text/event-stream',
+            }),
+            body: JSON.stringify(processTextPayload(text)),
+            signal,
+        });
+
+        if (!response.ok) {
+            let errMsg = 'Ошибка сервера';
+            try {
+                const errData = await response.json();
+                errMsg = errData.error || errMsg;
+            } catch (_) {}
+            finishStreamShell(shell, { status: 'error', message: errMsg });
+            return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
         while (true) {
             const { done, value } = await reader.read();
-            if (done) break;
+            if (done) {
+                buffer += decoder.decode();
+                break;
+            }
             buffer += decoder.decode(value, { stream: true });
 
             let sep;
@@ -402,87 +507,35 @@ async function consumeProcessTextStream(text, signal) {
                 buffer = buffer.slice(sep + 2);
                 const parsed = parseSseEvent(rawEvent);
                 if (!parsed) continue;
-
-                const { event, data } = parsed;
-
-                if (event === 'thinking') {
-                    const delta = data.delta || '';
-                    if (!delta) continue;
-                    ensureProcessTrace(shell);
-                    ensureThinkingBlock(shell);
-                    shell.thinkingText += delta;
-                    shell.thinkingBody.textContent = shell.thinkingText;
-                    shell.thinkingBody.scrollTop = shell.thinkingBody.scrollHeight;
-                    if (!shell.answerStarted) {
-                        setProcessTraceLabel(shell, 'Working…');
-                    }
-                } else if (event === 'tool_call') {
-                    ensureProcessTrace(shell);
-                    beginToolStep(shell);
-                    upsertToolCard(shell, data, 'running');
-                    if (!shell.answerStarted) {
-                        setProcessTraceLabel(shell, 'Working…');
-                    }
-                } else if (event === 'tool_result') {
-                    ensureProcessTrace(shell);
-                    upsertToolCard(
-                        shell,
-                        data,
-                        data.ok === false ? 'error' : 'done'
-                    );
-                } else if (event === 'content') {
-                    const delta = data.delta || '';
-                    if (!delta) continue;
-                    collapseProcessTraceForAnswer(shell);
-                    shell.answerText += delta;
-                    shell.answerEl.classList.add('streaming');
-                    scheduleMarkdown();
-                } else if (event === 'graph_highlight') {
-                    const runId = data.graph_run_id ? String(data.graph_run_id) : '';
-                    if (!runId) continue;
-                    const tokens = Array.isArray(data.tokens)
-                        ? data.tokens.map((t, i) => ({
-                              id: t.id || `ext_${i}`,
-                              text: String(t.text || t.edgeId || '').trim(),
-                              color: t.color || GRAPH_TOKEN_PALETTE[i % GRAPH_TOKEN_PALETTE.length],
-                              edgeId: t.edgeId || null,
-                          })).filter((t) => t.edgeId || t.text.length >= 2)
-                        : [];
-                    applyExternalGraphSpec(runId, {
-                        tokens,
-                        note: data.note || '',
-                    });
-                } else if (event === 'done') {
-                    shell.answerEl.classList.remove('streaming');
-                    if (shell.processTrace && !shell.answerStarted) {
-                        // No content streamed (e.g. empty) — still collapse with timer.
-                        collapseProcessTraceForAnswer(shell);
-                    } else if (shell.processTrace && shell.answerStarted) {
-                        // Refresh elapsed at end.
-                        const secs = Math.max(
-                            1,
-                            Math.round((Date.now() - shell.startedAt) / 1000)
-                        );
-                        setProcessTraceLabel(shell, `Worked for ${secs}s`);
-                    }
-                    if (data.final_content != null && data.final_content !== '') {
-                        shell.answerText = data.final_content;
-                    }
-                    shell.answerEl.innerHTML = renderMarkdown(shell.answerText);
-                    addCopyButton(shell.contentWrapper, shell.answerText);
-                    addGraphButton(shell.contentWrapper, graphMetaFromDone(data));
-                    scrollChatIfPinned();
-                } else if (event === 'error') {
-                    shell.answerEl.classList.remove('streaming');
-                    if (shell.processTrace) {
-                        collapseProcessTraceForAnswer(shell);
-                    }
-                    addMessage('system', `⚠️ ${data.message || 'Ошибка стрима'}`);
-                }
+                handleEvent(parsed.event, parsed.data);
             }
         }
+        if (buffer.trim()) {
+            const parsed = parseSseEvent(buffer);
+            if (parsed) handleEvent(parsed.event, parsed.data);
+        }
+        if (!shell.finished) {
+            finishStreamShell(shell, {
+                status: shell.answerText.trim() ? 'done' : 'error',
+                message: 'Поток оборвался',
+            });
+        }
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            if (!shell.finished) {
+                finishStreamShell(shell, { status: 'aborted' });
+            }
+            throw err;
+        }
+        if (!shell.finished) {
+            finishStreamShell(shell, {
+                status: 'error',
+                message: 'Ошибка соединения с сервером',
+            });
+        }
+        throw err;
     } finally {
-        shell.answerEl.classList.remove('streaming');
+        stopProcessTraceTimer(shell);
         if (currentAbortController === myController) {
             setUIState('idle');
             currentAbortController = null;
@@ -517,6 +570,15 @@ function scrollChatIfPinned() {
     }
 }
 
+function welcomeMarkup() {
+    return `
+                <div class="welcome-message">
+                    <div class="welcome-logo"><img src="icon.svg" alt="" width="40" height="40"></div>
+                    <h2>Чем я могу помочь?</h2>
+                    <p>${WELCOME_COPY}</p>
+                </div>`;
+}
+
 function createAssistantStreamShell() {
     const welcome = chatMessages.querySelector('.welcome-message');
     if (welcome) welcome.remove();
@@ -529,13 +591,13 @@ function createAssistantStreamShell() {
             <div class="message-header">
                 <span class="message-label">Ассистент</span>
             </div>
-            <div class="message-text markdown-body"></div>
+            <div class="message-text markdown-body" aria-live="polite"></div>
         </div>`;
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 
     const contentWrapper = div.querySelector('.message-content-wrapper');
-    return {
+    const shell = {
         root: div,
         contentWrapper,
         answerEl: contentWrapper.querySelector('.message-text'),
@@ -550,22 +612,33 @@ function createAssistantStreamShell() {
         processLabel: null,
         toolCards: {},
         startedAt: Date.now(),
-        answerStarted: false,
+        finished: false,
+        tracePhase: 'think',
+        traceDone: false,
+        userOpenedTrace: false,
+        timerId: null,
+        runningTools: 0,
     };
+    activeStreamShell = shell;
+    ensureProcessTrace(shell);
+    return shell;
 }
 
 function ensureProcessTrace(shell) {
     if (shell.processTrace) return;
     const details = document.createElement('details');
     details.className = 'process-trace';
-    // Collapsed by default; never force-open on new steps.
     details.open = false;
     details.innerHTML = `
         <summary class="process-trace-summary">
             <span class="chevron"></span>
-            <span class="process-trace-label">Working…</span>
+            <span class="process-trace-pulse" aria-hidden="true"></span>
+            <span class="process-trace-label">Думаю…</span>
         </summary>
         <div class="process-trace-body"></div>`;
+    details.addEventListener('toggle', () => {
+        if (details.open) shell.userOpenedTrace = true;
+    });
     shell.contentWrapper.insertBefore(details, shell.answerEl);
     shell.processTrace = details;
     shell.processBody = details.querySelector('.process-trace-body');
@@ -578,13 +651,144 @@ function setProcessTraceLabel(shell, text) {
     }
 }
 
-function collapseProcessTraceForAnswer(shell) {
-    if (!shell.processTrace || shell.answerStarted) return;
-    shell.answerStarted = true;
-    const secs = Math.max(1, Math.round((Date.now() - shell.startedAt) / 1000));
-    setProcessTraceLabel(shell, `Worked for ${secs}s`);
-    // Stay collapsed (or keep whatever the user chose).
-    shell.processTrace.open = false;
+function elapsedSeconds(shell) {
+    return Math.max(0, Math.round((Date.now() - shell.startedAt) / 1000));
+}
+
+function refreshProcessTraceLabel(shell) {
+    if (!shell.processLabel || shell.traceDone) return;
+    const secs = elapsedSeconds(shell);
+    const verb =
+        shell.runningTools > 0 || shell.tracePhase === 'tool'
+            ? 'Ищу в графе'
+            : 'Думаю';
+    shell.processLabel.textContent = secs > 0 ? `${verb} · ${secs} с` : `${verb}…`;
+}
+
+function startProcessTraceTimer(shell) {
+    refreshProcessTraceLabel(shell);
+    if (shell.timerId) return;
+    shell.timerId = setInterval(() => refreshProcessTraceLabel(shell), 1000);
+}
+
+function stopProcessTraceTimer(shell) {
+    if (shell.timerId) {
+        clearInterval(shell.timerId);
+        shell.timerId = null;
+    }
+}
+
+function densifyCitations(text) {
+    const sessionToDisplay = new Map();
+    const displayId = (sid) => {
+        if (!sessionToDisplay.has(sid)) {
+            sessionToDisplay.set(sid, sessionToDisplay.size + 1);
+        }
+        return sessionToDisplay.get(sid);
+    };
+    let rendered = String(text || '').replace(
+        /\(\s*source\s*:\s*(\d+(?:\s*,\s*\d+)*)\s*\)/gi,
+        (_, ids) =>
+            ids
+                .split(',')
+                .map((part) => {
+                    const n = parseInt(part.trim(), 10);
+                    return Number.isFinite(n) ? `[${displayId(n)}]` : '';
+                })
+                .join('')
+    );
+    rendered = rendered.replace(/(?<!\w)source\s*:?\s*(\d+)(?!\w)/gi, (_, n) => {
+        const sid = parseInt(n, 10);
+        return Number.isFinite(sid) ? `[${displayId(sid)}]` : '';
+    });
+    return rendered;
+}
+
+function holdIncompleteFence(text) {
+    const src = String(text || '');
+    let count = 0;
+    let last = -1;
+    let i = 0;
+    while ((i = src.indexOf('```', i)) !== -1) {
+        count += 1;
+        last = i;
+        i += 3;
+    }
+    if (count % 2 === 1 && last >= 0) return src.slice(0, last);
+    return src;
+}
+
+function renderStreamingAnswer(shell, { streaming = false, cited = false } = {}) {
+    let text = shell.answerText || '';
+    if (!cited) {
+        text = holdIncompleteFence(densifyCitations(text));
+    }
+    shell.answerEl.innerHTML = text ? renderMarkdown(text) : '';
+    if (streaming && shell.answerText) {
+        const caret = document.createElement('span');
+        caret.className = 'stream-caret';
+        caret.setAttribute('aria-hidden', 'true');
+        shell.answerEl.appendChild(caret);
+    }
+}
+
+function finishStreamShell(shell, { status, message, finalContent, graphMeta } = {}) {
+    if (!shell || shell.finished) return;
+    shell.finished = true;
+    stopProcessTraceTimer(shell);
+    shell.answerEl.classList.remove('streaming');
+    const secs = Math.max(1, elapsedSeconds(shell));
+
+    if (shell.processTrace) {
+        const hasDetails = shell.processBody && shell.processBody.children.length > 0;
+        if (status === 'done' && !hasDetails) {
+            shell.processTrace.remove();
+            shell.processTrace = null;
+        } else {
+            shell.traceDone = true;
+            shell.processTrace.classList.toggle('is-done', status === 'done');
+            shell.processTrace.classList.toggle('is-error', status === 'error');
+            shell.processTrace.classList.toggle('is-aborted', status === 'aborted');
+            if (status === 'done') {
+                setProcessTraceLabel(shell, `Готово за ${secs} с`);
+            } else if (status === 'aborted') {
+                setProcessTraceLabel(shell, `Остановлено · ${secs} с`);
+            } else {
+                setProcessTraceLabel(shell, `Ошибка · ${secs} с`);
+            }
+            if (!shell.userOpenedTrace) shell.processTrace.open = false;
+        }
+    }
+
+    if (status === 'aborted') {
+        if (!shell.answerText.trim()) {
+            shell.answerEl.innerHTML = '<p class="stream-status-note">Остановлено</p>';
+        } else {
+            renderStreamingAnswer(shell, { streaming: false });
+            addCopyButton(shell.contentWrapper, shell.answerText);
+        }
+    } else if (status === 'error') {
+        const note = message || 'Ошибка стрима';
+        if (!shell.answerText.trim()) {
+            shell.answerEl.innerHTML = `<p class="stream-status-note stream-status-error">${escapeHtml(note)}</p>`;
+        } else {
+            renderStreamingAnswer(shell, { streaming: false });
+            addCopyButton(shell.contentWrapper, shell.answerText);
+            const p = document.createElement('p');
+            p.className = 'stream-status-note stream-status-error';
+            p.textContent = note;
+            shell.contentWrapper.appendChild(p);
+        }
+    } else {
+        if (finalContent != null && finalContent !== '') {
+            shell.answerText = finalContent;
+        }
+        renderStreamingAnswer(shell, { streaming: false, cited: true });
+        addCopyButton(shell.contentWrapper, shell.answerText);
+        addGraphButton(shell.contentWrapper, graphMeta);
+    }
+
+    if (activeStreamShell === shell) activeStreamShell = null;
 }
 
 /** After a tool step, the next reasoning goes into a fresh Thinking block. */
@@ -607,7 +811,9 @@ function ensureThinkingBlock(shell) {
     details.className = 'stream-thinking';
     details.open = true;
     const label =
-        shell.thinkingCount === 1 ? 'Thinking' : `Thinking ${shell.thinkingCount}`;
+        shell.thinkingCount === 1
+            ? 'Рассуждение'
+            : `Рассуждение ${shell.thinkingCount}`;
     details.innerHTML = `
         <summary><span class="chevron"></span><span>${label}</span></summary>
         <pre class="stream-thinking-body"></pre>`;
@@ -624,11 +830,10 @@ function upsertToolCard(shell, data, status) {
 
     let card = shell.toolCards[id];
     if (!card) {
-        // Close current thinking; next think after this tool is a new block.
         beginToolStep(shell);
         card = document.createElement('details');
         card.className = 'tool-card';
-        card.open = true; // expand while running
+        card.open = false;
         card.dataset.toolId = id;
         card.innerHTML = `
             <summary class="tool-card-header">
@@ -646,11 +851,12 @@ function upsertToolCard(shell, data, status) {
         shell.toolCards[id] = card;
     }
 
-    card.querySelector('.tool-card-name').textContent = data.name || id;
+    const displayName = TOOL_LABELS[data.name] || data.name || id;
+    card.querySelector('.tool-card-name').textContent = displayName;
     const statusEl = card.querySelector('.tool-card-status');
     statusEl.className = `tool-card-status ${status}`;
     statusEl.textContent =
-        status === 'running' ? 'running' : status === 'error' ? 'error' : 'done';
+        status === 'running' ? 'идёт' : status === 'error' ? 'ошибка' : 'готово';
 
     if (data.arguments !== undefined) {
         const argsEl = card.querySelector('.tool-card-args');
@@ -668,8 +874,7 @@ function upsertToolCard(shell, data, status) {
         resultEl.scrollTop = 0;
     }
 
-    // Collapse when finished so the trace stays compact; user can re-open.
-    if (status === 'done' || status === 'error') {
+    if (status === 'running') {
         card.open = false;
     }
 }
@@ -841,15 +1046,26 @@ async function fetchGraphViz(runId) {
 function addGraphButton(contentWrapper, graphMeta) {
     if (!graphMeta || !graphMeta.runId) return;
 
+    const bar = ensureMessageToolbar(contentWrapper);
+    bar.querySelectorAll('.show-graph-btn').forEach((el) => el.remove());
+
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'show-graph-btn';
     btn.dataset.graphRunId = graphMeta.runId;
+    const count = graphMeta.chainCount > 1 ? ` (${graphMeta.chainCount})` : '';
     btn.innerHTML = `
         <span class="spinner-small" style="display:none"></span>
-        <span class="show-graph-label">Показать граф${graphMeta.chainCount > 1 ? ` (${graphMeta.chainCount})` : ''}</span>`;
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="6.5" cy="7" r="2.4"></circle>
+            <circle cx="17.5" cy="6.5" r="2.4"></circle>
+            <circle cx="8" cy="17.5" r="2.4"></circle>
+            <circle cx="18" cy="16.5" r="2.4"></circle>
+            <path d="M8.7 8.4 16 7.6M8.2 15.4 7.4 9.4M16.2 8.7 16.8 14.2M10.3 17.2 15.7 16.6"></path>
+        </svg>
+        <span class="show-graph-label">Показать граф${count}</span>`;
     btn.addEventListener('click', () => openGraphModal(graphMeta, btn));
-    contentWrapper.appendChild(btn);
+    bar.appendChild(btn);
 }
 
 function normalizeQuery(s) {
@@ -1988,7 +2204,7 @@ function renderMarkdown(text) {
     }
     const raw = marked.parse(text, { breaks: true, gfm: true });
     const html = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(raw) : raw;
-    return wrapMarkdownTables(html);
+    return wrapSourcesBlock(wrapMarkdownTables(html));
 }
 
 function wrapMarkdownTables(html) {
@@ -2006,7 +2222,39 @@ function wrapMarkdownTables(html) {
     return holder.innerHTML;
 }
 
+function wrapSourcesBlock(html) {
+    const holder = document.createElement('div');
+    holder.innerHTML = html;
+    const headings = [...holder.querySelectorAll('h3')];
+    const src = headings.find((h) => h.textContent.trim() === 'Источники');
+    if (!src) return holder.innerHTML;
+    const wrap = document.createElement('div');
+    wrap.className = 'md-sources';
+    src.parentNode.insertBefore(wrap, src);
+    wrap.appendChild(src);
+    let next = wrap.nextSibling;
+    while (next) {
+        const tag = next.nodeType === 1 ? next.tagName : '';
+        if (tag === 'H1' || tag === 'H2' || tag === 'H3') break;
+        const keep = next.nextSibling;
+        wrap.appendChild(next);
+        next = keep;
+    }
+    return holder.innerHTML;
+}
+
+function ensureMessageToolbar(wrapper) {
+    let bar = wrapper.querySelector('.message-toolbar');
+    if (bar) return bar;
+    bar = document.createElement('div');
+    bar.className = 'message-toolbar';
+    wrapper.appendChild(bar);
+    return bar;
+}
+
 function addCopyButton(wrapper, plainText) {
+    const bar = ensureMessageToolbar(wrapper);
+    bar.querySelectorAll('.copy-btn').forEach((el) => el.remove());
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'copy-btn';
@@ -2044,7 +2292,7 @@ function addCopyButton(wrapper, plainText) {
         }
     });
 
-    wrapper.appendChild(btn);
+    bar.appendChild(btn);
 }
 
 function addMessage(role, text, graphMeta = null) {
@@ -2107,12 +2355,11 @@ function removeThinking() {
 function setUIState(state) {
     currentUIState = state;
     isProcessing = state === 'processing';
+    const stopping = state === 'processing';
 
-    // Mic button
     micBtn.classList.toggle('recording', state === 'recording');
-    micBtn.disabled = state === 'processing';
+    micBtn.disabled = stopping || !audioEnabled;
 
-    // Управление иконками: микрофон, квадрат (стоп), пауза
     if (state === 'recording') {
         micIcon.style.display = 'none';
         stopIcon.style.display = 'block';
@@ -2122,22 +2369,24 @@ function setUIState(state) {
         stopIcon.style.display = 'none';
         pauseIcon.style.display = 'block';
     } else {
-        // idle или processing
         micIcon.style.display = 'block';
         stopIcon.style.display = 'none';
         pauseIcon.style.display = 'none';
     }
 
-    // Text input
-    textInput.disabled = isProcessing;
-    sendBtn.disabled = isProcessing;
+    textInput.disabled = false;
+    sendBtn.disabled = false;
+    sendBtn.classList.toggle('stopping', stopping);
+    if (sendIcon) sendIcon.style.display = stopping ? 'none' : 'block';
+    if (stopGenIcon) stopGenIcon.style.display = stopping ? 'block' : 'none';
+    sendBtn.title = stopping ? 'Остановить' : 'Отправить';
+    sendBtn.setAttribute('aria-label', stopping ? 'Остановить' : 'Отправить');
 
-    // Status text
     const statusMap = {
         idle: 'Подключено',
-        recording: '🔴 Запись...',
-        processing: '⏳ Анализ...',
-        playing: '🔊 Озвучивание...',
+        recording: 'Запись…',
+        processing: 'Анализ…',
+        playing: 'Озвучивание…',
     };
     statusText.textContent = statusMap[state] || 'Подключено';
 }
@@ -2176,9 +2425,12 @@ async function checkHealth() {
 // ===== Clear Context / Reset History =====
 
 async function clearHistory() {
-    if (isProcessing) return;
-
-    // Останавливаем проигрывание и прерываем текущий запрос
+    if (activeStreamShell) {
+        activeStreamShell.finished = true;
+        stopProcessTraceTimer(activeStreamShell);
+        activeStreamShell = null;
+    }
+    abortActiveRequest();
     stopPlayback();
 
     try {
@@ -2188,13 +2440,7 @@ async function clearHistory() {
         });
 
         if (response.ok) {
-            // Очищаем историю на экране и восстанавливаем приветственный экран
-            chatMessages.innerHTML = `
-                <div class="welcome-message">
-                    <div class="welcome-logo"><img src="icon.svg" alt="" width="40" height="40"></div>
-                    <h2>Чем я могу помочь?</h2>
-                    <p>Задайте вопрос голосом или текстом. Я проанализирую базу знаний Neo4j и предоставлю структурированный ответ с голосовой озвучкой.</p>
-                </div>`;
+            chatMessages.innerHTML = welcomeMarkup();
             setUIState('idle');
         } else {
             addMessage('system', '⚠️ Не удалось сбросить историю на сервере.');
@@ -2270,6 +2516,7 @@ async function initReasoningEffort() {
         if (resp.ok) {
             const data = await resp.json();
             thinkEnabled = data.think !== false;
+            audioEnabled = data.audio_enabled === true;
             if (data.reasoning_effort && EFFORT_OPTIONS[data.reasoning_effort]) {
                 serverDefault = data.reasoning_effort;
             }
@@ -2280,6 +2527,9 @@ async function initReasoningEffort() {
     if (effortPicker) {
         effortPicker.hidden = !thinkEnabled;
     }
+    if (micBtn) {
+        micBtn.hidden = !audioEnabled;
+    }
     setReasoningEffort(stored || serverDefault, false);
 }
 
@@ -2287,7 +2537,7 @@ async function initReasoningEffort() {
 
 // Подключение кнопок управления микрофоном и текстом
 micBtn.addEventListener('click', toggleMic);
-sendBtn.addEventListener('click', sendText);
+sendBtn.addEventListener('click', onComposerSubmit);
 clearBtn.addEventListener('click', clearHistory);
 effortBtn.addEventListener('click', (e) => {
     e.stopPropagation();

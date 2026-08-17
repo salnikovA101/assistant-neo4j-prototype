@@ -348,6 +348,8 @@ class BaseLLMProvider(ABC):
                 content_acc = ""
                 reasoning_parts: List[str] = []
                 usage_holder: Any = None
+                yielded_content = ""
+                saw_tool_deltas = False
 
                 stream = await self._create_chat_stream(kwargs)
                 async for chunk in stream:
@@ -359,12 +361,28 @@ class BaseLLMProvider(ABC):
                     if norm.thinking:
                         reasoning_parts.append(norm.thinking)
                         yield StreamEvent("thinking", {"delta": norm.thinking})
+                    if norm.tool_call_deltas:
+                        if not saw_tool_deltas and yielded_content:
+                            joined = "".join(final_content_parts)
+                            if joined.endswith(yielded_content):
+                                rest = joined[: -len(yielded_content)]
+                                final_content_parts = [rest] if rest else []
+                            else:
+                                final_content_parts = [
+                                    joined.replace(yielded_content, "", 1)
+                                ]
+                            yield StreamEvent(
+                                "content_rewind", {"text": yielded_content}
+                            )
+                            yielded_content = ""
+                        saw_tool_deltas = True
+                        assembler.push(norm.tool_call_deltas)
                     if norm.content:
                         content_acc += norm.content
-                        final_content_parts.append(norm.content)
-                        yield StreamEvent("content", {"delta": norm.content})
-                    if norm.tool_call_deltas:
-                        assembler.push(norm.tool_call_deltas)
+                        if not saw_tool_deltas:
+                            final_content_parts.append(norm.content)
+                            yielded_content += norm.content
+                            yield StreamEvent("content", {"delta": norm.content})
 
                 # Flush any held content from the think-tag splitter.
                 flush_think, flush_content = splitter.flush()
@@ -373,8 +391,10 @@ class BaseLLMProvider(ABC):
                     yield StreamEvent("thinking", {"delta": flush_think})
                 if flush_content:
                     content_acc += flush_content
-                    final_content_parts.append(flush_content)
-                    yield StreamEvent("content", {"delta": flush_content})
+                    if not saw_tool_deltas:
+                        final_content_parts.append(flush_content)
+                        yielded_content += flush_content
+                        yield StreamEvent("content", {"delta": flush_content})
 
                 self._log_stream_usage(label, usage_holder, reasoning_parts)
 
@@ -393,20 +413,18 @@ class BaseLLMProvider(ABC):
                 label = f"turn{turns}"
                 logger.debug(f"Tool loop turn {turns}/{max_turns}")
 
-                # Replay assistant turn (with reasoning) then execute tools.
-                # Content emitted during a tool-calling turn is usually empty;
-                # do not treat it as final answer — drop from final_content_parts
-                # for this turn's content only (already appended). Revert those
-                # tokens from the user-facing final answer.
-                if content_acc:
-                    # Remove this turn's content from final answer assembly:
-                    # tool-call turns should not pollute the final reply.
+                # Content from a tool-calling turn is for replay only. Speculative
+                # tokens were rewound when tool deltas arrived; this is a fallback
+                # if the assembler found calls without streaming those deltas.
+                if yielded_content:
                     joined = "".join(final_content_parts)
-                    if joined.endswith(content_acc):
-                        final_content_parts = [joined[: -len(content_acc)]] if joined[: -len(content_acc)] else []
+                    if joined.endswith(yielded_content):
+                        rest = joined[: -len(yielded_content)]
+                        final_content_parts = [rest] if rest else []
                     else:
-                        # Fallback: rebuild without last content_acc occurrence.
-                        final_content_parts = [joined.replace(content_acc, "", 1)]
+                        final_content_parts = [joined.replace(yielded_content, "", 1)]
+                    yield StreamEvent("content_rewind", {"text": yielded_content})
+                    yielded_content = ""
 
                 messages.append(
                     build_assistant_replay(

@@ -270,6 +270,7 @@ async def ui_config(request: Request):
         "think": bool(profile.think) and supports_levels,
         "reasoning_effort": default_effort,
         "reasoning_effort_options": list(UI_THINK_EFFORTS),
+        "audio_enabled": bool(pipeline.config.audio_enabled),
     }
 
 

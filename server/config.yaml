@@ -62,7 +62,7 @@ llm:
       presence_penalty: 0.0
       repetition_penalty: 1.0
       max_output_tokens: 32768
-      max_turns: 2
+      max_turns: 3
       think: true
       think_effort: "xhigh"
       preserve_thinking: true
@@ -82,8 +82,11 @@ llm:
       provider: "openai"
       model: "gemma4:31b-cloud"
       base_url: "https://ollama.com/v1"
-      temperature: 0.6
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 64
       max_output_tokens: 16384
-      max_turns: 2
+      max_turns: 3
       think: true
       think_effort: "high"
+      preserve_thinking: true

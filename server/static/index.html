@@ -41,7 +41,7 @@
                 <div class="welcome-message">
                     <div class="welcome-logo"><img src="icon.svg" alt="" width="40" height="40"></div>
                     <h2>Чем я могу помочь?</h2>
-                    <p>Задайте вопрос голосом или текстом. Я проанализирую базу знаний Neo4j и предоставлю структурированный ответ с голосовой озвучкой.</p>
+                    <p>Задайте вопрос по базе знаний Neo4j — отвечу с опорой на граф и источники.</p>
                 </div>
             </main>
 
@@ -50,7 +50,7 @@
                 <div class="input-container">
                     <div class="input-wrapper">
                         <!-- Mic / Stop / Pause button inside wrapper -->
-                        <button id="mic-btn" type="button" title="Голосовой ввод" aria-label="Микрофон">
+                        <button id="mic-btn" type="button" hidden title="Голосовой ввод" aria-label="Микрофон">
                             <!-- Mic Icon -->
                             <svg id="mic-icon" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
@@ -83,7 +83,7 @@
                                     <path d="M7.7 8.7L5.6 6.6"></path>
                                     <circle cx="12" cy="12" r="3.2"></circle>
                                 </svg>
-                                <span id="effort-label">Extra High</span>
+                                <span id="effort-label">Максимум</span>
                                 <svg class="effort-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                     <polyline points="6 9 12 15 18 9"></polyline>
                                 </svg>
@@ -93,22 +93,22 @@
                                 <button type="button" class="effort-option" role="option" data-effort="low" aria-selected="false">
                                     <span class="effort-option-check" aria-hidden="true"></span>
                                     <span class="effort-option-text">
-                                        <span class="effort-option-name">Low</span>
+                                        <span class="effort-option-name">Низкий</span>
                                         <span class="effort-option-hint">быстрее</span>
                                     </span>
                                 </button>
                                 <button type="button" class="effort-option" role="option" data-effort="medium" aria-selected="false">
                                     <span class="effort-option-check" aria-hidden="true"></span>
                                     <span class="effort-option-text">
-                                        <span class="effort-option-name">Medium</span>
+                                        <span class="effort-option-name">Средний</span>
                                         <span class="effort-option-hint">баланс</span>
                                     </span>
                                 </button>
                                 <button type="button" class="effort-option" role="option" data-effort="xhigh" aria-selected="true">
                                     <span class="effort-option-check" aria-hidden="true"></span>
                                     <span class="effort-option-text">
-                                        <span class="effort-option-name">Extra High</span>
-                                        <span class="effort-option-hint">максимум</span>
+                                        <span class="effort-option-name">Максимум</span>
+                                        <span class="effort-option-hint">глубже</span>
                                     </span>
                                 </button>
                             </div>
@@ -116,8 +116,11 @@
 
                         <!-- Send button -->
                         <button id="send-btn" type="button" title="Отправить" aria-label="Отправить">
-                            <svg viewBox="0 0 24 24" fill="currentColor">
+                            <svg id="send-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                                 <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                            </svg>
+                            <svg id="stop-gen-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="display:none">
+                                <rect x="6" y="6" width="12" height="12" rx="2"/>
                             </svg>
                         </button>
                     </div>
@@ -127,8 +130,8 @@
     </div>
 
     <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

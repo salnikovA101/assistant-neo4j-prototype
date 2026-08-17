@@ -106,6 +106,16 @@ def test_preview_truncates():
     assert len(preview_tool_result("x" * 20, limit=10)) == 10
 
 
+def test_content_rewind_sse_serializes():
+    from server.llm.stream_events import StreamEvent
+
+    event = StreamEvent("content_rewind", {"text": "Let me look."})
+    sse = event.to_sse()
+    assert sse.startswith("event: content_rewind\n")
+    assert '"text": "Let me look."' in sse
+    assert sse.endswith("\n\n")
+
+
 def test_graph_highlight_sse_serializes():
     from server.llm.stream_events import StreamEvent
 
