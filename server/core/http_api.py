@@ -16,6 +16,7 @@ CORS_ORIGIN_RE = r"https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 class TextProcessBody(BaseModel):
     text: str
     reasoning_effort: Optional[str] = None
+    search_depth: Optional[str] = None
 
 
 class GraphVizBody(BaseModel):

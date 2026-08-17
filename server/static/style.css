@@ -1740,7 +1740,8 @@ body.graph-modal-open {
         padding: 0 16px 16px;
     }
 
-    #effort-label {
+    #effort-label,
+    #depth-label {
         display: none;
     }
 

@@ -70,6 +70,43 @@
                         <!-- Input field -->
                         <textarea id="text-input" rows="1" placeholder="Спросить Neo4j Assistant..." autocomplete="off"></textarea>
 
+                        <div class="effort-picker" id="depth-picker">
+                            <button type="button" id="depth-btn" class="effort-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="depth-menu" title="Глубина поиска">
+                                <svg class="effort-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <circle cx="11" cy="11" r="7"></circle>
+                                    <path d="M20 20l-4.3-4.3"></path>
+                                </svg>
+                                <span id="depth-label">Обычно</span>
+                                <svg class="effort-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                            </button>
+                            <div class="effort-menu" id="depth-menu" hidden role="listbox" aria-labelledby="depth-btn">
+                                <div class="effort-menu-title">Глубина поиска</div>
+                                <button type="button" class="effort-option" role="option" data-depth="low" aria-selected="false">
+                                    <span class="effort-option-check" aria-hidden="true"></span>
+                                    <span class="effort-option-text">
+                                        <span class="effort-option-name">Узко</span>
+                                        <span class="effort-option-hint">точный факт</span>
+                                    </span>
+                                </button>
+                                <button type="button" class="effort-option" role="option" data-depth="medium" aria-selected="true">
+                                    <span class="effort-option-check" aria-hidden="true"></span>
+                                    <span class="effort-option-text">
+                                        <span class="effort-option-name">Обычно</span>
+                                        <span class="effort-option-hint">баланс</span>
+                                    </span>
+                                </button>
+                                <button type="button" class="effort-option" role="option" data-depth="high" aria-selected="false">
+                                    <span class="effort-option-check" aria-hidden="true"></span>
+                                    <span class="effort-option-text">
+                                        <span class="effort-option-name">Широко</span>
+                                        <span class="effort-option-hint">перечень, сравнение</span>
+                                    </span>
+                                </button>
+                            </div>
+                        </div>
+
                         <div class="effort-picker" id="effort-picker">
                             <button type="button" id="effort-btn" class="effort-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="effort-menu" title="Глубина рассуждения">
                                 <svg class="effort-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

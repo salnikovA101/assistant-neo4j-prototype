@@ -3,7 +3,15 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Iterable
+
+# Shown instead of silently deleting a citation the session never registered:
+# an unsupported claim must stay visible, not lose its marker.
+UNKNOWN_CITATION_MARKER = "[?]"
+
+# A line long enough to carry a claim; used only for the uncited-claims metric.
+_CLAIM_LINE_MIN_CHARS = 40
 
 
 class SourceRegistry:
@@ -55,6 +63,51 @@ def session_source_ids_in_text(text: str) -> list[int]:
     """Unique session source ids found in text, sorted."""
     found = {int(x) for x in _SOURCE_ID_RE.findall(text or "")}
     return sorted(found)
+
+
+@dataclass
+class CitationStats:
+    """Groundedness signal for one answer, logged per turn."""
+
+    known: int = 0
+    unknown: int = 0
+    uncited_claim_lines: int = 0
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "known": self.known,
+            "unknown": self.unknown,
+            "uncited_claim_lines": self.uncited_claim_lines,
+        }
+
+
+def citation_stats(text: str, registry: SourceRegistry) -> CitationStats:
+    """
+    Count resolvable and invented citations, plus claim-sized lines with none.
+
+    `uncited_claim_lines` is a proxy: body lines of at least
+    `_CLAIM_LINE_MIN_CHARS` characters that carry no `source:` marker,
+    excluding headings and table rules.
+    """
+    raw = text or ""
+    stats = CitationStats()
+    for sid in _SOURCE_ID_RE.findall(raw):
+        if registry.resolve(int(sid)) is None:
+            stats.unknown += 1
+        else:
+            stats.known += 1
+
+    body = _ISTOCHNIKI_SECTION_RE.sub("", raw)
+    for line in body.splitlines():
+        stripped = line.strip()
+        if len(stripped) < _CLAIM_LINE_MIN_CHARS:
+            continue
+        if stripped.startswith("#") or set(stripped) <= set("|-: "):
+            continue
+        if _SOURCE_ID_RE.search(stripped):
+            continue
+        stats.uncited_claim_lines += 1
+    return stats
 
 
 def format_source_id_list(ids: Iterable[int]) -> str:
@@ -212,10 +265,8 @@ def render_citations(text: str, registry: SourceRegistry) -> str:
         markers: list[str] = []
         for sid in ids:
             did = _display_id(sid)
-            if did is None:
-                continue
-            markers.append(f"[{did}]")
-        return "".join(markers)
+            markers.append(UNKNOWN_CITATION_MARKER if did is None else f"[{did}]")
+        return "".join(dict.fromkeys(markers))
 
     rendered = _SOURCE_GROUP_RE.sub(_repl_group, cleaned)
 
@@ -223,7 +274,7 @@ def render_citations(text: str, registry: SourceRegistry) -> str:
         sid = int(match.group(1))
         did = _display_id(sid)
         if did is None:
-            return ""
+            return UNKNOWN_CITATION_MARKER
         return f"[{did}]"
 
     rendered = re.sub(

@@ -7,6 +7,9 @@ the hub advances.
 
 Segment at hub H:  entry(→H) [spine], ray1..rayN [fans@H], exit(H→) [spine].
 Pure through walks have no fans.
+
+Print tags (`linger_hubs`): same segments, but exit stays tagged @H so the
+tour reads "still at H" until the shared vertex changes.
 """
 
 from __future__ import annotations
@@ -19,6 +22,10 @@ def _shared_id(a: EdgeRecord, b: EdgeRecord) -> str:
     return next(iter(shared)) if len(shared) == 1 else ""
 
 
+def _incident(e: EdgeRecord, hub_id: str) -> bool:
+    return bool(hub_id) and hub_id in {e.start_id, e.end_id}
+
+
 def _hub_name(hub_id: str, edges: list[EdgeRecord]) -> str:
     for e in edges:
         if e.start_id == hub_id and e.start_name:
@@ -26,6 +33,81 @@ def _hub_name(hub_id: str, edges: list[EdgeRecord]) -> str:
         if e.end_id == hub_id and e.end_name:
             return format_node_ref(e.end_label, e.end_name, hub_id)
     return hub_id
+
+
+def hub_display_name(
+    hub_id: str,
+    edges: list[EdgeRecord],
+    names: dict[str, str] | None = None,
+) -> str:
+    """Prefer reshape `fan_hub_names`, else `Label: name` from an incident edge."""
+    if names:
+        got = (names.get(hub_id) or "").strip()
+        if got:
+            return got
+    return _hub_name(hub_id, edges)
+
+
+def linger_hubs(path_edges: list[EdgeRecord]) -> list[str]:
+    """Hub id to prefix `@Hub` on each walk edge, or `""`.
+
+    Star segment (≥3 edges sharing H): entry unmarked; rays **and** exit tagged
+    H. Pure through pairs (bamboo) stay unmarked.
+    """
+    n = len(path_edges)
+    tags = [""] * n
+    if n < 3:
+        return tags
+    i = 0
+    while i < n - 1:
+        hub = _shared_id(path_edges[i], path_edges[i + 1])
+        if not hub:
+            i += 1
+            continue
+        j = i + 1
+        while j + 1 < n and _shared_id(path_edges[j], path_edges[j + 1]) == hub:
+            j += 1
+        if (j - i + 1) >= 3:
+            for idx in range(i + 1, j + 1):
+                tags[idx] = hub
+        i = j
+    return tags
+
+
+def reconstruct_walk(
+    spine: list[EdgeRecord],
+    fans: dict[str, list[EdgeRecord]],
+) -> list[EdgeRecord]:
+    """Inverse of reshape: insert each hub's rays between spine entry and exit."""
+    if not spine:
+        out: list[EdgeRecord] = []
+        for flist in fans.values():
+            out.extend(flist)
+        return out
+
+    placed: set[str] = set()
+    out = [spine[0]]
+    for i in range(len(spine) - 1):
+        hub = _shared_id(spine[i], spine[i + 1])
+        if hub and hub in fans and hub not in placed:
+            out.extend(fans[hub])
+            placed.add(hub)
+        out.append(spine[i + 1])
+
+    for hub, flist in fans.items():
+        if not flist or hub in placed:
+            continue
+        insert_at: int | None = None
+        for idx, e in enumerate(out):
+            if _incident(e, hub):
+                insert_at = idx + 1
+                break
+        if insert_at is None:
+            out.extend(flist)
+        else:
+            out[insert_at:insert_at] = flist
+        placed.add(hub)
+    return out
 
 
 def reshape_star_walk(

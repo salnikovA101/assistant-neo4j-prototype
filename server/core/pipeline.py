@@ -128,6 +128,7 @@ class ServerPipeline:
         text: str,
         think_effort: Optional[str] = None,
         session_id: Optional[str] = None,
+        search_depth: Optional[str] = None,
     ) -> str:
         """
         Обрабатывает текстовый ввод: LLM (без STT).
@@ -136,6 +137,7 @@ class ServerPipeline:
             text: Текст от пользователя.
             think_effort: Optional per-request reasoning_effort override.
             session_id: Per-tab conversation id (X-Session-Id).
+            search_depth: UI-selected ask_subgraph depth (low|medium|high).
 
         Returns:
             Ответ LLM.
@@ -146,12 +148,21 @@ class ServerPipeline:
                 span.set_attribute(OI_INPUT_VALUE, text)
                 if think_effort:
                     span.set_attribute("think_effort", think_effort)
-                logger.info("Текст: %s effort=%s", text, think_effort or "-")
+                if search_depth:
+                    span.set_attribute("search_depth", search_depth)
+                logger.info(
+                    "Текст: %s effort=%s depth=%s",
+                    text,
+                    think_effort or "-",
+                    search_depth or "-",
+                )
 
                 try:
                     answer = await asyncio.wait_for(
                         self.llm.generate_response(
-                            user_text=text, think_effort=think_effort
+                            user_text=text,
+                            think_effort=think_effort,
+                            search_depth=search_depth,
                         ),
                         timeout=self.config.server.llm_timeout,
                     )
@@ -169,6 +180,7 @@ class ServerPipeline:
         request: Optional[Request] = None,
         think_effort: Optional[str] = None,
         session_id: Optional[str] = None,
+        search_depth: Optional[str] = None,
     ) -> AsyncGenerator[StreamEvent, None]:
         """
         Stream LLM events (thinking / tools / content / done) for text input.
@@ -179,10 +191,13 @@ class ServerPipeline:
                 span.set_attribute(OI_INPUT_VALUE, text)
                 if think_effort:
                     span.set_attribute("think_effort", think_effort)
+                if search_depth:
+                    span.set_attribute("search_depth", search_depth)
                 logger.info(
-                    "Текст (stream): %s effort=%s",
+                    "Текст (stream): %s effort=%s depth=%s",
                     text,
                     think_effort or "-",
+                    search_depth or "-",
                 )
 
                 final_content = ""
@@ -190,7 +205,9 @@ class ServerPipeline:
 
                 try:
                     async for event in self.llm.generate_response_stream(
-                        user_text=text, think_effort=think_effort
+                        user_text=text,
+                        think_effort=think_effort,
+                        search_depth=search_depth,
                     ):
                         if request and await request.is_disconnected():
                             logger.info("Клиент отключился — остановка LLM stream")

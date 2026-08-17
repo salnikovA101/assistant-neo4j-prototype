@@ -69,9 +69,22 @@
 Ядро извлечения данных: `server/tools/` + `server/algorithm/`.
 
 ### 3.1 `ask_subgraph` — поиск цепочек evidence
-Оркестратор вызывает tool `ask_subgraph` с английскими subquestions и effort.
-Пайплайн V6 (`server/algorithm/pipeline.py`) поднимает accepted chains (UNIT-блоки
-со SPINE/FANS, `source_file`, `confidence`). Детали стадий — в `server/algorithm/README.md`.
+Оркестратор вызывает tool `ask_subgraph` с английскими subquestions. Пайплайн V6
+(`server/algorithm/pipeline.py`) поднимает accepted chains (UNIT-туры в порядке
+обхода, `@Hub` на лучах хаба, `source_file` и `confidence` на строке цитаты).
+Детали стадий — в `server/algorithm/README.md`.
+
+Инварианты вызова живут в коде, а не в промпте (`server/core/turn_state.py`,
+`server/tools/subgraph_search.py`):
+*   **Глубина поиска** (`low|medium|high`) приходит из интерфейса
+    (`search_depth` в теле запроса), модель её не выбирает и не видит.
+*   **Бюджет ответа** — не больше `max_turns` вызовов `ask_subgraph` на один ход
+    пользователя; лишний вызов не запускает пайплайн, а возвращает `TOOL_ERROR`.
+*   **Контракт subquestions** проверяется до поиска: только английские
+    утверждения, без `?`, без повторов внутри вызова и между вызовами хода,
+    не больше шести.
+*   Ответы инструмента начинаются с однозначных маркеров `NO_RESULTS` /
+    `TOOL_ERROR`, поведение на каждый маркер задано в промпте одной строкой.
 
 ### 3.2 Chain graph payload — визуализация без LLM
 Отвечает за то, что в UI отрисовывается ровно тот подграф, который вошел в accepted chains последнего ответа.
@@ -181,6 +194,9 @@ ask_subgraph accepted chains
 ### 8.1 Web UI (`server/static/`)
 *   Использует `AudioContext` для записи с микрофона и **мгновенного потокового воспроизведения** PCM-ответа.
 *   **Barge-in:** Нажатие на микрофон прерывает ответ ассистента через отправку disconnect-события (сервер прерывает генерацию) и `AbortController`.
+*   **Два переключателя в композере:** «Глубина поиска» (`search_depth`, сколько
+    UNIT добывать и показывать) и «Глубина рассуждения» (`reasoning_effort`
+    модели). Значения хранятся в `localStorage`, дефолты приходят из `/ui_config`.
 *   **Визуализация графа:** `vis-network` с физикой `ForceAtlas2Based` для плавного разлета узлов.
 
 ### 8.2 Desktop Client (`client/`)
@@ -265,7 +281,7 @@ docker compose up --build
 
 ### 10.1 Unit-тесты
 ```bash
-python -m pytest tests/llm tests/algorithm tests/test_graph_viz.py tests/test_source_citations.py tests/test_sessions.py tests/test_app_http.py -q
+python -m pytest tests -q
 ```
 
 ### 10.2 Живой прогон ассистента
@@ -274,7 +290,18 @@ python -m pytest tests/llm tests/algorithm tests/test_graph_viz.py tests/test_so
 python -m tests.test_runner
 ```
 
-### 10.3 Оценка retrieval V6
+### 10.3 Регрессия промпта
+Прогоняет кейсы `tests/prompt_regression/cases.json` через `/process_text_stream`
+и проверяет автоматом: бюджет вызовов, язык и уникальность subquestions,
+служебные утечки в ответе, наличие GAPS. Пункты рубрики выводятся для проверки
+глазами. Нужен запущенный сервер:
+```bash
+python -m tests.prompt_regression.run
+python -m tests.prompt_regression.run --case catalog_freshness_indicators
+# отчёт → tests/reports/prompt_regression/report.md
+```
+
+### 10.4 Оценка retrieval V6
 Нужны доступный Neo4j и JSON-датасет (`tests/qa_open_20.json` или `tests/qa_evidence_50.json`):
 ```bash
 python -m tests.evaluate_v6

@@ -53,16 +53,15 @@ llm:
     other:
       provider: "openai"
       model: "qwen/qwen3.8-27b" #Локально
-      # model: "deepseek/deepseek-v4-flash-0731"
-      # Qwen3.8 thinking-mode sampling (model card).
-      temperature: 1.0
-      top_p: 0.95
+      temperature: 0.7
+      top_p: 0.80
       top_k: 20
       min_p: 0.0
-      presence_penalty: 0.0
+      presence_penalty: 1.5
       repetition_penalty: 1.0
       max_output_tokens: 32768
-      max_turns: 3
+      # Бюджет одного ответа: 2 tool-хода = 2 поиска ask_subgraph.
+      max_turns: 2
       think: true
       think_effort: "xhigh"
       preserve_thinking: true
@@ -86,7 +85,7 @@ llm:
       top_p: 0.95
       top_k: 64
       max_output_tokens: 16384
-      max_turns: 3
+      max_turns: 2
       think: true
       think_effort: "high"
       preserve_thinking: true

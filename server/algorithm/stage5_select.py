@@ -148,6 +148,7 @@ def select_budget_batch(
                 edges=list(c.edges),
                 fans={h: list(fl) for h, fl in c.fans.items()},
                 fan_hub_names=dict(c.fan_hub_names),
+                walk=list(c.walk),
             )
         )
     return out

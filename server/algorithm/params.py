@@ -70,7 +70,7 @@ class Params:
     emit_top_k_medium: int = 10
     emit_top_k_high: int = 15
     emit_top_k: int = 0
-    emit_score_frac: float = 0.25
+    emit_score_frac: float = 0.0
 
     def effort_max_paths(self) -> int:
         """Hard cap on accepted units per question (low≈10, medium≈15, hard≈20)."""

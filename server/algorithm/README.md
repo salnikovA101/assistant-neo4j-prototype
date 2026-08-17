@@ -5,32 +5,36 @@ Edge-native GraphRAG pipeline:
 S1 embed sq → S2 ANN (L per index → merge → L_raw_max) →
 S2b Ettin CE (full L_raw_max pool → keep L) →
 S3 N+1 graphs (anchors=L + bridges) **once** →
-S4 profitable tours until path budget (TOARP, prize once) → reshape SPINE+FANS →
+S4 profitable tours until path budget (TOARP, prize once) → reshape SPINE+FANS
+(for viz / S5 spine dedup) → format UNIT as the walk-ordered tour →
 S5 exact spine-evidence-seq dedup, keep up to budget →
 emit: sort by S4 score, cap (`emit_top_k_*`), drop score cliff (`emit_score_frac`).
 
 `effort` only sets how many units to mine (low=10 / medium=15 / hard=20)
-and how many to emit (5 / 10 / 15).
+and how many to emit (5 / 10 / 15). It comes from the UI search-depth control
+(`server/core/turn_state.py`), not from the assistant model.
 
 ### S4
 
 - `s4_paths_per_graph` (default 3) profitable tours per S3 graph per fill
-  round, length `min_path_len`..`max_hops` (default 6..10). Drop a tour
+  round, length `min_path_len`..`max_hops` (default 1..10). Drop a tour
   with fewer than `s4_min_prize_edges` prize arcs or score ≤ 0. After each
   tour, collected arcs get local p=0 (prize once). S4 repeats rounds until
   the path budget is unique spines (or prize runs out). Collecting a prize
   arc does **not** promote demoted ANN into `prize_top` (frozen ranks).
 - Global start (all edges); score = Σ rank contribs.
-- Non-bridge edges ranked by `(CE|sim) · p`; top `prize_top` (default 80)
+- Non-bridge edges ranked by `(CE|sim) · p`; top `prize_top` (default 50)
   get linear rank prizes. Prize is shared across graphs in one S4 pass.
 - Demoted ANN pay `bridge_cost_c0·(1+γ·x²)·(2−p)`; structural bridges pay
   flat `bridge_struct_cost·(2−p)`.
-- Star walks reshaped to SPINE + FANS via `unit_reshape`.
+- Star walks reshaped to SPINE + FANS via `unit_reshape` (UI roles + S5).
+  Print tags (`linger_hubs`): entry unmarked; rays **and** exit get `@Hub`.
 
-Unit = SPINE (bamboo) + optional FANS at hubs (from rays the walk actually took).
-Each edge prints as a card: `Label: A —REL→ Label: B  (source; conf)` and the
-verbatim quote on the next line. FANS use the same full triple (hub on the line).
-Endpoints use primary Neo4j labels from
+Unit = hop-DP tour in walk order (not spine-then-FANS dump). Each edge prints
+as a card: `Label: A —REL→ Label: B` and the verbatim quote with
+`(source; conf)` on the quote line. `@Hub` on a triple means still at that
+vertex (sibling incidents, not the next process step). Endpoints use primary
+Neo4j labels from
 `Microbe|Metabolite|StarterCulture|EnvironmentCondition` (extra labels dropped).
 Evidence may not repeat inside one unit; S5 drops exact SPINE evidence
 duplicates in the pool.

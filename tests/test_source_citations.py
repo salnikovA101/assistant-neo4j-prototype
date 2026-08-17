@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from server.tools.source_registry import (
+    UNKNOWN_CITATION_MARKER,
     SourceRegistry,
+    citation_stats,
     collect_source_files,
     extract_cited_source_files,
     filter_chains_by_source_files,
@@ -44,10 +46,8 @@ def test_remap_from_accepted_edges():
         {
             "text": (
                 "UNIT c1\n"
-                "SPINE:\n"
-                "Microbe: A —PRODUCES→ Metabolite: B  "
-                "(Hashim et al. Anthocyanins.pdf; conf=0.88)\n"
-                '  "x"'
+                "Microbe: A —PRODUCES→ Metabolite: B\n"
+                '  "x"  (Hashim et al. Anthocyanins.pdf; conf=0.88)'
             ),
             "edges": [
                 {"source_file": "Hashim et al. Anthocyanins.pdf"},
@@ -101,16 +101,48 @@ def test_render_dense_from_one_for_user():
     assert "[3]" not in biblio
 
 
-def test_render_drops_unknown_ids():
+def test_render_marks_unknown_ids_instead_of_hiding_them():
+    """An invented id must stay visible as [?], not silently lose its marker."""
     reg = SourceRegistry()
     reg.register("only.pdf")
     display = render_citations("Known (source:1). Fake (source:99).", reg)
     assert "[1]" in display
+    assert UNKNOWN_CITATION_MARKER in display
     assert "[99]" not in display
     assert "source:99" not in display
     assert "[1] only.pdf" in display
     biblio = display.split("### Источники")[-1]
     assert "99" not in biblio
+
+
+def test_citation_stats_counts_known_unknown_and_uncited_lines():
+    reg = SourceRegistry()
+    reg.register("one.pdf")
+    text = (
+        "Кефиран подавляет Listeria в модельной среде (source:1).\n"
+        "Плёнка меняет цвет при накоплении аммиака (source:99).\n"
+        "Это утверждение достаточно длинное, но источника у него нет вовсе.\n"
+        "\n"
+        "### Источники\n"
+        "[1] one.pdf\n"
+    )
+    stats = citation_stats(text, reg)
+    assert stats.known == 1
+    assert stats.unknown == 1
+    assert stats.uncited_claim_lines == 1
+
+
+def test_citation_stats_ignores_headings_and_table_rules():
+    reg = SourceRegistry()
+    reg.register("one.pdf")
+    text = (
+        "### Каталог найденных индикаторов свежести и матриц\n"
+        "|---------------------|----------------|-------------|\n"
+        "| Кефиран | желатин | подавляет Listeria (source:1) |\n"
+    )
+    stats = citation_stats(text, reg)
+    assert stats.uncited_claim_lines == 0
+    assert stats.known == 1
 
 
 def test_collect_source_files_from_fans():

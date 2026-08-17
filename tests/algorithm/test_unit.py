@@ -119,6 +119,24 @@ def test_dedup_and_spine_seq_batch():
     assert len(batch) == 2
 
 
+def test_s5_batch_copies_walk():
+    e1 = EdgeRecord("e1", "1", "R", "a", "h", "A", "H", evidence="enter")
+    e2 = EdgeRecord("e2", "2", "R", "h", "d", "H", "D", evidence="ray")
+    e3 = EdgeRecord("e3", "3", "R", "h", "c", "H", "C", evidence="exit")
+    src = Chain(
+        "x",
+        ["e1", "e3"],
+        0.9,
+        source_graph="sq1",
+        edges=[e1, e3],
+        fans={"h": [e2]},
+        walk=[e1, e2, e3],
+    )
+    batch = select_budget_batch([src], k=10)
+    assert len(batch) == 1
+    assert [e.edge_key for e in batch[0].walk] == ["e1", "e2", "e3"]
+
+
 def test_batch_per_graph_quota_then_fill():
     """k=10, 5 graphs → 2 each; thin graph frees slots for global fill."""
 
@@ -552,28 +570,58 @@ def test_reshape_star_walk_to_spine_fans():
     assert names["H"] == "H"
 
 
+def test_linger_hubs_tags_rays_and_exit():
+    from server.algorithm.unit_reshape import linger_hubs
+
+    ah = _edge("ah", "A", "H", evidence="enter")
+    hd = _edge("hd", "H", "D", evidence="ray-d")
+    he = _edge("he", "H", "E", evidence="ray-e")
+    hc = _edge("hc", "H", "C", evidence="exit")
+    ck = _edge("ck", "C", "K", evidence="onward")
+    assert linger_hubs([ah, hd, he, hc, ck]) == ["", "H", "H", "H", ""]
+
+
+def test_linger_hubs_bamboo_unmarked():
+    from server.algorithm.unit_reshape import linger_hubs
+
+    e1 = _edge("e1", "A", "B")
+    e2 = _edge("e2", "B", "C")
+    assert linger_hubs([e1, e2]) == ["", ""]
+    assert linger_hubs([e1]) == [""]
+
+
+def test_reconstruct_walk_inserts_fans_between_spine():
+    from server.algorithm.unit_reshape import reconstruct_walk, reshape_star_walk
+
+    ah = _edge("ah", "A", "H", evidence="enter")
+    hd = _edge("hd", "H", "D", evidence="ray-d")
+    he = _edge("he", "H", "E", evidence="ray-e")
+    hc = _edge("hc", "H", "C", evidence="exit")
+    walk = [ah, hd, he, hc]
+    spine, fans, _ = reshape_star_walk(walk)
+    assert [e.edge_key for e in reconstruct_walk(spine, fans)] == [
+        "ah",
+        "hd",
+        "he",
+        "hc",
+    ]
+
+
 # ---------------------------------------------------------------------------
-# Unit format edge cases: directed Neo4j arrows + hub-centric fans
+# Unit format: walk order, @Hub linger, source/conf on the quote line
 # ---------------------------------------------------------------------------
 
 
-def _parse_spine_joints(text: str) -> list[tuple[str, str]]:
-    """Extract (left, right) entity pairs from SPINE triple lines (directed)."""
+def _parse_triple_joints(text: str) -> list[tuple[str, str]]:
+    """Extract (left, right) entity pairs from directed triple lines."""
     import re
 
     pairs: list[tuple[str, str]] = []
-    in_spine = False
     triple_re = re.compile(
-        r"^(.+?) —[A-Za-z0-9_]+→ (.+?)(?:\s+\([^)]*\))?\s*$"
+        r"^(?:@.+(?:  ))?(.+?) —[A-Za-z0-9_]+→ (.+?)\s*$"
     )
     for line in text.splitlines():
-        if line.strip() == "SPINE:":
-            in_spine = True
-            continue
-        if line.startswith("FANS"):
-            in_spine = False
-            continue
-        if not in_spine:
+        if line.startswith("UNIT ") or line.startswith("  "):
             continue
         m = triple_re.match(line)
         if m:
@@ -586,9 +634,11 @@ def test_format_single_edge_spine_neo4j_direction():
     e = _edge("e1", "A", "B", evidence='quote with "quotes"')
     c = Chain("c1", ["e1"], 1.0, edges=[e])
     text = c.format_unit()
-    assert "A —INHIBITS→ B  (source:None; conf=1.00)" in text
-    assert '  "quote with \'quotes\'"' in text
+    assert "A —INHIBITS→ B" in text
+    assert '  "quote with \'quotes\'"  (source:None; conf=1.00)' in text
+    assert " (source:None; conf=1.00)" not in text.split("\n")[1]
     assert "FANS" not in text
+    assert "SPINE:" not in text
     assert "(score=" not in text
 
 
@@ -607,16 +657,16 @@ def test_format_edge_appends_source_file():
         fans={"B": [ray]},
         fan_hub_names={"B": "B"},
     ).format_unit()
-    assert "A —INHIBITS→ B  (PMC123.pdf; conf=0.87)" in text
-    assert '  "ab"' in text
-    assert "B —INHIBITS→ C  (Other.pdf; conf=0.50)" in text
-    assert '  "bc"' in text
+    assert "A —INHIBITS→ B" in text
+    assert '  "ab"  (PMC123.pdf; conf=0.87)' in text
+    assert "B —INHIBITS→ C" in text
+    assert '  "bc"  (Other.pdf; conf=0.50)' in text
     # missing source_file → source:None; missing confidence → conf=None
     bare = _edge("e3", "X", "Y", evidence="xy")
     bare.confidence = None
     bare_text = Chain("c2", ["e3"], 1.0, edges=[bare]).format_unit()
-    assert "X —INHIBITS→ Y  (source:None; conf=None)" in bare_text
-    assert '  "xy"' in bare_text
+    assert "X —INHIBITS→ Y" in bare_text
+    assert '  "xy"  (source:None; conf=None)' in bare_text
 
 
 def test_format_spine_with_node_labels():
@@ -658,7 +708,7 @@ def test_format_spine_with_node_labels():
         in text
     )
     assert '  "makes acid"' in text
-    assert "FANS @Metabolite: L-lactic acid:" in text
+    assert "FANS" not in text
     assert "Metabolite: L-lactic acid —INHIBITS→ Microbe: E. coli" in text
     assert '  "kills"' in text
 
@@ -676,7 +726,7 @@ def test_format_spine_arrows_forward():
     e1 = _edge("e1", "A", "B", evidence="ab")
     e2 = _edge("e2", "B", "C", evidence="bc")
     text = Chain("c1", ["e1", "e2"], 1.0, edges=[e1, e2]).format_unit()
-    joints = _parse_spine_joints(text)
+    joints = _parse_triple_joints(text)
     assert joints == [("A", "B"), ("B", "C")]
 
 
@@ -685,7 +735,7 @@ def test_format_spine_arrows_incoming_kept():
     e1 = _edge("e1", "A", "B", evidence="ab")
     e2 = _edge("e2", "C", "B", evidence="cb")
     text = Chain("c1", ["e1", "e2"], 1.0, edges=[e1, e2]).format_unit()
-    joints = _parse_spine_joints(text)
+    joints = _parse_triple_joints(text)
     assert joints == [("A", "B"), ("C", "B")]
 
 
@@ -694,12 +744,12 @@ def test_format_spine_first_edge_direction_kept():
     e1 = _edge("e1", "A", "B", evidence="ab")
     e2 = _edge("e2", "X", "A", evidence="xa")
     text = Chain("c1", ["e1", "e2"], 1.0, edges=[e1, e2]).format_unit()
-    joints = _parse_spine_joints(text)
+    joints = _parse_triple_joints(text)
     assert joints == [("A", "B"), ("X", "A")]
 
 
 def test_format_spine_spur_directions_and_fans():
-    """Hub/reshape: spur stays in walk; fans hub-centric with arrows."""
+    """Hub/reshape: spur stays in walk; linger tags rays and exit."""
     from server.algorithm.unit_reshape import reshape_star_walk
 
     # Walk: E.coli - L-lactic - Pathogen(spur) - L-lactic - Water kefir
@@ -711,11 +761,22 @@ def test_format_spine_spur_directions_and_fans():
     assert [e.edge_key for e in spine] == ["e1", "e3"]
     assert [e.edge_key for e in fans["Llactic"]] == ["e2"]
     text = Chain(
-        "c1", ["e1", "e3"], 1.0, edges=spine, fans=fans, fan_hub_names=names
+        "c1",
+        ["e1", "e3"],
+        1.0,
+        edges=spine,
+        fans=fans,
+        fan_hub_names=names,
+        walk=[e1, e2, e3],
     ).format_unit()
-    joints = _parse_spine_joints(text)
-    assert joints == [("Ecoli", "Llactic"), ("Wkefir", "Llactic")]
-    assert "Llactic —INHIBITS→ Pathogen" in text
+    joints = _parse_triple_joints(text)
+    assert joints == [
+        ("Ecoli", "Llactic"),
+        ("Llactic", "Pathogen"),
+        ("Wkefir", "Llactic"),
+    ]
+    assert "@Llactic  Llactic —INHIBITS→ Pathogen" in text
+    assert "@Llactic  Wkefir —INHIBITS→ Llactic" in text
     assert '  "lp"' in text
 
 
@@ -724,7 +785,7 @@ def test_format_spine_broken_still_prints_direction():
     e1 = _edge("e1", "A", "B", evidence="ab")
     e2 = _edge("e2", "X", "Y", evidence="xy")
     text = Chain("c1", ["e1", "e2"], 1.0, edges=[e1, e2]).format_unit()
-    joints = _parse_spine_joints(text)
+    joints = _parse_triple_joints(text)
     assert joints == [("A", "B"), ("X", "Y")]
 
 
@@ -742,67 +803,66 @@ def test_format_empty_fans_dict_omitted():
     c = Chain("c1", ["e1"], 1.0, edges=[e], fans={"H": []}, fan_hub_names={"H": "Hub"})
     text = c.format_unit()
     assert "FANS" not in text
+    assert "@Hub" not in text
 
 
 def test_format_fans_out_star_direction():
-    """Co-outgoing fans: Hub —REL→ Leaf as a full triple."""
-    spine = [_edge("ah", "A", "H", evidence="enter"), _edge("hc", "H", "C", evidence="exit")]
-    fans = {
-        "H": [
-            _edge("hd", "H", "D", evidence="ray-d"),
-            _edge("he", "H", "E", evidence="ray-e"),
-        ]
-    }
-    text = Chain(
-        "c1",
-        [e.edge_key for e in spine],
-        1.0,
-        edges=spine,
-        fans=fans,
-        fan_hub_names={"H": "H"},
-    ).format_unit()
-    assert "FANS @H:" in text
-    assert "H —INHIBITS→ D" in text
-    assert '  "ray-d"' in text
-    assert "H —INHIBITS→ E" in text
-    assert '  "ray-e"' in text
-
-
-def test_format_fans_in_star_direction():
-    """Co-incoming fans: Leaf —REL→ Hub as a full triple."""
-    spine = [
-        _edge("ah", "A", "H", evidence="enter"),
-        _edge("hc", "H", "C", evidence="exit"),
-    ]
-    fans = {
-        "H": [
-            _edge("dh", "D", "H", evidence="in-d"),
-            _edge("eh", "E", "H", evidence="in-e"),
-        ]
-    }
+    """Co-outgoing rays stay in walk order with @H, including exit."""
+    ah = _edge("ah", "A", "H", evidence="enter")
+    hd = _edge("hd", "H", "D", evidence="ray-d")
+    he = _edge("he", "H", "E", evidence="ray-e")
+    hc = _edge("hc", "H", "C", evidence="exit")
     text = Chain(
         "c1",
         ["ah", "hc"],
         1.0,
-        edges=spine,
-        fans=fans,
+        edges=[ah, hc],
+        fans={"H": [hd, he]},
         fan_hub_names={"H": "H"},
+        walk=[ah, hd, he, hc],
     ).format_unit()
-    assert "D —INHIBITS→ H" in text
+    assert "FANS" not in text
+    assert "SPINE:" not in text
+    joints = _parse_triple_joints(text)
+    assert joints == [("A", "H"), ("H", "D"), ("H", "E"), ("H", "C")]
+    assert not text.splitlines()[1].startswith("@")
+    assert "@H  H —INHIBITS→ D" in text
+    assert '  "ray-d"' in text
+    assert "@H  H —INHIBITS→ E" in text
+    assert "@H  H —INHIBITS→ C" in text
+
+
+def test_format_fans_in_star_direction():
+    """Co-incoming rays: Leaf —REL→ Hub as a full triple with @H."""
+    ah = _edge("ah", "A", "H", evidence="enter")
+    dh = _edge("dh", "D", "H", evidence="in-d")
+    eh = _edge("eh", "E", "H", evidence="in-e")
+    hc = _edge("hc", "H", "C", evidence="exit")
+    text = Chain(
+        "c1",
+        ["ah", "hc"],
+        1.0,
+        edges=[ah, hc],
+        fans={"H": [dh, eh]},
+        fan_hub_names={"H": "H"},
+        walk=[ah, dh, eh, hc],
+    ).format_unit()
+    assert "@H  D —INHIBITS→ H" in text
     assert '  "in-d"' in text
-    assert "E —INHIBITS→ H" in text
+    assert "@H  E —INHIBITS→ H" in text
     assert '  "in-e"' in text
 
 
 def test_format_spine_after_reshape_hub_walk():
-    """Reshape star walk: spine entry+exit, rays as fans; arrows kept."""
+    """Walk order: enter, @ rays, @ exit; arrows kept."""
     from server.algorithm.unit_reshape import reshape_star_walk
 
     ah = _edge("ah", "A", "H", evidence="enter")
     hd = _edge("hd", "H", "D", evidence="ray-d")
     he = _edge("he", "H", "E", evidence="ray-e")
     hc = _edge("hc", "H", "C", evidence="exit")
-    spine, fans, names = reshape_star_walk([ah, hd, he, hc])
+    walk = [ah, hd, he, hc]
+    spine, fans, names = reshape_star_walk(walk)
     assert [e.edge_key for e in spine] == ["ah", "hc"]
     assert {e.edge_key for e in fans["H"]} == {"hd", "he"}
     text = Chain(
@@ -812,40 +872,45 @@ def test_format_spine_after_reshape_hub_walk():
         edges=spine,
         fans=fans,
         fan_hub_names=names,
+        walk=walk,
     ).format_unit()
-    joints = _parse_spine_joints(text)
-    assert joints == [("A", "H"), ("H", "C")]
-    assert "FANS @H:" in text
-    assert "H —INHIBITS→ D" in text
+    joints = _parse_triple_joints(text)
+    assert joints == [("A", "H"), ("H", "D"), ("H", "E"), ("H", "C")]
+    assert "FANS" not in text
+    assert "@H  H —INHIBITS→ D" in text
     assert '  "ray-d"' in text
-    assert "H —INHIBITS→ E" in text
-    assert '  "ray-e"' in text
+    assert "@H  H —INHIBITS→ E" in text
+    assert "@H  H —INHIBITS→ C" in text
 
 
-def test_format_multiple_fan_hubs():
-    """Edge case: two hubs each get their own FANS block with direction."""
-    spine = [
-        _edge("ab", "A", "B", evidence="ab"),
-        _edge("bc", "B", "C", evidence="bc"),
-    ]
-    fans = {
-        "A": [_edge("ae", "A", "E", evidence="ae")],
-        "C": [_edge("cf", "F", "C", evidence="fc")],
-    }
+def test_format_two_hubs_keeps_walk_order():
+    """Two hub stays in one tour: @ tags follow walk, not dumped FANS blocks."""
+    xh = _edge("xh", "X", "H1", evidence="enter")
+    h1a = _edge("h1a", "H1", "A", evidence="ray-a")
+    h1h2 = _edge("h1h2", "H1", "H2", evidence="bridge")
+    h2b = _edge("h2b", "H2", "B", evidence="ray-b")
+    h2y = _edge("h2y", "H2", "Y", evidence="exit")
+    walk = [xh, h1a, h1h2, h2b, h2y]
     text = Chain(
         "c1",
-        ["ab", "bc"],
+        ["xh", "h1h2", "h2y"],
         1.0,
-        edges=spine,
-        fans=fans,
-        fan_hub_names={"A": "A", "C": "C"},
+        walk=walk,
+        fan_hub_names={"H1": "H1", "H2": "H2"},
     ).format_unit()
-    assert "FANS @A:" in text
-    assert "FANS @C:" in text
-    assert "A —INHIBITS→ E" in text
-    assert '  "ae"' in text
-    assert "F —INHIBITS→ C" in text
-    assert '  "fc"' in text
+    joints = _parse_triple_joints(text)
+    assert joints == [
+        ("X", "H1"),
+        ("H1", "A"),
+        ("H1", "H2"),
+        ("H2", "B"),
+        ("H2", "Y"),
+    ]
+    assert "FANS" not in text
+    assert "@H1  H1 —INHIBITS→ A" in text
+    assert "@H1  H1 —INHIBITS→ H2" in text
+    assert "@H2  H2 —INHIBITS→ B" in text
+    assert "@H2  H2 —INHIBITS→ Y" in text
 
 
 def test_format_unit_always_uses_arrows():
@@ -866,10 +931,16 @@ def test_format_unit_always_uses_arrows():
     assert "<-[" not in text
     assert "B —INHIBITS→ D" in text
     assert "X —INHIBITS→ B" in text
+    assert _parse_triple_joints(text) == [
+        ("A", "B"),
+        ("B", "D"),
+        ("X", "B"),
+        ("C", "B"),
+    ]
 
 
-def test_format_unit_card_layout_spine_and_fans():
-    """Quote on its own line; FANS keep full triples; no score on UNIT header."""
+def test_format_unit_card_layout_walk_and_quote_meta():
+    """Quote line holds source/conf; no SPINE/FANS; no score on UNIT header."""
     spine = [
         EdgeRecord(
             "e1",
@@ -913,16 +984,14 @@ def test_format_unit_card_layout_spine_and_fans():
     ).format_unit()
     assert text == (
         "UNIT c1\n"
-        "SPINE:\n"
-        "Metabolite: Ph-sensitive dyes —REQUIRES→ EnvironmentCondition: pH"
+        "Metabolite: Ph-sensitive dyes —REQUIRES→ EnvironmentCondition: pH\n"
+        '  "Colorimetric indicators, such as pH-sensitive dyes"'
         "  (a.pdf; conf=1.00)\n"
-        '  "Colorimetric indicators, such as pH-sensitive dyes"\n'
-        "FANS @EnvironmentCondition: pH:\n"
-        "Metabolite: Alizarin —REQUIRES→ EnvironmentCondition: pH"
-        "  (b.pdf; conf=1.00)\n"
+        "Metabolite: Alizarin —REQUIRES→ EnvironmentCondition: pH\n"
         '  "plant-based natural pigments, such as anthocyanins, curcumin, '
-        'and alizarin"'
+        'and alizarin"  (b.pdf; conf=1.00)'
     )
+    assert "(score=" not in text
 
 
 def test_star_walk_forms_unit_with_fans():
@@ -949,6 +1018,8 @@ def test_star_walk_forms_unit_with_fans():
     assert len(paths) <= 1
     # Adjacency must allow star steps
     assert transition_allowed(e_sal, e_yer)
+    if paths:
+        assert [e.edge_key for e in paths[0].walk] == paths[0].all_edge_keys()
     if paths and paths[0].fans:
         assert any(paths[0].fans.values())
 

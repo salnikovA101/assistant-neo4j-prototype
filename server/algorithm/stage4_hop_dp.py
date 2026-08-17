@@ -75,7 +75,7 @@ def best_path_for_graph(
     One profitable tour: start from every edge; maximize sum of rank contribs
     over L ∈ [min_path_len, max_hops]. Prize on top prize_top ranked
     non-bridge edges; demoted ANN + structural bridges pay rank costs.
-    Returns one Chain (SPINE+FANS) or None.
+    Returns one Chain (walk-ordered tour; spine+fans for viz) or None.
     """
     if not graph.edges:
         return None
@@ -132,10 +132,12 @@ def best_path_for_graph(
     if not best_path:
         return None
 
-    raw_edges = [graph.edges[k] for k in best_path if k in graph.edges]
+    raw_edges = [
+        _tag_s4_role(graph.edges[k], prize_keys)
+        for k in best_path
+        if k in graph.edges
+    ]
     spine, fans, hub_names = reshape_star_walk(raw_edges)
-    spine = [_tag_s4_role(e, prize_keys) for e in spine]
-    fans = {hub: [_tag_s4_role(e, prize_keys) for e in flist] for hub, flist in fans.items()}
     return Chain(
         chain_id=f"{id_prefix}{path_index}",
         edge_keys=[e.edge_key for e in spine],
@@ -145,6 +147,7 @@ def best_path_for_graph(
         edges=spine,
         fans=fans,
         fan_hub_names=hub_names,
+        walk=raw_edges,
     )
 
 

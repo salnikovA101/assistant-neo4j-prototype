@@ -2,6 +2,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from server.core.turn_state import search_depth
 from server.tools.source_registry import SourceRegistry
 from server.tools.subgraph_search import SubgraphSearchAgent
 from server.utils.config import AppConfig
@@ -39,23 +40,15 @@ class Tools:
     async def ask_subgraph(
         self,
         subquestions: list[str],
-        effort: str = "medium",
+        **ignored: Any,
     ) -> str:
         """
         Search the English knowledge graph (articles, patents, regulations).
 
-        At most TWO calls; high+high is forbidden, any other pair is allowed.
-        Call 1: 1–6 English statements from the user question only.
-        Call 2: missing field or follow-up from returned chains, not a
-        repeat of call 1.
-
-        Returns UNIT blocks. Cite (source:N); no [n] / ### Источники.
-
         Args:
-            subquestions: 1–6 English statements. Call 1: only classes
-                from the user question. Call 2 may use names from
-                returned chains.
-            effort: low (mine 10 / emit 5), medium (15 / 10), high (20 / 15).
+            subquestions: 1–6 English declarative statements, one per aspect.
+            ignored: tolerated legacy/hallucinated arguments (e.g. `effort`);
+                search depth comes from the UI, not from the model.
         """
         with tracer.start_as_current_span("ask_subgraph") as span:
             span.set_attribute(OI_SPAN_KIND, OISpanKind.TOOL)
@@ -63,21 +56,20 @@ class Tools:
                 OI_INPUT_VALUE,
                 " | ".join(str(s) for s in (subquestions or [])[:6])[:500],
             )
-            span.set_attribute("effort", effort or "medium")
+            span.set_attribute("search_depth", search_depth())
             sqs = [str(s).strip() for s in (subquestions or []) if str(s).strip()]
+            if ignored:
+                logger.info("ask_subgraph: игнорируем аргументы модели %s", list(ignored))
             logger.info(
-                "Вызов ask_subgraph effort=%s n_sq=%s",
-                effort,
+                "Вызов ask_subgraph depth=%s n_sq=%s",
+                search_depth(),
                 len(sqs),
             )
             for i, text in enumerate(sqs, 1):
                 logger.info("  sq%s: %s", i, text)
 
             try:
-                result = await self.subgraph_search.query(
-                    subquestions=subquestions,
-                    effort=effort,
-                )
+                result = await self.subgraph_search.query(subquestions=subquestions)
                 set_span_ok(span, result)
                 return result
             except Exception as e:
@@ -112,27 +104,10 @@ class Tools:
                     "description": (
                         "Search the English knowledge graph for food technology "
                         "(starter cultures, freshness indicators, smart packaging). "
-                        "Call when the question has a product and/or goal. If neither "
-                        "is named, do not call — ask one clarifying question. "
-                        "BUDGET: two calls max; high+high is forbidden, any other "
-                        "pair is allowed. Prior ask_subgraph calls in history are "
-                        "the previous turn and do not spend this budget. "
-                        "Call 1: 1–6 English declarative statements; orthogonal "
-                        "aspects from the question, not paraphrases and not empty "
-                        "axes; only names the user said; no Russian. GOOD lines "
-                        "are syntax, not default entities. Follow-up that points "
-                        "at the previous assistant answer (expand, close GAPS, "
-                        "add a field): names from that answer and its GAPS axes "
-                        "are in scope for call 1. Do not copy subquestion strings "
-                        "from prior ask_subgraph calls in history; write new "
-                        "statements for missing fields. "
-                        "Call 2: 1–3 statements for a missing field (dose / matrix / "
-                        "regulation) or names from returned chains this turn; if "
-                        "call 1 was empty, repeat the same question classes "
-                        "without new names. "
-                        "RETURNS: evidence blocks. One block = one system = one "
-                        "table row. Cite (source:N). Do not write [n], PDF names, "
-                        "or ### Источники. Do not name block labels in the answer."
+                        "Call it when the question names a product, substance, "
+                        "culture, process or goal. Returns evidence UNITs: tours of "
+                        "cards, each card a triple plus its verbatim quote and "
+                        "(source:N). Search depth is set in the UI, not here."
                     ),
                     "parameters": {
                         "type": "object",
@@ -143,38 +118,14 @@ class Tools:
                                 "minItems": 1,
                                 "maxItems": 6,
                                 "description": (
-                                    "1–6 English declarative statements; orthogonal "
-                                    "aspects from the question, not paraphrases. "
-                                    "No '?', no Russian. Call 1: only names and "
-                                    "classes the user said (substance, gas, number, "
-                                    "strain, matrix, plant, subclass — not only a "
-                                    "dye). Follow-up pointing at the previous "
-                                    "assistant answer: those names are in scope "
-                                    "for call 1. Call 2 may use names from returned "
-                                    "chains this turn. "
-                                    "GOOD: 'Lactic acid bacteria are used as starter cultures "
-                                    "for cottage cheese production.' "
-                                    "GOOD: 'Freshness indicators change color "
-                                    "in packaged food.' "
-                                    "BAD: several restatements of one sentence. "
-                                    "BAD (call 1): a name the user did not mention "
-                                    "and that is not in the previous assistant answer. "
-                                    "BAD: copying a previous ask_subgraph "
-                                    "subquestion string from history. "
-                                    "BAD (follow-up call 1): drop names from your "
-                                    "previous answer and search only a class."
-                                ),
-                            },
-                            "effort": {
-                                "type": "string",
-                                "enum": ["low", "medium", "high"],
-                                "description": (
-                                    "Search budget: how many evidence blocks to mine/emit. "
-                                    "low=mine 10 emit 5 (narrow fact), medium=15/10 "
-                                    "(default), high=20/15 only if the user asked a list "
-                                    "or comparison of many entities. Choose by question "
-                                    "WIDTH. Max two calls; high+high is forbidden. "
-                                    "Do not pick high only to mine more blocks."
+                                    "1–6 English declarative statements, no '?' and "
+                                    "no Russian. Each one runs a separate search "
+                                    "over quotes, so each must cover a different "
+                                    "aspect of the question — paraphrases return "
+                                    "the same evidence. "
+                                    "GOOD: 'Lactic acid bacteria acidify milk during "
+                                    "cottage cheese production.' "
+                                    "BAD: 'What starter cultures are used?'"
                                 ),
                             },
                         },

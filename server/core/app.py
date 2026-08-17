@@ -19,6 +19,11 @@ from server.core.http_api import (
     session_id_from_request,
 )
 from server.core.pipeline import ServerPipeline
+from server.core.turn_state import (
+    DEFAULT_SEARCH_DEPTH,
+    SEARCH_DEPTHS,
+    parse_search_depth,
+)
 from server.llm.base import UI_THINK_EFFORTS, parse_ui_think_effort
 from server.tools.graph_viz import build_graph_viz_payload
 from server.utils.tracing import init_tracing
@@ -160,6 +165,7 @@ async def process_text(request: Request, body: TextProcessBody):
     pipeline: ServerPipeline = request.app.state.pipeline
     text = body.text.strip()
     think_effort = parse_ui_think_effort(body.reasoning_effort)
+    search_depth = parse_search_depth(body.search_depth)
 
     if not text:
         return JSONResponse({"error": "Пустой текст"}, status_code=400)
@@ -168,6 +174,7 @@ async def process_text(request: Request, body: TextProcessBody):
         text,
         think_effort=think_effort,
         session_id=session_id_from_request(request),
+        search_depth=search_depth,
     )
 
     if not pipeline.config.audio_enabled:
@@ -190,11 +197,13 @@ async def process_text_stream(request: Request, body: TextProcessBody):
     """
     SSE stream of assistant events: thinking, tool_call, tool_result, content, done, error.
 
-    Request body: {"text": "вопрос пользователя", "reasoning_effort": "xhigh"|"medium"|"low"}
+    Request body: {"text": "вопрос пользователя", "reasoning_effort": "xhigh"|"medium"|"low",
+    "search_depth": "low"|"medium"|"high"}
     """
     pipeline: ServerPipeline = request.app.state.pipeline
     text = body.text.strip()
     think_effort = parse_ui_think_effort(body.reasoning_effort)
+    search_depth = parse_search_depth(body.search_depth)
 
     if not text:
         return JSONResponse({"error": "Пустой текст"}, status_code=400)
@@ -203,7 +212,11 @@ async def process_text_stream(request: Request, body: TextProcessBody):
 
     async def event_generator():
         async for event in pipeline.process_text_stream(
-            text, request, think_effort=think_effort, session_id=session_id
+            text,
+            request,
+            think_effort=think_effort,
+            session_id=session_id,
+            search_depth=search_depth,
         ):
             yield event.to_sse()
 
@@ -224,11 +237,13 @@ async def process_text_test(request: Request, body: TextProcessBody):
     Принимает текст JSON, возвращает ответ LLM (без TTS).
     Специально для скриптов тестирования.
 
-    Request body: {"text": "вопрос пользователя", "reasoning_effort": "xhigh"|"medium"|"low"}
+    Request body: {"text": "вопрос пользователя", "reasoning_effort": "xhigh"|"medium"|"low",
+    "search_depth": "low"|"medium"|"high"}
     """
     pipeline: ServerPipeline = request.app.state.pipeline
     text = body.text.strip()
     think_effort = parse_ui_think_effort(body.reasoning_effort)
+    search_depth = parse_search_depth(body.search_depth)
 
     if not text:
         return JSONResponse({"error": "Пустой текст"}, status_code=400)
@@ -237,6 +252,7 @@ async def process_text_test(request: Request, body: TextProcessBody):
         text,
         think_effort=think_effort,
         session_id=session_id_from_request(request),
+        search_depth=search_depth,
     )
 
     return JSONResponse({"answer": answer})
@@ -260,7 +276,7 @@ async def health(request: Request):
 
 @app.get("/ui_config")
 async def ui_config(request: Request):
-    """Defaults for the web UI (reasoning effort picker, etc.)."""
+    """Defaults for the web UI (reasoning effort, search depth, audio)."""
     pipeline: ServerPipeline = request.app.state.pipeline
     profile = pipeline.llm.model.profile
     default_effort = parse_ui_think_effort(profile.think_effort) or "xhigh"
@@ -270,6 +286,9 @@ async def ui_config(request: Request):
         "think": bool(profile.think) and supports_levels,
         "reasoning_effort": default_effort,
         "reasoning_effort_options": list(UI_THINK_EFFORTS),
+        "search_depth": DEFAULT_SEARCH_DEPTH,
+        "search_depth_options": list(SEARCH_DEPTHS),
+        "max_searches_per_answer": max(1, int(profile.max_turns)),
         "audio_enabled": bool(pipeline.config.audio_enabled),
     }
 

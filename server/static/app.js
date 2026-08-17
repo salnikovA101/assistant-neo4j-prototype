@@ -44,6 +44,10 @@ const effortPicker = document.getElementById('effort-picker');
 const effortBtn = document.getElementById('effort-btn');
 const effortMenu = document.getElementById('effort-menu');
 const effortLabel = document.getElementById('effort-label');
+const depthPicker = document.getElementById('depth-picker');
+const depthBtn = document.getElementById('depth-btn');
+const depthMenu = document.getElementById('depth-menu');
+const depthLabel = document.getElementById('depth-label');
 
 const EFFORT_STORAGE_KEY = 'reasoning_effort';
 const EFFORT_OPTIONS = {
@@ -51,6 +55,13 @@ const EFFORT_OPTIONS = {
     medium: { label: 'Средний' },
     xhigh: { label: 'Максимум' },
 };
+const DEPTH_STORAGE_KEY = 'search_depth';
+const DEPTH_OPTIONS = {
+    low: { label: 'Узко' },
+    medium: { label: 'Обычно' },
+    high: { label: 'Широко' },
+};
+let currentSearchDepth = 'medium';
 let currentReasoningEffort = 'xhigh';
 let reasoningEffortEnabled = true;
 let audioEnabled = false;
@@ -2451,10 +2462,10 @@ async function clearHistory() {
     }
 }
 
-// ===== Reasoning effort picker =====
+// ===== Reasoning effort / search depth pickers =====
 
 function processTextPayload(text) {
-    const payload = { text };
+    const payload = { text, search_depth: currentSearchDepth };
     if (reasoningEffortEnabled) {
         payload.reasoning_effort = currentReasoningEffort;
     }
@@ -2507,9 +2518,54 @@ function loadStoredEffort() {
     return null;
 }
 
-async function initReasoningEffort() {
-    const stored = loadStoredEffort();
+function isDepthMenuOpen() {
+    return depthBtn.getAttribute('aria-expanded') === 'true';
+}
+
+function closeDepthMenu() {
+    depthBtn.setAttribute('aria-expanded', 'false');
+    depthMenu.hidden = true;
+}
+
+function openDepthMenu() {
+    depthBtn.setAttribute('aria-expanded', 'true');
+    depthMenu.hidden = false;
+}
+
+function toggleDepthMenu() {
+    if (isDepthMenuOpen()) closeDepthMenu();
+    else openDepthMenu();
+}
+
+function setSearchDepth(depth, persist = true) {
+    if (!DEPTH_OPTIONS[depth]) return;
+    currentSearchDepth = depth;
+    depthLabel.textContent = DEPTH_OPTIONS[depth].label;
+    depthBtn.title = `Глубина поиска: ${DEPTH_OPTIONS[depth].label}`;
+    depthBtn.setAttribute('aria-label', `Глубина поиска: ${DEPTH_OPTIONS[depth].label}`);
+    depthMenu.querySelectorAll('.effort-option').forEach((btn) => {
+        btn.setAttribute('aria-selected', btn.dataset.depth === depth ? 'true' : 'false');
+    });
+    if (persist) {
+        try {
+            localStorage.setItem(DEPTH_STORAGE_KEY, depth);
+        } catch (_) {}
+    }
+}
+
+function loadStoredDepth() {
+    try {
+        const stored = localStorage.getItem(DEPTH_STORAGE_KEY);
+        if (stored && DEPTH_OPTIONS[stored]) return stored;
+    } catch (_) {}
+    return null;
+}
+
+async function initComposerControls() {
+    const storedEffort = loadStoredEffort();
+    const storedDepth = loadStoredDepth();
     let serverDefault = 'xhigh';
+    let serverDepth = 'medium';
     let thinkEnabled = true;
     try {
         const resp = await fetch('/ui_config', { signal: AbortSignal.timeout(3000) });
@@ -2519,6 +2575,9 @@ async function initReasoningEffort() {
             audioEnabled = data.audio_enabled === true;
             if (data.reasoning_effort && EFFORT_OPTIONS[data.reasoning_effort]) {
                 serverDefault = data.reasoning_effort;
+            }
+            if (data.search_depth && DEPTH_OPTIONS[data.search_depth]) {
+                serverDepth = data.search_depth;
             }
         }
     } catch (_) {}
@@ -2530,7 +2589,8 @@ async function initReasoningEffort() {
     if (micBtn) {
         micBtn.hidden = !audioEnabled;
     }
-    setReasoningEffort(stored || serverDefault, false);
+    setReasoningEffort(storedEffort || serverDefault, false);
+    setSearchDepth(storedDepth || serverDepth, false);
 }
 
 // ===== Init =====
@@ -2541,6 +2601,7 @@ sendBtn.addEventListener('click', onComposerSubmit);
 clearBtn.addEventListener('click', clearHistory);
 effortBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+    closeDepthMenu();
     toggleEffortMenu();
 });
 effortMenu.addEventListener('click', (e) => {
@@ -2549,13 +2610,30 @@ effortMenu.addEventListener('click', (e) => {
     setReasoningEffort(option.dataset.effort);
     closeEffortMenu();
 });
+depthBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeEffortMenu();
+    toggleDepthMenu();
+});
+depthMenu.addEventListener('click', (e) => {
+    const option = e.target.closest('.effort-option');
+    if (!option) return;
+    setSearchDepth(option.dataset.depth);
+    closeDepthMenu();
+});
 document.addEventListener('click', (e) => {
     if (!effortPicker.contains(e.target)) closeEffortMenu();
+    if (!depthPicker.contains(e.target)) closeDepthMenu();
 });
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && isEffortMenuOpen()) {
+    if (e.key !== 'Escape') return;
+    if (isEffortMenuOpen()) {
         closeEffortMenu();
         effortBtn.focus();
+    }
+    if (isDepthMenuOpen()) {
+        closeDepthMenu();
+        depthBtn.focus();
     }
 });
 textInput.addEventListener('keydown', (e) => {
@@ -2574,7 +2652,7 @@ function resizeTextInput() {
     textInput.style.overflowY = textInput.scrollHeight > max + 1 ? 'auto' : 'hidden';
 }
 
-initReasoningEffort();
+initComposerControls();
 resizeTextInput();
 
 // Проверяем здоровье сервера при загрузке и периодически

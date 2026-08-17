@@ -51,19 +51,20 @@ def _edge_meta_suffix(source_file: str = "", confidence: float | None = None) ->
     return f"  ({src}; conf={conf})"
 
 
-def _directed_edge_line(e: EdgeRecord) -> str:
-    """Triple line: Label: start —REL→ Label: end  (source; conf)."""
-    return (
-        f"{e.start_ref()} —{e.rel_type}→ {e.end_ref()}"
-        f"{_edge_meta_suffix(e.source_file, e.confidence)}"
-    )
+def _directed_edge_line(e: EdgeRecord, hub_display: str = "") -> str:
+    """Triple line: optional `@Hub  ` then Label: start —REL→ Label: end."""
+    triple = f"{e.start_ref()} —{e.rel_type}→ {e.end_ref()}"
+    hub = (hub_display or "").strip()
+    if hub:
+        return f"@{hub}  {triple}"
+    return triple
 
 
-def _edge_card_lines(e: EdgeRecord) -> list[str]:
-    """One edge as triple + indented verbatim quote."""
+def _edge_card_lines(e: EdgeRecord, hub_display: str = "") -> list[str]:
+    """One edge as triple + indented quote with (source; conf) on the quote line."""
     return [
-        _directed_edge_line(e),
-        f'  "{_quote_ev(e.evidence)}"',
+        _directed_edge_line(e, hub_display=hub_display),
+        f'  "{_quote_ev(e.evidence)}"{_edge_meta_suffix(e.source_file, e.confidence)}',
     ]
 
 
@@ -132,22 +133,9 @@ class CandidateGraph:
     transition_adj: dict[str, list[str]] = field(default_factory=dict)
 
 
-def format_spine_lines(edges: list[EdgeRecord]) -> list[str]:
-    """
-    Directed spine cards in Neo4j start→end order.
-
-    SPINE/FANS membership is decided upstream by reshape (transition-hub rule);
-    arrows always reflect the stored relationship direction (A → B, C → B).
-    """
-    lines: list[str] = []
-    for e in edges:
-        lines.extend(_edge_card_lines(e))
-    return lines
-
-
 @dataclass
 class Chain:
-    """Evidence unit: SPINE (ordered) + optional FANS at hubs."""
+    """Evidence unit: walk-ordered tour; spine+fans kept for viz/S5."""
 
     chain_id: str
     edge_keys: list[str]
@@ -159,15 +147,21 @@ class Chain:
     fans: dict[str, list[EdgeRecord]] = field(default_factory=dict)
     # hub_id -> display name
     fan_hub_names: dict[str, str] = field(default_factory=dict)
+    # hop-DP order; empty → reconstruct from spine+fans at format time
+    walk: list[EdgeRecord] = field(default_factory=list)
     text: str = ""
 
     def all_edges(self) -> list[EdgeRecord]:
+        if self.walk:
+            return list(self.walk)
         out = list(self.edges)
         for flist in self.fans.values():
             out.extend(flist)
         return out
 
     def all_edge_keys(self) -> list[str]:
+        if self.walk:
+            return list(dict.fromkeys(e.edge_key for e in self.walk))
         keys = list(self.edge_keys)
         for flist in self.fans.values():
             for e in flist:
@@ -187,20 +181,25 @@ class Chain:
         return tuple(self.edge_keys)
 
     def format_unit(self, uid: str | None = None) -> str:
+        from server.algorithm.unit_reshape import (
+            hub_display_name,
+            linger_hubs,
+            reconstruct_walk,
+        )
+
         label = uid or self.chain_id
-        lines = [f"UNIT {label}", "SPINE:"]
-        if self.edges:
-            lines.extend(format_spine_lines(self.edges))
-        else:
+        lines = [f"UNIT {label}"]
+        walk = list(self.walk) if self.walk else reconstruct_walk(self.edges, self.fans)
+        if not walk:
             for k in self.edge_keys:
                 lines.append(str(k))
-        for hub_id, flist in self.fans.items():
-            if not flist:
-                continue
-            hub_name = self.fan_hub_names.get(hub_id) or hub_id
-            lines.append(f"FANS @{hub_name}:")
-            for e in flist:
-                lines.extend(_edge_card_lines(e))
+            return "\n".join(lines)
+        tags = linger_hubs(walk)
+        for e, hub_id in zip(walk, tags, strict=True):
+            display = (
+                hub_display_name(hub_id, walk, self.fan_hub_names) if hub_id else ""
+            )
+            lines.extend(_edge_card_lines(e, hub_display=display))
         return "\n".join(lines)
 
     def brief(self) -> str:
@@ -219,6 +218,7 @@ class Chain:
             "edges": [e.to_dict_edge() for e in self.edges],
             "fans": {hub: [e.to_dict_edge() for e in flist] for hub, flist in self.fans.items()},
             "fan_hub_names": dict(self.fan_hub_names),
+            "walk": [e.to_dict_edge() for e in self.walk],
             "spine_evidence_seq": list(self.spine_evidence_seq()),
         }
 

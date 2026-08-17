@@ -4,6 +4,7 @@ from typing import AsyncIterator
 from server.utils.config import AppConfig
 from server.utils.constants import LLMProviderType
 from server.core.sessions import current_session
+from server.core.turn_state import bind_turn, searches_state
 from server.llm.base import BaseLLMProvider
 from server.llm.history_manager import HistoryManager
 from server.llm.prompt_loader import PromptLoader
@@ -12,6 +13,7 @@ from server.llm.stream_events import StreamEvent
 from server.tools.registry import Tools
 from server.tools.source_registry import (
     SourceRegistry,
+    citation_stats,
     extract_cited_source_files,
     render_citations,
 )
@@ -61,7 +63,10 @@ class LLMManager:
         return sess.sources if sess else self.tools.source_registry
 
     async def generate_response(
-        self, user_text: str, think_effort: str | None = None
+        self,
+        user_text: str,
+        think_effort: str | None = None,
+        search_depth: str | None = None,
     ) -> str:
         with tracer.start_as_current_span("generate_response") as span:
             span.set_attribute(OI_SPAN_KIND, OISpanKind.CHAIN)
@@ -71,7 +76,9 @@ class LLMManager:
             try:
                 text = ""
                 async for event in self.generate_response_stream(
-                    user_text, think_effort=think_effort
+                    user_text,
+                    think_effort=think_effort,
+                    search_depth=search_depth,
                 ):
                     if event.type == "done":
                         text = event.data.get("final_content") or text
@@ -86,7 +93,10 @@ class LLMManager:
                 raise
 
     async def generate_response_stream(
-        self, user_text: str, think_effort: str | None = None
+        self,
+        user_text: str,
+        think_effort: str | None = None,
+        search_depth: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Stream assistant events. History is updated only after a successful done
@@ -107,43 +117,66 @@ class LLMManager:
             logger.debug(history)
 
             final_content = ""
+            max_searches = max(1, int(self.model.profile.max_turns))
             try:
-                async for event in self.model.generate_response_stream(
-                    user_text=user_text,
-                    prompt=prompt,
-                    history=history,
-                    tools=self.tools.get_openai_tools(),
-                    tool_map=self.tools.get_tool_map(),
-                    think_effort=think_effort,
-                ):
-                    if event.type == "done":
-                        final_content = (
-                            event.data.get("final_content") or final_content
-                        )
-                        # History keeps raw (source:N) plus compact tool receipts.
-                        # User/SSE get [n] + ### Источники; UNIT stays in live UI only.
-                        history_manager.add_entry(
-                            user_text,
-                            final_content,
-                            tool_messages=event.data.get("history_tool_messages")
-                            or [],
-                        )
-                        cited = extract_cited_source_files(final_content, sources)
-                        display = render_citations(final_content, sources)
-                        event = StreamEvent(
-                            "done",
-                            {
-                                "final_content": display,
-                                "cited_source_files": cited,
-                            },
-                        )
-                        set_span_ok(span, display)
-                    elif event.type == "error":
-                        set_span_error(span, event.data.get("message", "error"))
-                    yield event
+                with bind_turn(search_depth, max_searches=max_searches) as turn:
+                    span.set_attribute("search_depth", turn.search_depth)
+                    async for event in self.model.generate_response_stream(
+                        user_text=user_text,
+                        prompt=prompt,
+                        history=history,
+                        tools=self.tools.get_openai_tools(),
+                        tool_map=self.tools.get_tool_map(),
+                        think_effort=think_effort,
+                    ):
+                        if event.type == "done":
+                            final_content = (
+                                event.data.get("final_content") or final_content
+                            )
+                            # History keeps raw (source:N) plus compact tool receipts.
+                            # User/SSE get [n] + ### Источники; UNIT stays in live UI only.
+                            history_manager.add_entry(
+                                user_text,
+                                final_content,
+                                tool_messages=event.data.get("history_tool_messages")
+                                or [],
+                            )
+                            cited = extract_cited_source_files(final_content, sources)
+                            display = render_citations(final_content, sources)
+                            self._log_turn_quality(final_content, sources)
+                            event = StreamEvent(
+                                "done",
+                                {
+                                    "final_content": display,
+                                    "cited_source_files": cited,
+                                },
+                            )
+                            set_span_ok(span, display)
+                        elif event.type == "error":
+                            set_span_error(span, event.data.get("message", "error"))
+                        yield event
             except Exception as e:
                 set_span_error(span, str(e))
                 yield StreamEvent("error", {"message": str(e)})
+
+    def _log_turn_quality(self, answer: str, sources: SourceRegistry) -> None:
+        """Groundedness signal per turn: citations, invented ids, searches spent."""
+        stats = citation_stats(answer, sources)
+        used, limit = searches_state()
+        logger.info(
+            "Turn quality: searches=%s/%s citations=%s unknown=%s uncited_lines=%s",
+            used,
+            limit,
+            stats.known,
+            stats.unknown,
+            stats.uncited_claim_lines,
+        )
+        if stats.unknown:
+            logger.warning(
+                "Ответ содержит %s неизвестных источников — помечены %s",
+                stats.unknown,
+                "[?]",
+            )
 
     def clear_history(self) -> None:
         """Очищает историю диалога и контекст запросов к БД."""
