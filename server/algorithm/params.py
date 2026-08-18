@@ -6,7 +6,7 @@ import os
 from dataclasses import asdict, dataclass, fields
 from typing import Any
 
-# Docker Compose sets RERANK_URL=http://host.docker.internal:7997 for the app service.
+# Docker Compose sets RERANK_URL=http://reranker:7997 for the app service.
 _DEFAULT_RERANK_URL = "http://127.0.0.1:7997"
 
 
@@ -27,7 +27,7 @@ class Params:
     max_ann_texts: int = 16
 
     # S2b Ettin CE: score full ANN pool (≤ L_raw_max), keep top L
-    # Override URL via env RERANK_URL (compose → host.docker.internal:7997).
+    # Override URL via env RERANK_URL (compose → http://reranker:7997).
     rerank_enabled: bool = True
     rerank_url: str = _DEFAULT_RERANK_URL
     rerank_timeout_s: float = 120.0

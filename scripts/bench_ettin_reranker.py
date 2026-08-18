@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Benchmark TEI-compatible ettin reranker API (latency + pairs/s).
 
-Requires the server from scripts/serve_ettin_reranker.py:
+Requires the server from reranker/serve.py:
 
-  .venv/bin/python scripts/serve_ettin_reranker.py --port 7997
+  .venv/bin/python reranker/serve.py --port 7997
 
 Then:
 

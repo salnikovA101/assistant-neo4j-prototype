@@ -266,7 +266,13 @@ cp .env.example .env
 ```bash
 docker compose up --build -d
 ```
-Поднимается `app` на порту `8000`. Neo4j на хосте (не в compose). Phoenix в стеке нет: трейсинг включается только если задать `PHOENIX_COLLECTOR_ENDPOINT`. Реранкер по умолчанию выключен (`rerank_enabled: false` в `server/config.yaml`).
+Поднимается `app` на порту `8000`. Neo4j на хосте (не в compose). Phoenix в стеке нет: трейсинг включается только если задать `PHOENIX_COLLECTOR_ENDPOINT`. Реранкер в этот запуск не входит (`rerank_enabled: false` в `server/config.yaml`).
+
+Чтобы поднять сервис `reranker` (CPU, порт 7997 внутри сети compose):
+```bash
+docker compose --profile rerank up -d
+```
+App ходит на `http://reranker:7997`, когда `rerank_enabled` включён вручную.
 
 ### 9.4 Доступ к интерфейсам
 *   **Web-интерфейс ассистента:** [http://localhost:8000/ui/](http://localhost:8000/ui/)
