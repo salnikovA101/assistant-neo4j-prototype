@@ -4,9 +4,6 @@ soundfile
 faster-whisper
 faster_qwen3_tts
 openai
-openinference-instrumentation-openai
-opentelemetry-sdk
-opentelemetry-exporter-otlp-proto-http
 neo4j
 pydantic
 pydantic-settings

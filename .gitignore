@@ -28,6 +28,5 @@ docs/
 logs/
 reports/
 tests/reports/
-tests/test_results.txt
 db_dump_*.json
 .env.ragas-testing

@@ -10,17 +10,8 @@ import soundfile as sf
 from faster_whisper import WhisperModel
 
 from server.utils.config import SttConfig
-from server.utils.tracing import (
-    OI_INPUT_VALUE,
-    OI_SPAN_KIND,
-    OISpanKind,
-    get_tracer,
-    set_span_error,
-    set_span_ok,
-)
 
 logger = logging.getLogger(__name__)
-tracer = get_tracer(__name__)
 
 
 class STTProvider:
@@ -71,23 +62,13 @@ class STTProvider:
         if len(audio) == 0:
             return None
 
-        with tracer.start_as_current_span("stt_transcribe") as span:
-            span.set_attribute(OI_SPAN_KIND, OISpanKind.TOOL)
-            span.set_attribute(OI_INPUT_VALUE, f"Audio array, shape: {audio.shape}")
+        start = time.perf_counter()
+        text = await asyncio.to_thread(self._transcribe_sync, audio)
+        elapsed = time.perf_counter() - start
 
-            start = time.perf_counter()
-            try:
-                text = await asyncio.to_thread(self._transcribe_sync, audio)
-                elapsed = time.perf_counter() - start
-
-                text = text.strip()
-                logger.info(f"STT Time: {elapsed:.3f}s | Result: {text}")
-
-                set_span_ok(span, text)
-                return text
-            except Exception as e:
-                set_span_error(span, str(e))
-                raise
+        text = text.strip()
+        logger.info(f"STT Time: {elapsed:.3f}s | Result: {text}")
+        return text
 
     async def transcribe_bytes(self, wav_bytes: bytes) -> Optional[str]:
         """

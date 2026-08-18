@@ -6,17 +6,8 @@ from server.core.turn_state import search_depth
 from server.tools.source_registry import SourceRegistry
 from server.tools.subgraph_search import SubgraphSearchAgent
 from server.utils.config import AppConfig
-from server.utils.tracing import (
-    OI_INPUT_VALUE,
-    OI_SPAN_KIND,
-    OISpanKind,
-    get_tracer,
-    set_span_error,
-    set_span_ok,
-)
 
 logger = logging.getLogger(__name__)
-tracer = get_tracer(__name__)
 
 
 class Tools:
@@ -50,31 +41,18 @@ class Tools:
             ignored: tolerated legacy/hallucinated arguments (e.g. `effort`);
                 search depth comes from the UI, not from the model.
         """
-        with tracer.start_as_current_span("ask_subgraph") as span:
-            span.set_attribute(OI_SPAN_KIND, OISpanKind.TOOL)
-            span.set_attribute(
-                OI_INPUT_VALUE,
-                " | ".join(str(s) for s in (subquestions or [])[:6])[:500],
-            )
-            span.set_attribute("search_depth", search_depth())
-            sqs = [str(s).strip() for s in (subquestions or []) if str(s).strip()]
-            if ignored:
-                logger.info("ask_subgraph: игнорируем аргументы модели %s", list(ignored))
-            logger.info(
-                "Вызов ask_subgraph depth=%s n_sq=%s",
-                search_depth(),
-                len(sqs),
-            )
-            for i, text in enumerate(sqs, 1):
-                logger.info("  sq%s: %s", i, text)
+        sqs = [str(s).strip() for s in (subquestions or []) if str(s).strip()]
+        if ignored:
+            logger.info("ask_subgraph: игнорируем аргументы модели %s", list(ignored))
+        logger.info(
+            "Вызов ask_subgraph depth=%s n_sq=%s",
+            search_depth(),
+            len(sqs),
+        )
+        for i, text in enumerate(sqs, 1):
+            logger.info("  sq%s: %s", i, text)
 
-            try:
-                result = await self.subgraph_search.query(subquestions=subquestions)
-                set_span_ok(span, result)
-                return result
-            except Exception as e:
-                set_span_error(span, str(e))
-                raise
+        return await self.subgraph_search.query(subquestions=subquestions)
 
     def clear_history(self) -> None:
         """Очищает сессионный source-реестр."""

@@ -14,7 +14,6 @@ class EmbeddingBackend(StrEnum):
     Backend for graph retrieval embeddings (must match Neo4j vector dims).
     """
 
-    TEI = "tei"  # local text-embeddings-inference
     OPENROUTER = "openrouter"  # OpenRouter / remote OpenAI-compatible API
 
 

@@ -41,15 +41,15 @@ tts:
 # Deploy switches: run_id and rerank_enabled at the top of this file.
 # V6 embeddings: hardcoded OpenRouter nemotron in server/algorithm/embed.py (not yaml).
 llm:
-  current_profile: "other"
-  tool_profile: "other"
+  current_profile: "ollama"
+  tool_profile: "ollama"
   history_len: 30
   prompt_folder: "prompts"
   profiles:
     other:
       provider: "openai"
       model: "qwen/qwen3.8-27b" #Локально
-      temperature: 0.0
+      temperature: 0.7
       top_p: 0.80
       top_k: 20
       min_p: 0.0

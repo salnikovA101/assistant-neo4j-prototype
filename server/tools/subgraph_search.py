@@ -18,17 +18,7 @@ from server.tools.source_registry import (
     collect_source_files,
     remap_filenames_to_source_ids,
 )
-from server.utils.tracing import (
-    OI_INPUT_VALUE,
-    OI_SPAN_KIND,
-    OISpanKind,
-    get_tracer,
-    set_span_error,
-    set_span_ok,
-)
-
 logger = logging.getLogger(__name__)
-tracer = get_tracer(__name__)
 
 # Machine-unambiguous prefixes: the assistant prompt maps each to one behaviour.
 TOOL_ERROR = "TOOL_ERROR"
@@ -163,71 +153,54 @@ class SubgraphSearchAgent:
         sqs, problems = normalize_subquestions(subquestions, seen_subquestions())
         depth = search_depth()
 
-        with tracer.start_as_current_span("subgraph_search_query") as span:
-            span.set_attribute(OI_SPAN_KIND, OISpanKind.TOOL)
-            span.set_attribute(OI_INPUT_VALUE, " | ".join(sqs)[:500])
-            span.set_attribute("effort", depth)
-            span.set_attribute("n_subquestions", len(sqs))
+        if not sqs:
+            err = (
+                f"{TOOL_ERROR}: no usable subquestions. Send 1-"
+                f"{MAX_SUBQUESTIONS} English declarative statements, each a "
+                "different aspect of the question."
+            )
             if problems:
-                span.set_attribute("input_problems", "; ".join(problems)[:500])
+                err = f"{err} Rejected: {'; '.join(problems)}."
+            logger.warning("ask_subgraph rejected input: %s", problems)
+            return err
 
-            if not sqs:
-                err = (
-                    f"{TOOL_ERROR}: no usable subquestions. Send 1-"
-                    f"{MAX_SUBQUESTIONS} English declarative statements, each a "
-                    "different aspect of the question."
-                )
-                if problems:
-                    err = f"{err} Rejected: {'; '.join(problems)}."
-                logger.warning("ask_subgraph rejected input: %s", problems)
-                set_span_error(span, err)
-                return err
-
-            if not take_search_slot():
-                used, limit = searches_state()
-                err = (
-                    f"{TOOL_ERROR}: search budget for this answer is spent "
-                    f"({used}/{limit}). Answer now from the evidence already "
-                    "retrieved."
-                )
-                set_span_error(span, err)
-                return err
-
-            remember_subquestions(sqs)
+        if not take_search_slot():
             used, limit = searches_state()
-            span.set_attribute("search_slot", f"{used}/{limit}")
+            return (
+                f"{TOOL_ERROR}: search budget for this answer is spent "
+                f"({used}/{limit}). Answer now from the evidence already "
+                "retrieved."
+            )
 
-            try:
-                from server.algorithm.params import merge_params
-                from server.algorithm.pipeline import run
-                from server.utils.config import load_config, retrieval_param_overrides
+        remember_subquestions(sqs)
 
-                driver = get_driver()
-                payload = [
-                    {"id": f"sq{i+1}", "text": text} for i, text in enumerate(sqs)
-                ]
-                result = await run(
-                    driver,
-                    subquestions=payload,
-                    effort=depth,
-                    params=merge_params(retrieval_param_overrides(load_config())),
-                )
-                if result.get("error"):
-                    err_msg = f"{TOOL_ERROR}: {result['error']}"
-                    detail = result.get("error_detail")
-                    if detail:
-                        err_msg = f"{err_msg}: {detail}"
-                    set_span_error(span, err_msg)
-                    return err_msg
-                accepted = record_accepted_chains(result.get("accepted") or [])
-                registry = current_sources() or self.source_registry
-                res_str = _format_accepted_chains(accepted, registry)
-                if problems:
-                    res_str = f"{res_str}\n\n[Input note: {'; '.join(problems)}.]"
-                set_span_ok(span, res_str)
-                return res_str
-            except Exception as e:
-                logger.exception("SubgraphSearchAgent failed")
-                err_msg = f"{TOOL_ERROR}: {e}"
-                set_span_error(span, err_msg)
+        try:
+            from server.algorithm.params import merge_params
+            from server.algorithm.pipeline import run
+            from server.utils.config import load_config, retrieval_param_overrides
+
+            driver = get_driver()
+            payload = [
+                {"id": f"sq{i+1}", "text": text} for i, text in enumerate(sqs)
+            ]
+            result = await run(
+                driver,
+                subquestions=payload,
+                effort=depth,
+                params=merge_params(retrieval_param_overrides(load_config())),
+            )
+            if result.get("error"):
+                err_msg = f"{TOOL_ERROR}: {result['error']}"
+                detail = result.get("error_detail")
+                if detail:
+                    err_msg = f"{err_msg}: {detail}"
                 return err_msg
+            accepted = record_accepted_chains(result.get("accepted") or [])
+            registry = current_sources() or self.source_registry
+            res_str = _format_accepted_chains(accepted, registry)
+            if problems:
+                res_str = f"{res_str}\n\n[Input note: {'; '.join(problems)}.]"
+            return res_str
+        except Exception as e:
+            logger.exception("SubgraphSearchAgent failed")
+            return f"{TOOL_ERROR}: {e}"

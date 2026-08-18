@@ -184,8 +184,7 @@ ask_subgraph accepted chains
 | `POST` | `/graph_viz` | Возвращает данные графа для модального визуализатора по `graph_run_id` из SSE `done`. Строится только из accepted chains последнего ответа; LLM не вызывается, embedding-поля не возвращаются. Формат: `views` (по цепям) и `all` (объединенный граф). |
 | `GET` | `/health` | Проверка жизнеспособности (Readiness probe). Возвращает `{"status": "ready"}` после завершения инициализации и прогрева (warmup) моделей. |
 | `GET` | `/ui/` | Раздача статики. Веб-интерфейс ассистента с визуализатором графа на базе `vis-network`. |
-*   **Lifespan Events:** Инициализация и прогрев моделей, настройка трейсинга происходят при старте сервера.
-*   **Трейсинг (OpenTelemetry):** `utils/tracing.py` инструментирует OpenAI, если задан `PHOENIX_COLLECTOR_ENDPOINT`. Без переменной — no-op (в compose коллектор не поднимается).
+*   **Lifespan Events:** Инициализация и прогрев моделей происходят при старте сервера.
 
 ---
 
@@ -266,7 +265,7 @@ cp .env.example .env
 ```bash
 docker compose up --build -d
 ```
-Поднимается `app` на порту `8000`. Neo4j на хосте (не в compose). Phoenix в стеке нет: трейсинг включается только если задать `PHOENIX_COLLECTOR_ENDPOINT`. Реранкер в этот запуск не входит (`rerank_enabled: false` в `server/config.yaml`).
+Поднимается `app` на порту `8000`. Neo4j на хосте (не в compose). Реранкер в этот запуск не входит (`rerank_enabled: false` в `server/config.yaml`).
 
 Чтобы поднять сервис `reranker` (CPU, порт 7997 внутри сети compose):
 ```bash
@@ -287,13 +286,7 @@ App ходит на `http://reranker:7997`, когда `rerank_enabled` вклю
 python -m pytest tests -q
 ```
 
-### 10.2 Живой прогон ассистента
-Сервер должен быть запущен. Скрипт отправляет вопросы на `/process_text_test`:
-```bash
-python -m tests.test_runner
-```
-
-### 10.3 Регрессия промпта
+### 10.2 Регрессия промпта
 Прогоняет кейсы `tests/prompt_regression/cases.json` через `/process_text_stream`
 и проверяет автоматом: бюджет вызовов, язык и уникальность subquestions,
 служебные утечки в ответе, наличие GAPS. Пункты рубрики выводятся для проверки
@@ -304,7 +297,7 @@ python -m tests.prompt_regression.run --case catalog_freshness_indicators
 # отчёт → tests/reports/prompt_regression/report.md
 ```
 
-### 10.4 Оценка retrieval V6
+### 10.3 Оценка retrieval V6
 Нужны доступный Neo4j и JSON-датасет (`tests/qa_open_20.json` или `tests/qa_evidence_50.json`):
 ```bash
 python -m tests.evaluate_v6

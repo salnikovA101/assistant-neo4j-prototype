@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark TEI-compatible ettin reranker API (latency + pairs/s).
+"""Benchmark ettin reranker API (latency + pairs/s).
 
 Requires the server from reranker/serve.py:
 

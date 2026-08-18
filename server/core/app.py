@@ -26,7 +26,6 @@ from server.core.turn_state import (
 )
 from server.llm.base import UI_THINK_EFFORTS, parse_ui_think_effort
 from server.tools.graph_viz import build_graph_viz_payload
-from server.utils.tracing import init_tracing
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,7 +40,6 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Управление жизненным циклом: загрузка моделей при старте, выгрузка при остановке."""
     config = load_config()
-    init_tracing()
 
     if config.debug_mode:
         logging.getLogger().setLevel(logging.DEBUG)

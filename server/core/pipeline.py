@@ -15,17 +15,8 @@ from server.core.graph_runs import (
 )
 from server.core.sessions import bind_conversation, session_store
 from server.tools.source_registry import filter_chains_by_source_files
-from server.utils.tracing import (
-    OI_INPUT_VALUE,
-    OI_SPAN_KIND,
-    OISpanKind,
-    get_tracer,
-    set_span_error,
-    set_span_ok,
-)
 
 logger = logging.getLogger(__name__)
-tracer = get_tracer(__name__)
 
 
 class ServerPipeline:
@@ -97,31 +88,19 @@ class ServerPipeline:
             raise RuntimeError("STT отключён (audio_enabled=false)")
 
         async with bind_conversation(session_id, self.config.llm.history_len):
-            with tracer.start_as_current_span("process_audio") as span:
-                span.set_attribute(OI_SPAN_KIND, OISpanKind.CHAIN)
-                span.set_attribute(
-                    OI_INPUT_VALUE, f"Audio data, size: {len(wav_bytes)} bytes"
-                )
+            text = await self.stt.transcribe_bytes(wav_bytes)
+            if not text:
+                return None, ""
 
-                text = await self.stt.transcribe_bytes(wav_bytes)
-                if not text:
-                    set_span_error(span, "Речь не распознана")
-                    return None, ""
+            logger.info(f"STT: {text}")
 
-                logger.info(f"STT: {text}")
-
-                try:
-                    answer = await asyncio.wait_for(
-                        self.llm.generate_response(user_text=text),
-                        timeout=self.config.server.llm_timeout,
-                    )
-                    display_answer = answer.strip()
-                    logger.info(f"LLM: {display_answer}")
-                    set_span_ok(span, display_answer)
-                    return text, display_answer
-                except Exception as e:
-                    set_span_error(span, str(e))
-                    raise
+            answer = await asyncio.wait_for(
+                self.llm.generate_response(user_text=text),
+                timeout=self.config.server.llm_timeout,
+            )
+            display_answer = answer.strip()
+            logger.info(f"LLM: {display_answer}")
+            return text, display_answer
 
     async def process_text(
         self,
@@ -143,36 +122,24 @@ class ServerPipeline:
             Ответ LLM.
         """
         async with bind_conversation(session_id, self.config.llm.history_len):
-            with tracer.start_as_current_span("process_text") as span:
-                span.set_attribute(OI_SPAN_KIND, OISpanKind.CHAIN)
-                span.set_attribute(OI_INPUT_VALUE, text)
-                if think_effort:
-                    span.set_attribute("think_effort", think_effort)
-                if search_depth:
-                    span.set_attribute("search_depth", search_depth)
-                logger.info(
-                    "Текст: %s effort=%s depth=%s",
-                    text,
-                    think_effort or "-",
-                    search_depth or "-",
-                )
+            logger.info(
+                "Текст: %s effort=%s depth=%s",
+                text,
+                think_effort or "-",
+                search_depth or "-",
+            )
 
-                try:
-                    answer = await asyncio.wait_for(
-                        self.llm.generate_response(
-                            user_text=text,
-                            think_effort=think_effort,
-                            search_depth=search_depth,
-                        ),
-                        timeout=self.config.server.llm_timeout,
-                    )
-                    display_answer = answer.strip()
-                    logger.info(f"LLM: {display_answer}")
-                    set_span_ok(span, display_answer)
-                    return display_answer
-                except Exception as e:
-                    set_span_error(span, str(e))
-                    raise
+            answer = await asyncio.wait_for(
+                self.llm.generate_response(
+                    user_text=text,
+                    think_effort=think_effort,
+                    search_depth=search_depth,
+                ),
+                timeout=self.config.server.llm_timeout,
+            )
+            display_answer = answer.strip()
+            logger.info(f"LLM: {display_answer}")
+            return display_answer
 
     async def process_text_stream(
         self,
@@ -186,69 +153,56 @@ class ServerPipeline:
         Stream LLM events (thinking / tools / content / done) for text input.
         """
         async with bind_conversation(session_id, self.config.llm.history_len):
-            with tracer.start_as_current_span("process_text_stream") as span:
-                span.set_attribute(OI_SPAN_KIND, OISpanKind.CHAIN)
-                span.set_attribute(OI_INPUT_VALUE, text)
-                if think_effort:
-                    span.set_attribute("think_effort", think_effort)
-                if search_depth:
-                    span.set_attribute("search_depth", search_depth)
-                logger.info(
-                    "Текст (stream): %s effort=%s depth=%s",
-                    text,
-                    think_effort or "-",
-                    search_depth or "-",
-                )
+            logger.info(
+                "Текст (stream): %s effort=%s depth=%s",
+                text,
+                think_effort or "-",
+                search_depth or "-",
+            )
 
-                final_content = ""
-                collector_token = new_graph_collector()
+            final_content = ""
+            collector_token = new_graph_collector()
 
-                try:
-                    async for event in self.llm.generate_response_stream(
-                        user_text=text,
-                        think_effort=think_effort,
-                        search_depth=search_depth,
-                    ):
-                        if request and await request.is_disconnected():
-                            logger.info("Клиент отключился — остановка LLM stream")
-                            break
+            try:
+                async for event in self.llm.generate_response_stream(
+                    user_text=text,
+                    think_effort=think_effort,
+                    search_depth=search_depth,
+                ):
+                    if request and await request.is_disconnected():
+                        logger.info("Клиент отключился — остановка LLM stream")
+                        break
 
-                        if event.type == "done":
-                            final_content = (
-                                event.data.get("final_content") or final_content
-                            )
-                            cited = event.data.get("cited_source_files") or []
-                            graph_chains = filter_chains_by_source_files(
-                                current_graph_collector() or [],
-                                cited,
-                            )
-                            graph_run_id = (
-                                graph_run_store.put(graph_chains)
-                                if graph_chains
-                                else ""
-                            )
-                            graph_chain_count = (
-                                len(graph_chains) if graph_run_id else 0
-                            )
-                            event = StreamEvent(
-                                "done",
-                                {
-                                    "final_content": final_content,
-                                    "graph_run_id": graph_run_id,
-                                    "graph_chain_count": graph_chain_count,
-                                },
-                            )
-                            set_span_ok(span, final_content)
-                            logger.info(f"LLM (stream): {final_content}")
-                        elif event.type == "error":
-                            set_span_error(span, event.data.get("message", "error"))
+                    if event.type == "done":
+                        final_content = (
+                            event.data.get("final_content") or final_content
+                        )
+                        cited = event.data.get("cited_source_files") or []
+                        graph_chains = filter_chains_by_source_files(
+                            current_graph_collector() or [],
+                            cited,
+                        )
+                        graph_run_id = (
+                            graph_run_store.put(graph_chains) if graph_chains else ""
+                        )
+                        graph_chain_count = (
+                            len(graph_chains) if graph_run_id else 0
+                        )
+                        event = StreamEvent(
+                            "done",
+                            {
+                                "final_content": final_content,
+                                "graph_run_id": graph_run_id,
+                                "graph_chain_count": graph_chain_count,
+                            },
+                        )
+                        logger.info(f"LLM (stream): {final_content}")
 
-                        yield event
-                except Exception as e:
-                    set_span_error(span, str(e))
-                    yield StreamEvent("error", {"message": str(e)})
-                finally:
-                    reset_graph_collector(collector_token)
+                    yield event
+            except Exception as e:
+                yield StreamEvent("error", {"message": str(e)})
+            finally:
+                reset_graph_collector(collector_token)
 
     async def synthesize(
         self, text: str, request: Optional[Request] = None
@@ -266,17 +220,12 @@ class ServerPipeline:
         if self.tts is None:
             raise RuntimeError("TTS отключён (audio_enabled=false)")
 
-        with tracer.start_as_current_span("synthesize") as span:
-            span.set_attribute(OI_SPAN_KIND, OISpanKind.TOOL)
-            span.set_attribute(OI_INPUT_VALUE, text)
-            try:
-                async for chunk in self.tts.synthesize_stream(text):
-                    if request and await request.is_disconnected():
-                        logger.info("Клиент отключился (barge in). Остановка TTS.")
-                        break
-                    yield chunk
-                set_span_ok(span, "Audio stream completed")
-            except Exception as e:
-                set_span_error(span, str(e))
-                logger.warning(f"TTS стрим прерван из-за ошибки: {e}")
+        try:
+            async for chunk in self.tts.synthesize_stream(text):
+                if request and await request.is_disconnected():
+                    logger.info("Клиент отключился (barge in). Остановка TTS.")
+                    break
+                yield chunk
+        except Exception as e:
+            logger.warning(f"TTS стрим прерван из-за ошибки: {e}")
 

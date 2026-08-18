@@ -20,8 +20,6 @@ class EmbeddingError(RuntimeError):
 
 OPENROUTER_DEFAULT_MODEL = "nvidia/nemotron-3-embed-1b:free"
 OPENROUTER_DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
-TEI_DEFAULT_MODEL = "Qwen/Qwen3-Embedding-0.6B"
-TEI_DEFAULT_BASE_URL = "http://localhost:7998/v1"
 _MAX_RETRIES = 5
 _RETRY_BASE_SEC = 2.0
 _BATCH_SIZE = 32
@@ -47,43 +45,32 @@ def _resolve_embed_settings(
     url: str | None = None,
     backend: EmbeddingBackend | str | None = None,
 ) -> tuple[EmbeddingBackend, str, str, dict[str, str]]:
-    """Resolve backend, model, embeddings URL, and request headers.
+    """Resolve OpenRouter model, embeddings URL, and request headers.
 
-    Defaults match embed.py (OpenRouter nemotron). TEI only if caller passes it.
+    Defaults match embed.py (nvidia/nemotron-3-embed-1b).
     """
     resolved_backend = EmbeddingBackend(backend or EmbeddingBackend.OPENROUTER)
-
-    if resolved_backend == EmbeddingBackend.TEI:
-        model = model_id or TEI_DEFAULT_MODEL
-        base = (
-            url or os.environ.get("EMBEDDING_URL") or TEI_DEFAULT_BASE_URL
-        ).rstrip("/")
-        headers = {"Content-Type": "application/json"}
-        tei_key = os.environ.get("EMBEDDING_API_KEY")
-        if tei_key:
-            headers["Authorization"] = f"Bearer {tei_key}"
-    else:
-        _ensure_env_loaded()
-        model = model_id or OPENROUTER_DEFAULT_MODEL
-        base = (url or OPENROUTER_DEFAULT_BASE_URL).rstrip("/")
-        key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get(
-            "LLM__PROFILES__OTHER__API_KEY"
+    _ensure_env_loaded()
+    model = model_id or OPENROUTER_DEFAULT_MODEL
+    base = (url or OPENROUTER_DEFAULT_BASE_URL).rstrip("/")
+    key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get(
+        "LLM__PROFILES__OTHER__API_KEY"
+    )
+    if not key:
+        raise RuntimeError(
+            "OpenRouter API key not found "
+            "(OPENROUTER_API_KEY or LLM__PROFILES__OTHER__API_KEY)"
         )
-        if not key:
-            raise RuntimeError(
-                "OpenRouter API key not found "
-                "(OPENROUTER_API_KEY or LLM__PROFILES__OTHER__API_KEY)"
-            )
-        headers = {
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-        }
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
 
     embeddings_url = base if base.endswith("/embeddings") else f"{base}/embeddings"
     return resolved_backend, model, embeddings_url, headers
 
 
-def _truncate_for_tei(text: str, max_chars: int) -> str:
+def _truncate_input(text: str, max_chars: int) -> str:
     t = text or ""
     if max_chars <= 0 or len(t) <= max_chars:
         return t
@@ -149,14 +136,14 @@ async def get_embeddings_batch(
     url: str | None = None,
     backend: EmbeddingBackend | str | None = None,
 ) -> list[list[float]]:
-    """Fetch embeddings (OpenRouter by default, or TEI if backend=tei).
+    """Fetch embeddings via OpenRouter (nvidia/nemotron-3-embed-1b by default).
 
     Raises EmbeddingError after retries instead of returning empty vectors.
     """
     if not texts:
         return []
 
-    prepared = [_truncate_for_tei(t, _MAX_INPUT_CHARS) for t in texts]
+    prepared = [_truncate_input(t, _MAX_INPUT_CHARS) for t in texts]
     resolved_backend, model, embeddings_url, headers = _resolve_embed_settings(
         model_id=model_id, url=url, backend=backend
     )
@@ -173,9 +160,11 @@ async def get_embeddings_batch(
     async with httpx.AsyncClient(trust_env=False) as client:
         for i in range(0, len(prepared), _BATCH_SIZE):
             chunk = prepared[i : i + _BATCH_SIZE]
-            payload: dict = {"model": model, "input": chunk}
-            if resolved_backend == EmbeddingBackend.OPENROUTER:
-                payload["encoding_format"] = "float"
+            payload: dict = {
+                "model": model,
+                "input": chunk,
+                "encoding_format": "float",
+            }
             vectors = await _post_embeddings_once(
                 client,
                 embeddings_url=embeddings_url,
@@ -186,9 +175,11 @@ async def get_embeddings_batch(
             if len(vectors) != len(chunk):
                 vectors = []
                 for t in chunk:
-                    one_payload: dict = {"model": model, "input": [t]}
-                    if resolved_backend == EmbeddingBackend.OPENROUTER:
-                        one_payload["encoding_format"] = "float"
+                    one_payload: dict = {
+                        "model": model,
+                        "input": [t],
+                        "encoding_format": "float",
+                    }
                     one = await _post_embeddings_once(
                         client,
                         embeddings_url=embeddings_url,
