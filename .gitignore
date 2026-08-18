@@ -30,3 +30,4 @@ reports/
 tests/reports/
 db_dump_*.json
 .env.ragas-testing
+dumps/

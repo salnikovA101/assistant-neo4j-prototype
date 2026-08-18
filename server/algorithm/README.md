@@ -17,7 +17,7 @@ and how many to emit (5 / 10 / 15). It comes from the UI search-depth control
 S2/S3 optionally restrict to one relationship `run_id` from `server/config.yaml`
 (`Params.run_id`). Non-empty: Cypher 25 `SEARCH … WHERE r.run_id = $run_id`
 inside the existing per-type vector indexes (same L / L_raw_max). Indexes must
-include `WITH [r.run_id]` — `python scripts/recreate_rel_vector_indexes.py`.
+include `WITH [r.run_id]` — `python scripts/vectorize_edges.py --recreate-indexes`.
 Empty `run_id`: unfiltered ANN (legacy `queryRelationships`) and a startup warning.
 `rerank_enabled` in `server/config.yaml` (default for deploy: false) is passed into
 `Params`; false skips Ettin and keeps ANN sim order.

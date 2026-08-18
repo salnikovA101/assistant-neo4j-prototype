@@ -238,7 +238,7 @@ cp .env.example .env
 | `TTS__CLOUD__API_KEY` | Ключ для работы с облачным режимом TTS |
 | `TTS__CLOUD__BASE_URL` | Базовый URL провайдера облачного TTS |
 
-Связи в Neo4j несут свойство `run_id` (идентификатор загрузки корпуса). V6 ANN и S3-мосты фильтруют по `run_id` из `server/config.yaml` (пустой = весь индекс, warning при старте). Vector indexes на `evidence_embedding` должны быть созданы с `WITH [r.run_id]`; один раз: `python scripts/recreate_rel_vector_indexes.py`.
+Связи в Neo4j несут свойство `run_id` (идентификатор загрузки корпуса). V6 ANN и S3-мосты фильтруют по `run_id` из `server/config.yaml` (пустой = весь индекс, warning при старте). Vector indexes на `evidence_embedding` должны быть созданы с `WITH [r.run_id]`; один раз: `python scripts/vectorize_edges.py --recreate-indexes`.
 
 > **Совет:** Чтобы переключить активную модель LLM или TTS, откройте `server/config.yaml` и измените значения `llm.current_profile` (или `tts.mode`). 
 > 
