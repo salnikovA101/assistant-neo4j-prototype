@@ -109,6 +109,7 @@ async def _add_bridges(
         sq_vec,
         exclude_ids=exclude,
         limit=params.bridge_top,
+        run_id=(params.run_id or "").strip(),
     )
     out: dict[str, EdgeRecord] = {}
     for b in rows:

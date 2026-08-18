@@ -185,7 +185,7 @@ ask_subgraph accepted chains
 | `GET` | `/health` | Проверка жизнеспособности (Readiness probe). Возвращает `{"status": "ready"}` после завершения инициализации и прогрева (warmup) моделей. |
 | `GET` | `/ui/` | Раздача статики. Веб-интерфейс ассистента с визуализатором графа на базе `vis-network`. |
 *   **Lifespan Events:** Инициализация и прогрев моделей, настройка трейсинга происходят при старте сервера.
-*   **Трейсинг (OpenTelemetry + Phoenix):** `utils/tracing.py` автоматически инструментирует вызовы OpenAI и создает кастомные спаны (`span.kind = TOOL / CHAIN`) для контроля времени выполнения и отладки промптов. Интерфейс доступен на порту `6006`.
+*   **Трейсинг (OpenTelemetry):** `utils/tracing.py` инструментирует OpenAI, если задан `PHOENIX_COLLECTOR_ENDPOINT`. Без переменной — no-op (в compose коллектор не поднимается).
 
 ---
 
@@ -239,7 +239,7 @@ cp .env.example .env
 | `TTS__CLOUD__API_KEY` | Ключ для работы с облачным режимом TTS |
 | `TTS__CLOUD__BASE_URL` | Базовый URL провайдера облачного TTS |
 
-Связи в Neo4j могут нести свойство `run_id` (идентификатор загрузки корпуса). Retrieval V6 сейчас не фильтрует ANN/bridges по этому полю.
+Связи в Neo4j несут свойство `run_id` (идентификатор загрузки корпуса). V6 ANN и S3-мосты фильтруют по `run_id` из `server/config.yaml` (пустой = весь индекс, warning при старте). Vector indexes на `evidence_embedding` должны быть созданы с `WITH [r.run_id]`; один раз: `python scripts/recreate_rel_vector_indexes.py`.
 
 > **Совет:** Чтобы переключить активную модель LLM или TTS, откройте `server/config.yaml` и измените значения `llm.current_profile` (или `tts.mode`). 
 > 
@@ -262,17 +262,14 @@ cp .env.example .env
 
 
 ### 9.3 Запуск контейнеров
-Запустите сборку и старт сервисов:
+Запустите сборку и старт сервиса (`restart: unless-stopped`):
 ```bash
-docker compose up --build
+docker compose up --build -d
 ```
-Это поднимет два сервиса:
-*   `app` — сам голосовой сервер (на порту `8000`).
-*   `phoenix` — система трейсинга и мониторинга спанов (на порту `6006`).
+Поднимается `app` на порту `8000`. Neo4j на хосте (не в compose). Phoenix в стеке нет: трейсинг включается только если задать `PHOENIX_COLLECTOR_ENDPOINT`. Реранкер по умолчанию выключен (`rerank_enabled: false` в `server/config.yaml`).
 
 ### 9.4 Доступ к интерфейсам
 *   **Web-интерфейс ассистента:** [http://localhost:8000/ui/](http://localhost:8000/ui/)
-*   **Трейсинг (Phoenix):** [http://localhost:6006](http://localhost:6006)
 *   **Neo4j Browser (если установлен локально):** [http://localhost:7474](http://localhost:7474)
 
 ---

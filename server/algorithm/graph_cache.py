@@ -27,6 +27,7 @@ S3_FINGERPRINT_KEYS: tuple[str, ...] = (
     "bridge_top",
     "branch_cap",
     "rerank_enabled",
+    "run_id",
 )
 
 

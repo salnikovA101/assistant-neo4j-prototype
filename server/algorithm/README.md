@@ -14,6 +14,14 @@ emit: sort by S4 score, cap (`emit_top_k_*`), drop score cliff (`emit_score_frac
 and how many to emit (5 / 10 / 15). It comes from the UI search-depth control
 (`server/core/turn_state.py`), not from the assistant model.
 
+S2/S3 optionally restrict to one relationship `run_id` from `server/config.yaml`
+(`Params.run_id`). Non-empty: Cypher 25 `SEARCH … WHERE r.run_id = $run_id`
+inside the existing per-type vector indexes (same L / L_raw_max). Indexes must
+include `WITH [r.run_id]` — `python scripts/recreate_rel_vector_indexes.py`.
+Empty `run_id`: unfiltered ANN (legacy `queryRelationships`) and a startup warning.
+`rerank_enabled` in `server/config.yaml` (default for deploy: false) is passed into
+`Params`; false skips Ettin and keeps ANN sim order.
+
 ### S4
 
 - `s4_paths_per_graph` (default 3) profitable tours per S3 graph per fill
@@ -63,7 +71,7 @@ metrics are on the emitted set.
   --graph-cache --graph-cache-read-only
 # graph cache → tests/reports/v6_cache/graphs/{qid}.json
 # Invalidates on L / L_raw_max / bridge_top / branch_cap / rerank_enabled /
-# sq texts / framing id change.
+# run_id / sq texts / framing id change.
 ```
 
 Wired to the assistant via `ask_subgraph` (`server/tools/subgraph_search.py`).

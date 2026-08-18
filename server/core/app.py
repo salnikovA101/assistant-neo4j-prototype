@@ -56,6 +56,18 @@ async def lifespan(app: FastAPI):
         ]:
             logging.getLogger(name).setLevel(logging.ERROR)
 
+    rid = (config.run_id or "").strip()
+    if not rid:
+        logger.warning(
+            "run_id is empty: V6 ANN/bridges search the full vector index"
+        )
+    else:
+        logger.info("V6 corpus run_id=%s", rid)
+    if not config.rerank_enabled:
+        logger.warning("rerank_enabled=false: S2b keeps ANN order by sim")
+    else:
+        logger.info("V6 S2b rerank enabled")
+
     logger.info("Инициализация ServerPipeline...")
     pipeline = ServerPipeline(config)
     await pipeline.startup()

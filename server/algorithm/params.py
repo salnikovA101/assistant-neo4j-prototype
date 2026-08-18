@@ -16,6 +16,9 @@ def _rerank_url_default() -> str:
 
 @dataclass
 class Params:
+    # One Neo4j relationship.run_id for in-index ANN + S3 bridges. Empty = all.
+    run_id: str = ""
+
     # S2 ANN: per relationship vector index take L, merge all, then cut to L_raw_max.
     # L is also CE keep (S2b) and S3 anchor budget — one shared top-K.
     L: int = 100

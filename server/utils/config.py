@@ -111,11 +111,24 @@ class AppConfig(BaseSettings):
 
     debug_mode: bool = False
     audio_enabled: bool = True
+    # Neo4j relationship.run_id for V6 ANN/bridges. Empty = no corpus filter.
+    run_id: str = ""
+    # S2b cross-encoder. false skips Ettin (ANN sim order).
+    rerank_enabled: bool = True
     server: ServerConfig = Field(default_factory=ServerConfig)
     stt: SttConfig = Field(default_factory=SttConfig)
     tts: TtsConfig = Field(default_factory=TtsConfig)
     llm: LlmConfig = Field(default_factory=LlmConfig)
     neo4j: Neo4jConfig = Field(default_factory=Neo4jConfig)
+
+
+def retrieval_param_overrides(config: AppConfig | None = None) -> dict:
+    """Params fields driven by config.yaml (run_id, rerank_enabled)."""
+    cfg = config or load_config()
+    return {
+        "run_id": (cfg.run_id or "").strip(),
+        "rerank_enabled": bool(cfg.rerank_enabled),
+    }
 
 
 def load_config() -> AppConfig:

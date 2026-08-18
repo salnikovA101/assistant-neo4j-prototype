@@ -1311,6 +1311,8 @@ def test_graph_cache_edge_roundtrip():
     assert build_fingerprint(p, sqs) == build_fingerprint(p2, sqs)
     p3 = Params(L=50)
     assert build_fingerprint(p, sqs) != build_fingerprint(p3, sqs)
+    p4 = Params(run_id="corpus_a")
+    assert build_fingerprint(p, sqs) != build_fingerprint(p4, sqs)
 
     bundle = build_s3_bundle(
         qid="q0",

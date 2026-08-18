@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Iterable
 from typing import Any
 
@@ -16,6 +17,90 @@ _START_LABEL = f"[l IN labels(startNode(r)) WHERE l IN {_PRIMARY_LABEL_CYPHER}][
 _END_LABEL = f"[l IN labels(endNode(r)) WHERE l IN {_PRIMARY_LABEL_CYPHER}][0]"
 _START_LABEL_REL = f"[l IN labels(startNode(relationship)) WHERE l IN {_PRIMARY_LABEL_CYPHER}][0]"
 _END_LABEL_REL = f"[l IN labels(endNode(relationship)) WHERE l IN {_PRIMARY_LABEL_CYPHER}][0]"
+
+# SEARCH cannot take the index name as a $param; names come from SHOW VECTOR INDEXES.
+_VECTOR_INDEX_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+
+
+def sanitize_vector_index_name(name: str) -> str:
+    n = (name or "").strip()
+    if not _VECTOR_INDEX_NAME_RE.fullmatch(n):
+        raise ValueError(f"invalid vector index name: {name!r}")
+    return n
+
+
+def relationship_ann_query(index_name: str, *, run_id: str = "") -> str:
+    """S2 ANN Cypher. Non-empty run_id → Cypher 25 in-index SEARCH filter."""
+    idx = sanitize_vector_index_name(index_name)
+    if not (run_id or "").strip():
+        return f"""
+    CALL db.index.vector.queryRelationships($index, $k, $embedding)
+    YIELD relationship, score
+    RETURN elementId(relationship) AS rid,
+           type(relationship) AS rel_type,
+           elementId(startNode(relationship)) AS start_id,
+           elementId(endNode(relationship)) AS end_id,
+           coalesce(startNode(relationship).name, '') AS start_name,
+           coalesce(endNode(relationship).name, '') AS end_name,
+           coalesce({_START_LABEL_REL}, '') AS start_label,
+           coalesce({_END_LABEL_REL}, '') AS end_label,
+           coalesce(relationship.chunk_id, '') AS chunk_id,
+           coalesce(relationship.evidence, '') AS evidence,
+           score AS score
+    """
+    return f"""
+    CYPHER 25
+    MATCH ()-[r]->()
+      SEARCH r IN (
+        VECTOR INDEX {idx}
+        FOR $embedding
+        WHERE r.run_id = $run_id
+        LIMIT $k
+      ) SCORE AS score
+    RETURN elementId(r) AS rid,
+           type(r) AS rel_type,
+           elementId(startNode(r)) AS start_id,
+           elementId(endNode(r)) AS end_id,
+           coalesce(startNode(r).name, '') AS start_name,
+           coalesce(endNode(r).name, '') AS end_name,
+           coalesce({_START_LABEL}, '') AS start_label,
+           coalesce({_END_LABEL}, '') AS end_label,
+           coalesce(r.chunk_id, '') AS chunk_id,
+           coalesce(r.evidence, '') AS evidence,
+           score AS score
+    """
+
+
+def induced_bridges_query(*, run_id: str = "") -> str:
+    extra = ""
+    if (run_id or "").strip():
+        extra = "\n  AND r.run_id = $run_id"
+    return f"""
+UNWIND $node_ids AS nid
+MATCH (n)-[r]-(m)
+WHERE elementId(n) = nid
+  AND elementId(m) IN $node_ids
+  AND elementId(n) < elementId(m)
+  AND NOT elementId(r) IN $exclude_ids
+  AND r.evidence_embedding IS NOT NULL{extra}
+WITH DISTINCT r
+WITH r, vector.similarity.cosine(r.evidence_embedding, $sqVec) AS score
+ORDER BY score DESC
+LIMIT $limit
+RETURN elementId(r) AS rid,
+       type(r) AS rel_type,
+       elementId(startNode(r)) AS start_id,
+       elementId(endNode(r)) AS end_id,
+       coalesce(startNode(r).name, '') AS start_name,
+       coalesce(endNode(r).name, '') AS end_name,
+       coalesce({_START_LABEL}, '') AS start_label,
+       coalesce({_END_LABEL}, '') AS end_label,
+       coalesce(r.chunk_id, '') AS chunk_id,
+       coalesce(r.evidence, '') AS evidence,
+       coalesce(r.source_file, '') AS source_file,
+       coalesce(r.confidence, 1.0) AS confidence,
+       score AS score
+"""
 
 FETCH_EDGE_PROPS = f"""
 UNWIND $ids AS rid
@@ -72,32 +157,7 @@ RETURN elementId(r) AS id,
 
 
 # Induced bridges on endpoints, ranked by cosine(evidence_emb, $sqVec), LIMIT in DB.
-INDUCED_BRIDGES_BY_SIM = f"""
-UNWIND $node_ids AS nid
-MATCH (n)-[r]-(m)
-WHERE elementId(n) = nid
-  AND elementId(m) IN $node_ids
-  AND elementId(n) < elementId(m)
-  AND NOT elementId(r) IN $exclude_ids
-  AND r.evidence_embedding IS NOT NULL
-WITH DISTINCT r
-WITH r, vector.similarity.cosine(r.evidence_embedding, $sqVec) AS score
-ORDER BY score DESC
-LIMIT $limit
-RETURN elementId(r) AS rid,
-       type(r) AS rel_type,
-       elementId(startNode(r)) AS start_id,
-       elementId(endNode(r)) AS end_id,
-       coalesce(startNode(r).name, '') AS start_name,
-       coalesce(endNode(r).name, '') AS end_name,
-       coalesce({_START_LABEL}, '') AS start_label,
-       coalesce({_END_LABEL}, '') AS end_label,
-       coalesce(r.chunk_id, '') AS chunk_id,
-       coalesce(r.evidence, '') AS evidence,
-       coalesce(r.source_file, '') AS source_file,
-       coalesce(r.confidence, 1.0) AS confidence,
-       score AS score
-"""
+INDUCED_BRIDGES_BY_SIM = induced_bridges_query()
 
 
 async def fetch_edge_properties(driver: AsyncDriver, element_ids: Iterable[str]) -> list[dict[str, Any]]:
@@ -172,19 +232,26 @@ async def fetch_induced_bridges_by_sim(
     *,
     exclude_ids: Iterable[str] | None = None,
     limit: int = 200,
+    run_id: str = "",
 ) -> list[dict[str, Any]]:
     """Induced bridges ranked by cosine to sq_vec; LIMIT applied in Cypher."""
     ids = list({i for i in node_ids if i})
     if len(ids) < 2 or limit <= 0 or not sq_vec:
         return []
     excl = list({i for i in (exclude_ids or []) if i})
+    rid = (run_id or "").strip()
+    params: dict[str, Any] = {
+        "node_ids": ids,
+        "exclude_ids": excl,
+        "sqVec": list(sq_vec),
+        "limit": int(limit),
+    }
+    if rid:
+        params["run_id"] = rid
     async with driver.session() as session:
         result = await session.run(
-            INDUCED_BRIDGES_BY_SIM,
-            node_ids=ids,
-            exclude_ids=excl,
-            sqVec=list(sq_vec),
-            limit=int(limit),
+            induced_bridges_query(run_id=rid),
+            **params,
         )
         return [dict(r) async for r in result]
 
@@ -194,24 +261,21 @@ async def query_relationship_ann(
     index_name: str,
     embedding: list[float],
     top_k: int,
+    *,
+    run_id: str = "",
 ) -> list[dict[str, Any]]:
-    cypher = f"""
-    CALL db.index.vector.queryRelationships($index, $k, $embedding)
-    YIELD relationship, score
-    RETURN elementId(relationship) AS rid,
-           type(relationship) AS rel_type,
-           elementId(startNode(relationship)) AS start_id,
-           elementId(endNode(relationship)) AS end_id,
-           coalesce(startNode(relationship).name, '') AS start_name,
-           coalesce(endNode(relationship).name, '') AS end_name,
-           coalesce({_START_LABEL_REL}, '') AS start_label,
-           coalesce({_END_LABEL_REL}, '') AS end_label,
-           coalesce(relationship.chunk_id, '') AS chunk_id,
-           coalesce(relationship.evidence, '') AS evidence,
-           score AS score
-    """
+    rid = (run_id or "").strip()
+    cypher = relationship_ann_query(index_name, run_id=rid)
+    params: dict[str, Any] = {
+        "k": int(top_k),
+        "embedding": embedding,
+    }
+    if rid:
+        params["run_id"] = rid
+    else:
+        params["index"] = index_name
     async with driver.session() as session:
-        result = await session.run(cypher, index=index_name, k=int(top_k), embedding=embedding)
+        result = await session.run(cypher, **params)
         return [dict(r) async for r in result]
 
 

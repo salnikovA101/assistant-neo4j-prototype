@@ -29,7 +29,7 @@ from server.algorithm.graph_cache import (
 from server.algorithm.params import Params, merge_params
 from server.algorithm.pipeline import run
 from server.core.db import close_driver, init_driver
-from server.utils.config import load_config
+from server.utils.config import load_config, retrieval_param_overrides
 from tests.algorithm.mock_decompose import mock_decompose
 
 logger = logging.getLogger(__name__)
@@ -932,6 +932,8 @@ async def main_async(args: argparse.Namespace) -> None:
         if key not in allowed:
             raise SystemExit(f"unknown Params field {key!r}")
         overrides[key] = _parse_param_value(key, val.strip())
+    for key, val in retrieval_param_overrides(config).items():
+        overrides.setdefault(key, val)
     base_params = merge_params(overrides or None)
     if args.set_param:
         logged = {}

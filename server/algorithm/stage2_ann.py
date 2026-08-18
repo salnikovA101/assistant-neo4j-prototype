@@ -111,7 +111,13 @@ async def edge_ann_search(
     async def _query_one(emb: list[float], index_name: str):
         async with sem:
             try:
-                hits = await query_relationship_ann(driver, index_name, emb, top_k=params.L)
+                hits = await query_relationship_ann(
+                    driver,
+                    index_name,
+                    emb,
+                    top_k=params.L,
+                    run_id=(params.run_id or "").strip(),
+                )
                 return hits, None
             except Exception as e:
                 return [], e
@@ -158,12 +164,14 @@ async def edge_ann_search(
     if len(raw) > params.L_raw_max:
         ranked = sorted(raw.values(), key=lambda h: h.sim, reverse=True)
         raw = {h.edge_key: h for h in ranked[: params.L_raw_max]}
+    rid = (params.run_id or "").strip()
     logger.info(
-        "V6 S2 ANN indexes=%s per_index_L=%s merged_unique=%s after_L_raw_max=%s",
+        "V6 S2 ANN indexes=%s per_index_L=%s merged_unique=%s after_L_raw_max=%s run_id=%s",
         len(rel_indexes),
         params.L,
         n_merged,
         len(raw),
+        rid or "*",
     )
 
     prop_ids = [h.element_id for h in raw.values() if h.element_id]

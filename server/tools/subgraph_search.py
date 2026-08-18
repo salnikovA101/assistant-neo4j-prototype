@@ -198,7 +198,9 @@ class SubgraphSearchAgent:
             span.set_attribute("search_slot", f"{used}/{limit}")
 
             try:
+                from server.algorithm.params import merge_params
                 from server.algorithm.pipeline import run
+                from server.utils.config import load_config, retrieval_param_overrides
 
                 driver = get_driver()
                 payload = [
@@ -208,6 +210,7 @@ class SubgraphSearchAgent:
                     driver,
                     subquestions=payload,
                     effort=depth,
+                    params=merge_params(retrieval_param_overrides(load_config())),
                 )
                 if result.get("error"):
                     err_msg = f"{TOOL_ERROR}: {result['error']}"
