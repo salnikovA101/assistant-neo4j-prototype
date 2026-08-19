@@ -182,8 +182,9 @@ ask_subgraph accepted chains
 | `POST` | `/process_text` | Текстовый аналог `/process`. Принимает JSON `{"text": "..."}`. Возвращает потоковый `audio/pcm` ответ (генерация аудио из текста ответа) с заголовками метаданных. |
 | `POST` | `/process_text_test`| Тестовая текстовая ручка. Принимает JSON `{"text": "..."}`, возвращает JSON `{"answer": "..."}`. **Не** генерирует аудио. Полезна для скриптов, E2E тестов и отладки промптов. |
 | `POST` | `/graph_viz` | Возвращает данные графа для модального визуализатора по `graph_run_id` из SSE `done`. Строится только из accepted chains последнего ответа; LLM не вызывается, embedding-поля не возвращаются. Формат: `views` (по цепям) и `all` (объединенный граф). |
-| `GET` | `/health` | Проверка жизнеспособности (Readiness probe). Возвращает `{"status": "ready"}` после завершения инициализации и прогрева (warmup) моделей. |
-| `GET` | `/ui/` | Раздача статики. Веб-интерфейс ассистента с визуализатором графа на базе `vis-network`. |
+| `GET` | `/login` | Форма входа. После успеха — cookie `ui_session` (HttpOnly, SameSite=Lax) и редирект на `/ui/`. |
+| `GET` | `/health` | Проверка жизнеспособности. Без cookie или HTTP Basic — 401. |
+| `GET` | `/ui/` | Статика чата. Без сессии браузер уходит на `/login`. |
 *   **Lifespan Events:** Инициализация и прогрев моделей происходят при старте сервера.
 
 ---
@@ -208,9 +209,11 @@ ask_subgraph accepted chains
 
 ## 9. Установка и Запуск
 
+**CPU-ВМ (этот сервер): пошагово с SSH, Docker и `.env` — [DEPLOY.md](DEPLOY.md).** Ниже — общий локальный/GPU-сценарий; на маленькой ВМ GPU и реранкер не использовать.
+
 ### Требования к системе
 *   Docker и Docker Compose
-*   NVIDIA GPU + **NVIDIA Container Toolkit**
+*   NVIDIA GPU + **NVIDIA Container Toolkit** (только локальный GPU-запуск; на CPU-ВМ не нужно)
 *   Запущенная база Neo4j
 
 ### 9.1 Конфигурация и переменные окружения
@@ -232,6 +235,7 @@ cp .env.example .env
 | :--- | :--- |
 | `NEO4J__URI` | Адрес графовой БД (например, `bolt://localhost:7687`) |
 | `NEO4J__USER` / `NEO4J__PASSWORD` | Логин и пароль от базы Neo4j |
+| `UI_BASIC_PASSWORD` | Логин-форма UI и HTTP Basic для curl. Пустой пароль — все запросы 503 |
 | `LLM__PROFILES__GEMINI__API_KEY` | Ключ для работы с Gemini API напрямую |
 | `LLM__PROFILES__GEMINI__BASE_URL` | Базовый URL для Gemini API |
 | `LLM__PROFILES__OTHER__API_KEY` | Ключ от OpenRouter (или другого OpenAI-совместимого провайдера) |
@@ -275,7 +279,8 @@ docker compose --profile rerank up -d
 App ходит на `http://reranker:7997`, когда `rerank_enabled` включён вручную.
 
 ### 9.4 Доступ к интерфейсам
-*   **Web-интерфейс ассистента:** [http://localhost:8000/ui/](http://localhost:8000/ui/)
+*   **Web-интерфейс:** [http://localhost:8000/ui/](http://localhost:8000/ui/) перенаправляет на `/login` — форма логина и пароля (не системное окно браузера). Логин по умолчанию `demo`, пароль из `UI_BASIC_PASSWORD`. Та же проверка, что у `curl -u`. Сессия — HttpOnly cookie с HMAC (пароль в cookie не пишется; смена пароля в `.env` инвалидирует cookie).
+*   Скрипты: `/health` без авторизации — **401**. `curl -I -u demo:ПАРОЛЬ http://127.0.0.1:8000/health`.
 *   **Neo4j Browser (если установлен локально):** [http://localhost:7474](http://localhost:7474)
 
 ---
@@ -291,7 +296,7 @@ python -m pytest tests -q
 Прогоняет кейсы `tests/prompt_regression/cases.json` через `/process_text_stream`
 и проверяет автоматом: бюджет вызовов, язык и уникальность subquestions,
 служебные утечки в ответе, наличие GAPS. Пункты рубрики выводятся для проверки
-глазами. Нужен запущенный сервер:
+глазами. Нужен запущенный сервер. Запросы к API должны нести HTTP Basic (`-u demo:ПАРОЛЬ`), иначе 401.
 ```bash
 python -m tests.prompt_regression.run
 python -m tests.prompt_regression.run --case catalog_freshness_indicators

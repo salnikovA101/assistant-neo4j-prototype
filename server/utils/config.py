@@ -119,6 +119,9 @@ class AppConfig(BaseSettings):
     run_id: str = ""
     # S2b cross-encoder. false skips Ettin (ANN sim order).
     rerank_enabled: bool = True
+    # UI form cookie + HTTP Basic. Empty password = fail closed (503).
+    ui_basic_user: str = "demo"
+    ui_basic_password: str = ""
     server: ServerConfig = Field(default_factory=ServerConfig)
     stt: SttConfig = Field(default_factory=SttConfig)
     tts: TtsConfig = Field(default_factory=TtsConfig)

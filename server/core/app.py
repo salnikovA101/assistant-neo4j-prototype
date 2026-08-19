@@ -1,12 +1,14 @@
 import logging
 import sys
 from contextlib import asynccontextmanager
-from urllib.parse import quote
+from pathlib import Path
+from urllib.parse import parse_qs, quote
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from server.utils.config import load_config
 from server.core.db import get_driver
@@ -16,8 +18,14 @@ from server.core.http_api import (
     GraphVizBody,
     TextProcessBody,
     build_health,
+    clear_ui_session_cookie,
+    expected_ui_credentials,
     llm_api_key_from_request,
+    request_is_ui_authenticated,
     session_id_from_request,
+    set_ui_session_cookie,
+    ui_auth_middleware,
+    ui_basic_ok,
 )
 from server.core.pipeline import ServerPipeline
 from server.core.turn_state import (
@@ -35,6 +43,44 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
+
+_LOGIN_PAGE = Path(__file__).resolve().parents[1] / "static" / "login.html"
+_MAX_LOGIN_BODY = 4096
+_LOGIN_SECURITY_HEADERS = {
+    "Cache-Control": "no-store",
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": (
+        "default-src 'none'; "
+        "style-src 'self' https://fonts.googleapis.com; "
+        "font-src https://fonts.gstatic.com; "
+        "img-src 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'; "
+        "base-uri 'none'"
+    ),
+}
+
+
+async def _form_fields(request: Request) -> dict[str, str]:
+    """Parse urlencoded login fields. Do not log: the body may contain the UI password."""
+    raw = await request.body()
+    if not raw or len(raw) > _MAX_LOGIN_BODY:
+        return {}
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return {}
+    parsed = parse_qs(text, keep_blank_values=True, max_num_fields=16)
+    return {key: (values[0] if values else "") for key, values in parsed.items()}
+
+
+def _login_html(show_error: bool) -> HTMLResponse:
+    html = _LOGIN_PAGE.read_text(encoding="utf-8")
+    if show_error:
+        html = html.replace(' class="login-error" hidden', ' class="login-error"', 1)
+    return HTMLResponse(html, headers=_LOGIN_SECURITY_HEADERS)
 
 
 def _request_think_effort(
@@ -76,6 +122,13 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("V6 S2b rerank enabled")
 
+    app.state.ui_basic_user = (config.ui_basic_user or "demo").strip() or "demo"
+    app.state.ui_basic_password = (config.ui_basic_password or "").strip()
+    if app.state.ui_basic_password:
+        logger.info("UI basic auth user=%s", app.state.ui_basic_user)
+    else:
+        logger.warning("UI_BASIC_PASSWORD is empty: all requests return 503")
+
     logger.info("Инициализация ServerPipeline...")
     pipeline = ServerPipeline(config)
     await pipeline.startup()
@@ -94,11 +147,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Voice Assistant Server", lifespan=lifespan)
 
+# Last added middleware runs first. Auth inner, CORS outer so 401 gets CORS headers.
+app.add_middleware(BaseHTTPMiddleware, dispatch=ui_auth_middleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=CORS_ORIGIN_RE,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Accept", "X-Session-Id", "X-LLM-Api-Key"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "X-Session-Id",
+        "X-LLM-Api-Key",
+    ],
     expose_headers=[
         "Recognized-Text",
         "LLM-Response",
@@ -336,6 +397,34 @@ async def get_graph_viz(body: GraphVizBody):
 
     payload = await build_graph_viz_payload(get_driver(), chains)
     return JSONResponse(payload)
+
+
+@app.get("/login")
+async def login_page(request: Request):
+    """Visual login form. Public. Already-authed users go to the chat."""
+    if request_is_ui_authenticated(request):
+        return RedirectResponse("/ui/", status_code=303)
+    return _login_html(show_error="error" in request.query_params)
+
+
+@app.post("/login")
+async def login_submit(request: Request):
+    fields = await _form_fields(request)
+    username = (fields.get("username") or "").strip()
+    password = fields.get("password") or ""
+    expected_user, expected_password = expected_ui_credentials(request)
+    if not ui_basic_ok(username, password, expected_user, expected_password):
+        return RedirectResponse("/login?error=1", status_code=303)
+    response = RedirectResponse("/ui/", status_code=303)
+    set_ui_session_cookie(response, expected_user, expected_password)
+    return response
+
+
+@app.api_route("/logout", methods=["GET", "POST"])
+async def logout():
+    response = RedirectResponse("/login", status_code=303)
+    clear_ui_session_cookie(response)
+    return response
 
 
 # Веб-интерфейс: http://localhost:8000/ui/
