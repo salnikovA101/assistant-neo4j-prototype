@@ -195,7 +195,8 @@ ask_subgraph accepted chains
 *   **Barge-in:** Нажатие на микрофон прерывает ответ ассистента через отправку disconnect-события (сервер прерывает генерацию) и `AbortController`.
 *   **Два переключателя в композере:** «Глубина поиска» (`search_depth`, сколько
     UNIT добывать и показывать) и «Глубина рассуждения» (`reasoning_effort`
-    модели). Значения хранятся в `localStorage`, дефолты приходят из `/ui_config`.
+    модели). Список усилий берётся из `think_efforts` текущего LLM-профиля
+    (`/ui_config`) и рисуется как в yaml. Значения хранятся в `localStorage`.
 *   **Визуализация графа:** `vis-network` с физикой `ForceAtlas2Based` для плавного разлета узлов.
 
 ### 8.2 Desktop Client (`client/`)

@@ -164,6 +164,144 @@ body {
     height: 16px;
 }
 
+.settings-picker {
+    position: relative;
+    flex-shrink: 0;
+}
+
+#settings-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: 1px solid var(--border-color-light);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#settings-btn:hover,
+#settings-btn[aria-expanded="true"] {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: rgba(255, 255, 255, 0.14);
+}
+
+#settings-btn.has-override {
+    color: var(--accent-green);
+    border-color: rgba(16, 163, 127, 0.35);
+}
+
+#settings-btn.needs-key {
+    color: var(--danger);
+    border-color: rgba(239, 68, 68, 0.35);
+}
+
+#settings-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+.settings-menu {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 10px);
+    z-index: 50;
+    width: 280px;
+    padding: 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    background: #2a2a2a;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.settings-menu[hidden] {
+    display: none !important;
+}
+
+.settings-menu:not([hidden]) {
+    animation: slideUp 0.16s ease;
+}
+
+.settings-menu-title {
+    padding: 2px 4px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.settings-key-status {
+    padding: 0 4px 10px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.settings-key-label {
+    display: block;
+    padding: 0 4px 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+#settings-key-input {
+    width: 100%;
+    height: 36px;
+    padding: 0 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-input);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 13px;
+}
+
+#settings-key-input:focus {
+    border-color: rgba(16, 163, 127, 0.5);
+}
+
+.settings-menu-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.settings-action-primary,
+.settings-action-ghost {
+    flex: 1;
+    height: 32px;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.settings-action-primary {
+    border: none;
+    background: var(--accent-green);
+    color: #fff;
+}
+
+.settings-action-primary:hover {
+    background: var(--accent-green-hover);
+}
+
+.settings-action-ghost {
+    border: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--text-secondary);
+}
+
+.settings-action-ghost:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.06);
+}
+
 /* ===== Chat Area ===== */
 #chat-messages {
     flex: 1;

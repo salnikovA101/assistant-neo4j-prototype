@@ -25,6 +25,24 @@
                         <span id="db-status-text">Подключение...</span>
                         <div class="header-indicator" id="connection-dot" title="Статус сервера"></div>
                     </div>
+                    <div class="settings-picker" id="settings-picker">
+                        <button id="settings-btn" type="button" title="Настройки" aria-label="Настройки" aria-haspopup="dialog" aria-expanded="false" aria-controls="settings-menu">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <circle cx="12" cy="12" r="3"></circle>
+                                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                            </svg>
+                        </button>
+                        <div class="settings-menu" id="settings-menu" hidden role="dialog" aria-labelledby="settings-key-title">
+                            <div class="settings-menu-title" id="settings-key-title">Ключ Ollama</div>
+                            <p class="settings-key-status" id="settings-key-status">Сейчас: из конфига</p>
+                            <label class="settings-key-label" for="settings-key-input">Свой ключ</label>
+                            <input id="settings-key-input" type="password" autocomplete="off" spellcheck="false" placeholder="Вставьте ключ">
+                            <div class="settings-menu-actions">
+                                <button type="button" id="settings-key-save" class="settings-action-primary">Сохранить</button>
+                                <button type="button" id="settings-key-clear" class="settings-action-ghost">Сбросить</button>
+                            </div>
+                        </div>
+                    </div>
                     <button id="clear-btn" type="button" title="Очистить историю" aria-label="Очистить историю">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <polyline points="3 6 5 6 21 6"></polyline>
@@ -120,34 +138,13 @@
                                     <path d="M7.7 8.7L5.6 6.6"></path>
                                     <circle cx="12" cy="12" r="3.2"></circle>
                                 </svg>
-                                <span id="effort-label">Максимум</span>
+                                <span id="effort-label">high</span>
                                 <svg class="effort-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                     <polyline points="6 9 12 15 18 9"></polyline>
                                 </svg>
                             </button>
                             <div class="effort-menu" id="effort-menu" hidden role="listbox" aria-labelledby="effort-btn">
                                 <div class="effort-menu-title">Рассуждения</div>
-                                <button type="button" class="effort-option" role="option" data-effort="low" aria-selected="false">
-                                    <span class="effort-option-check" aria-hidden="true"></span>
-                                    <span class="effort-option-text">
-                                        <span class="effort-option-name">Низкий</span>
-                                        <span class="effort-option-hint">быстрее</span>
-                                    </span>
-                                </button>
-                                <button type="button" class="effort-option" role="option" data-effort="medium" aria-selected="false">
-                                    <span class="effort-option-check" aria-hidden="true"></span>
-                                    <span class="effort-option-text">
-                                        <span class="effort-option-name">Средний</span>
-                                        <span class="effort-option-hint">баланс</span>
-                                    </span>
-                                </button>
-                                <button type="button" class="effort-option" role="option" data-effort="xhigh" aria-selected="true">
-                                    <span class="effort-option-check" aria-hidden="true"></span>
-                                    <span class="effort-option-text">
-                                        <span class="effort-option-name">Максимум</span>
-                                        <span class="effort-option-hint">глубже</span>
-                                    </span>
-                                </button>
                             </div>
                         </div>
 

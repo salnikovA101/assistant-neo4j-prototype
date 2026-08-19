@@ -100,6 +100,23 @@ def test_build_assistant_replay_tool_turn():
     assert msg["content"] == "<|think|>"
 
 
+def test_build_assistant_replay_skips_token_when_thinking_off():
+    from server.llm.stream_events import AssembledToolCall
+
+    profile = OpenAIProfile(think=True, think_token="<|think|>")
+    calls = [
+        AssembledToolCall(id="c1", name="ask_subgraph", arguments="{}", index=0)
+    ]
+    msg = build_assistant_replay(
+        content="",
+        tool_calls=calls,
+        reasoning_parts=[],
+        profile=profile,
+        thinking=False,
+    )
+    assert msg["content"] is None
+
+
 def test_preview_truncates():
     assert preview_tool_result("abc", limit=10) == "abc"
     assert preview_tool_result("x" * 20, limit=10).endswith("…")

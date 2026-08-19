@@ -4,7 +4,7 @@ import logging
 import re
 import time
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence
 
 from openai import AsyncOpenAI
 
@@ -79,17 +79,61 @@ def strip_leaked_cot_preamble(text: str) -> str:
 
 
 
-UI_THINK_EFFORTS = ("low", "medium", "xhigh")
+_THINK_OFF_EFFORTS = frozenset({"off", "none"})
+_GRADED_THINK_EFFORTS = frozenset(
+    {"low", "medium", "high", "max", "xhigh", "minimal"}
+)
 
 
-def parse_ui_think_effort(value: Any) -> Optional[str]:
-    """Accept ChatGPT/Cursor-style UI values: low | medium | xhigh."""
+def profile_think_efforts(profile: OpenAIProfile) -> tuple[str, ...]:
+    """UI menu values for this profile, lowercased, as written in yaml."""
+    seen: list[str] = []
+    for raw in profile.think_efforts or []:
+        value = str(raw).strip().lower()
+        if value and value not in seen:
+            seen.append(value)
+    if seen:
+        return tuple(seen)
+    fallback = (profile.think_effort or "").strip().lower()
+    return (fallback,) if fallback else ()
+
+
+def parse_ui_think_effort(
+    value: Any, allowed: Sequence[str] | None = None
+) -> Optional[str]:
+    """Accept a UI effort only if it is in the current profile's menu."""
     if not isinstance(value, str):
         return None
     effort = value.strip().lower()
-    if effort in UI_THINK_EFFORTS:
+    if not effort:
+        return None
+    options = [str(item).strip().lower() for item in (allowed or ())]
+    if effort in options:
         return effort
     return None
+
+
+def thinking_is_on(
+    profile: OpenAIProfile, think_effort: Optional[str] = None
+) -> bool:
+    if not profile.think:
+        return False
+    effort = (think_effort or profile.think_effort or "").strip().lower()
+    return effort not in _THINK_OFF_EFFORTS
+
+
+def public_llm_error_message(exc: BaseException) -> str:
+    """User-facing LLM error; never include provider bodies that may echo secrets."""
+    status = getattr(exc, "status_code", None)
+    if status in (401, 403):
+        return (
+            "Ключ LLM отклонён. Откройте настройки и вставьте свой ключ Ollama."
+        )
+    if status == 429:
+        return (
+            "Лимит ключа исчерпан. Откройте настройки и вставьте свой ключ Ollama."
+        )
+    return "Ошибка LLM. Попробуйте ещё раз."
 
 
 def _reasoning_kwargs(
@@ -99,14 +143,13 @@ def _reasoning_kwargs(
     Build request kwargs that enable/disable thinking for the whole agentic loop
     (first turn and every turn after tool results).
 
-    - OpenAI SDK top-level reasoning_effort (LM Studio / OpenAI gateways)
+    - OpenAI SDK top-level reasoning_effort (LM Studio / OpenAI / Ollama /v1)
     - OpenRouter: extra_body.reasoning
     - DeepSeek direct: extra_body.thinking
     - Qwen3.8: extra_body.chat_template_kwargs.preserve_thinking (+ body flag)
 
-    Note: Gemma in LM Studio only accepts reasoning on/off (not high/medium).
-    Sending an OpenAI effort still works (LMS warns and falls back to on);
-    post-tool thinking for Gemma additionally needs think_token on tool content.
+    UI "off" is mapped to reasoning_effort=none (Ollama /v1 rejects "off").
+    LM Studio Gemma: "on" omits top-level reasoning_effort (LMS warns on high).
     """
     if not profile.think:
         return {
@@ -118,26 +161,36 @@ def _reasoning_kwargs(
         }
 
     effort = (effort_override or profile.think_effort or "high").strip().lower()
-    # LM Studio Gemma: on/off only — keep SDK-valid effort for OpenAI/DeepSeek,
-    # and always pass enabled=true for local templates.
-    template_kwargs: Dict[str, Any] = {"enable_thinking": True}
     extra: Dict[str, Any]
-    if effort in {"on", "off"}:
-        enabled = effort == "on"
-        template_kwargs = {"enable_thinking": enabled}
-        # Omit top-level reasoning_effort: LM Studio Gemma only accepts on/off and
-        # warns on high/medium; extra_body is enough (verified).
+    if effort in _THINK_OFF_EFFORTS:
+        template_kwargs: Dict[str, Any] = {"enable_thinking": False}
         extra = {
-            "reasoning": {"enabled": enabled},
-            "thinking": {"type": "enabled" if enabled else "disabled"},
+            "reasoning": {"enabled": False, "effort": "none"},
+            "thinking": {"type": "disabled"},
             "chat_template_kwargs": template_kwargs,
         }
         _apply_preserve_thinking(extra, template_kwargs, profile)
+        return {
+            "reasoning_effort": "none",
+            "extra_body": extra,
+        }
+
+    if effort == "on":
+        template_kwargs = {"enable_thinking": True}
+        extra = {
+            "reasoning": {"enabled": True},
+            "thinking": {"type": "enabled"},
+            "chat_template_kwargs": template_kwargs,
+        }
+        _apply_preserve_thinking(extra, template_kwargs, profile)
+        # Omit top-level reasoning_effort: LM Studio Gemma only accepts on/off
+        # and warns on high/medium; extra_body is enough (verified).
         return {"extra_body": extra}
 
-    if effort not in {"low", "medium", "high", "max", "xhigh", "minimal"}:
+    if effort not in _GRADED_THINK_EFFORTS:
         effort = "high"
     sdk_effort = "high" if effort == "max" else effort
+    template_kwargs = {"enable_thinking": True}
     extra = {
         "reasoning": {"enabled": True, "effort": effort},
         "thinking": {"type": "enabled"},
@@ -198,14 +251,20 @@ def _merge_request_kwargs(*parts: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _with_think_token(system_prompt: str, profile: OpenAIProfile) -> str:
+def _with_think_token(
+    system_prompt: str,
+    profile: OpenAIProfile,
+    *,
+    thinking: bool | None = None,
+) -> str:
     """
     Gemma/LM Studio: thinking after tool results only stays on if <|think|> is
     present in the rendered prompt on EVERY request of the loop. Putting it in
     system (not only the first user turn) covers post-tool generations.
     """
     token = (profile.think_token or "").strip()
-    if not profile.think or not token:
+    enabled = profile.think if thinking is None else thinking
+    if not enabled or not token:
         return system_prompt
     if token in system_prompt:
         return system_prompt
@@ -214,7 +273,12 @@ def _with_think_token(system_prompt: str, profile: OpenAIProfile) -> str:
     return token
 
 
-def _tool_result_content(result: str, profile: OpenAIProfile) -> str:
+def _tool_result_content(
+    result: str,
+    profile: OpenAIProfile,
+    *,
+    thinking: bool | None = None,
+) -> str:
     """
     Gemma/LM Studio: after tool results the chat template often does not reopen
     the think channel. Prefixing the tool message with think_token forces a new
@@ -223,7 +287,8 @@ def _tool_result_content(result: str, profile: OpenAIProfile) -> str:
     """
     text = str(result)
     token = (profile.think_token or "").strip()
-    if not profile.think or not token:
+    enabled = profile.think if thinking is None else thinking
+    if not enabled or not token:
         return text
     if text.startswith(token):
         return text
@@ -297,6 +362,12 @@ class BaseLLMProvider(ABC):
             f"model={profile.model}, url={profile.base_url}"
         )
 
+    def _request_client(self, api_key: Optional[str] = None):
+        """Per-request client so a BYOK header cannot race the shared default."""
+        if api_key:
+            return self.client.with_options(api_key=api_key)
+        return self.client
+
     async def generate_response_stream(
         self,
         user_text: str,
@@ -305,6 +376,7 @@ class BaseLLMProvider(ABC):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_map: Optional[Dict[str, Callable]] = None,
         think_effort: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Stream thinking / tool_call / tool_result / content events for one user turn.
@@ -316,7 +388,10 @@ class BaseLLMProvider(ABC):
         history_tool_messages: List[Dict[str, Any]] = []
 
         try:
-            system_prompt = _with_think_token(prompt, self.profile)
+            thinking = thinking_is_on(self.profile, think_effort)
+            system_prompt = _with_think_token(
+                prompt, self.profile, thinking=thinking
+            )
             if system_prompt:
                 messages.append({"role": "system", "content": system_prompt})
             if history:
@@ -341,6 +416,7 @@ class BaseLLMProvider(ABC):
             turns = 0
             max_turns = max(1, int(self.profile.max_turns))
             label = "turn0"
+            stream_client = self._request_client(api_key)
 
             while True:
                 assembler = ToolCallAssembler()
@@ -351,7 +427,7 @@ class BaseLLMProvider(ABC):
                 yielded_content = ""
                 saw_tool_deltas = False
 
-                stream = await self._create_chat_stream(kwargs)
+                stream = await self._create_chat_stream(kwargs, client=stream_client)
                 async for chunk in stream:
                     usage_holder = getattr(chunk, "usage", None) or usage_holder
                     if not chunk.choices:
@@ -432,6 +508,7 @@ class BaseLLMProvider(ABC):
                         tool_calls=tool_calls,
                         reasoning_parts=reasoning_parts,
                         profile=self.profile,
+                        thinking=thinking,
                     )
                 )
                 history_tool_messages.append(
@@ -497,7 +574,9 @@ class BaseLLMProvider(ABC):
                         {
                             "role": "tool",
                             "tool_call_id": tc.id,
-                            "content": _tool_result_content(payload, self.profile),
+                            "content": _tool_result_content(
+                                payload, self.profile, thinking=thinking
+                            ),
                         }
                     )
                     history_tool_messages.append(
@@ -526,27 +605,34 @@ class BaseLLMProvider(ABC):
             )
 
         except Exception as e:
+            status = getattr(e, "status_code", None)
             logger.error(
-                f"[{self.__class__.__name__}] Ошибка generate_response_stream: {e}"
+                "[%s] Ошибка generate_response_stream: status=%s type=%s",
+                self.__class__.__name__,
+                status,
+                type(e).__name__,
             )
-            yield StreamEvent("error", {"message": str(e)})
+            yield StreamEvent("error", {"message": public_llm_error_message(e)})
 
-    async def _create_chat_stream(self, kwargs: Dict[str, Any]):
+    async def _create_chat_stream(
+        self, kwargs: Dict[str, Any], client: Any | None = None
+    ):
         """
         Create a streaming completion. Prefer stream_options.include_usage when
         supported; fall back without it for Ollama / older gateways.
         """
+        chat = (client or self.client).chat.completions
         with_usage = {**kwargs, "stream_options": {"include_usage": True}}
         try:
-            return await self.client.chat.completions.create(**with_usage)
+            return await chat.create(**with_usage)
         except Exception as e:
             msg = str(e).lower()
             if "stream_options" in msg or "include_usage" in msg or "unexpected" in msg:
                 logger.debug("Retrying stream without stream_options: %s", e)
-                return await self.client.chat.completions.create(**kwargs)
+                return await chat.create(**kwargs)
             # Some servers reject unknown fields with a generic 400 — retry once.
             try:
-                return await self.client.chat.completions.create(**kwargs)
+                return await chat.create(**kwargs)
             except Exception:
                 raise e
 

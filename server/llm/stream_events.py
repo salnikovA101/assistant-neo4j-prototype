@@ -359,6 +359,7 @@ def build_assistant_replay(
     tool_calls: List[AssembledToolCall],
     reasoning_parts: List[str],
     profile: OpenAIProfile,
+    thinking: bool | None = None,
 ) -> Dict[str, Any]:
     """
     Build an assistant message dict for the next request after a streamed turn.
@@ -378,10 +379,8 @@ def build_assistant_replay(
             msg["content"] = text
         else:
             token = (profile.think_token or "").strip()
-            if profile.think and token:
-                msg["content"] = token
-            else:
-                msg["content"] = None
+            inject = (profile.think if thinking is None else thinking) and token
+            msg["content"] = token if inject else None
     else:
         msg["content"] = text
 

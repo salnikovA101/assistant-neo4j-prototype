@@ -11,6 +11,9 @@ from server.core.db import get_driver
 from server.core.sessions import SESSION_HEADER, resolve_session_id
 
 CORS_ORIGIN_RE = r"https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+LLM_API_KEY_HEADER = "X-LLM-Api-Key"
+_LLM_API_KEY_MIN_LEN = 8
+_LLM_API_KEY_MAX_LEN = 512
 
 
 class TextProcessBody(BaseModel):
@@ -28,6 +31,27 @@ def session_id_from_request(request: Request) -> str:
         return resolve_session_id(request.headers.get(SESSION_HEADER))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def parse_llm_api_key_header(raw: str | None) -> str | None:
+    """Return a BYOK override, or None to use the server env key.
+
+    Invalid values raise 400 without echoing the secret.
+    """
+    if raw is None:
+        return None
+    key = raw.strip()
+    if not key:
+        return None
+    if any(ch.isspace() for ch in key):
+        raise HTTPException(status_code=400, detail="Invalid X-LLM-Api-Key")
+    if not (_LLM_API_KEY_MIN_LEN <= len(key) <= _LLM_API_KEY_MAX_LEN):
+        raise HTTPException(status_code=400, detail="Invalid X-LLM-Api-Key")
+    return key
+
+
+def llm_api_key_from_request(request: Request) -> str | None:
+    return parse_llm_api_key_header(request.headers.get(LLM_API_KEY_HEADER))
 
 
 async def build_health(pipeline: Any | None) -> tuple[int, dict[str, Any]]:

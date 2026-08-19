@@ -16,6 +16,7 @@ from server.core.http_api import (
     GraphVizBody,
     TextProcessBody,
     build_health,
+    llm_api_key_from_request,
     session_id_from_request,
 )
 from server.core.pipeline import ServerPipeline
@@ -24,7 +25,7 @@ from server.core.turn_state import (
     SEARCH_DEPTHS,
     parse_search_depth,
 )
-from server.llm.base import UI_THINK_EFFORTS, parse_ui_think_effort
+from server.llm.base import parse_ui_think_effort, profile_think_efforts
 from server.tools.graph_viz import build_graph_viz_payload
 
 logging.basicConfig(
@@ -34,6 +35,15 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
+
+
+def _request_think_effort(
+    pipeline: ServerPipeline, body: TextProcessBody
+) -> str | None:
+    profile = pipeline.llm.model.profile
+    return parse_ui_think_effort(
+        body.reasoning_effort, profile_think_efforts(profile)
+    )
 
 
 @asynccontextmanager
@@ -88,7 +98,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=CORS_ORIGIN_RE,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Accept", "X-Session-Id"],
+    allow_headers=["Content-Type", "Accept", "X-Session-Id", "X-LLM-Api-Key"],
     expose_headers=[
         "Recognized-Text",
         "LLM-Response",
@@ -174,7 +184,7 @@ async def process_text(request: Request, body: TextProcessBody):
     """
     pipeline: ServerPipeline = request.app.state.pipeline
     text = body.text.strip()
-    think_effort = parse_ui_think_effort(body.reasoning_effort)
+    think_effort = _request_think_effort(pipeline, body)
     search_depth = parse_search_depth(body.search_depth)
 
     if not text:
@@ -185,6 +195,7 @@ async def process_text(request: Request, body: TextProcessBody):
         think_effort=think_effort,
         session_id=session_id_from_request(request),
         search_depth=search_depth,
+        api_key=llm_api_key_from_request(request),
     )
 
     if not pipeline.config.audio_enabled:
@@ -207,12 +218,12 @@ async def process_text_stream(request: Request, body: TextProcessBody):
     """
     SSE stream of assistant events: thinking, tool_call, tool_result, content, done, error.
 
-    Request body: {"text": "вопрос пользователя", "reasoning_effort": "xhigh"|"medium"|"low",
+    Request body: {"text": "вопрос пользователя", "reasoning_effort": "<profile think_efforts>",
     "search_depth": "low"|"medium"|"high"}
     """
     pipeline: ServerPipeline = request.app.state.pipeline
     text = body.text.strip()
-    think_effort = parse_ui_think_effort(body.reasoning_effort)
+    think_effort = _request_think_effort(pipeline, body)
     search_depth = parse_search_depth(body.search_depth)
 
     if not text:
@@ -227,6 +238,7 @@ async def process_text_stream(request: Request, body: TextProcessBody):
             think_effort=think_effort,
             session_id=session_id,
             search_depth=search_depth,
+            api_key=llm_api_key_from_request(request),
         ):
             yield event.to_sse()
 
@@ -247,12 +259,12 @@ async def process_text_test(request: Request, body: TextProcessBody):
     Принимает текст JSON, возвращает ответ LLM (без TTS).
     Специально для скриптов тестирования.
 
-    Request body: {"text": "вопрос пользователя", "reasoning_effort": "xhigh"|"medium"|"low",
+    Request body: {"text": "вопрос пользователя", "reasoning_effort": "<profile think_efforts>",
     "search_depth": "low"|"medium"|"high"}
     """
     pipeline: ServerPipeline = request.app.state.pipeline
     text = body.text.strip()
-    think_effort = parse_ui_think_effort(body.reasoning_effort)
+    think_effort = _request_think_effort(pipeline, body)
     search_depth = parse_search_depth(body.search_depth)
 
     if not text:
@@ -263,6 +275,7 @@ async def process_text_test(request: Request, body: TextProcessBody):
         think_effort=think_effort,
         session_id=session_id_from_request(request),
         search_depth=search_depth,
+        api_key=llm_api_key_from_request(request),
     )
 
     return JSONResponse({"answer": answer})
@@ -284,23 +297,31 @@ async def health(request: Request):
     return JSONResponse(payload, status_code=status_code)
 
 
-@app.get("/ui_config")
-async def ui_config(request: Request):
-    """Defaults for the web UI (reasoning effort, search depth, audio)."""
-    pipeline: ServerPipeline = request.app.state.pipeline
+def build_ui_config(pipeline: ServerPipeline) -> dict:
+    """Public UI defaults. Never includes API keys."""
     profile = pipeline.llm.model.profile
-    default_effort = parse_ui_think_effort(profile.think_effort) or "xhigh"
-    raw_effort = (profile.think_effort or "").strip().lower()
-    supports_levels = raw_effort not in {"on", "off", "none"}
+    options = list(profile_think_efforts(profile))
+    default_effort = parse_ui_think_effort(profile.think_effort, options)
+    if default_effort is None:
+        default_effort = options[0] if options else ""
     return {
-        "think": bool(profile.think) and supports_levels,
+        "think": bool(profile.think) and bool(options),
         "reasoning_effort": default_effort,
-        "reasoning_effort_options": list(UI_THINK_EFFORTS),
+        "reasoning_effort_options": options,
         "search_depth": DEFAULT_SEARCH_DEPTH,
         "search_depth_options": list(SEARCH_DEPTHS),
         "max_searches_per_answer": max(1, int(profile.max_turns)),
         "audio_enabled": bool(pipeline.config.audio_enabled),
+        "current_profile": pipeline.config.llm.current_profile,
+        "llm_key_configured": bool((profile.api_key or "").strip()),
     }
+
+
+@app.get("/ui_config")
+async def ui_config(request: Request):
+    """Defaults for the web UI (reasoning effort, search depth, audio)."""
+    pipeline: ServerPipeline = request.app.state.pipeline
+    return build_ui_config(pipeline)
 
 
 @app.post("/graph_viz")

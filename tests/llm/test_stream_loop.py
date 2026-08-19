@@ -136,3 +136,96 @@ async def test_generate_response_stream_tool_loop(monkeypatch):
     assert receipts[1]["tool_call_id"] == "call_1"
     assert "UNIT" not in receipts[1]["content"]
     assert "Session sources 1" in receipts[1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_stream_override_uses_with_options():
+    profile = OpenAIProfile(
+        model="test-model",
+        base_url="http://localhost",
+        api_key="server-key",
+        think=False,
+        max_turns=1,
+    )
+    provider = OpenAIProvider(profile)
+    seen: dict[str, str] = {}
+
+    def fake_with_options(**kwargs):
+        seen["api_key"] = kwargs.get("api_key") or ""
+        return provider.client
+
+    provider.client.with_options = fake_with_options
+
+    async def fake_create(**_k):
+        return _aiter([_Chunk(_Delta(content="ok"))])
+
+    provider.client.chat.completions.create = AsyncMock(side_effect=fake_create)
+
+    events: List[Any] = []
+    async for ev in provider.generate_response_stream(
+        user_text="q",
+        prompt="sys",
+        api_key="user-secret-key",
+    ):
+        events.append(ev)
+
+    assert seen["api_key"] == "user-secret-key"
+    assert events[-1].type == "done"
+
+
+@pytest.mark.asyncio
+async def test_stream_without_override_skips_with_options():
+    profile = OpenAIProfile(
+        model="test-model",
+        base_url="http://localhost",
+        api_key="server-key",
+        think=False,
+        max_turns=1,
+    )
+    provider = OpenAIProvider(profile)
+    called = {"n": 0}
+
+    def fake_with_options(**_kwargs):
+        called["n"] += 1
+        return provider.client
+
+    provider.client.with_options = fake_with_options
+
+    async def fake_create(**_k):
+        return _aiter([_Chunk(_Delta(content="ok"))])
+
+    provider.client.chat.completions.create = AsyncMock(side_effect=fake_create)
+
+    async for _ev in provider.generate_response_stream(user_text="q", prompt="sys"):
+        pass
+
+    assert called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_maps_401_to_settings_hint():
+    profile = OpenAIProfile(
+        model="test-model",
+        base_url="http://localhost",
+        api_key="server-key",
+        think=False,
+        max_turns=1,
+    )
+    provider = OpenAIProvider(profile)
+
+    class AuthErr(Exception):
+        status_code = 401
+
+    async def boom(**_kwargs):
+        raise AuthErr("unauthorized sk-secret")
+
+    provider.client.chat.completions.create = AsyncMock(side_effect=boom)
+
+    events: List[Any] = []
+    async for ev in provider.generate_response_stream(user_text="q", prompt="sys"):
+        events.append(ev)
+
+    assert events[-1].type == "error"
+    msg = events[-1].data["message"]
+    assert "настройки" in msg.lower()
+    assert "sk-secret" not in msg

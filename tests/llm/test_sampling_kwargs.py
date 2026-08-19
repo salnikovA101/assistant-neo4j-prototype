@@ -52,7 +52,7 @@ def test_preserve_thinking_omitted_by_default():
 
 
 def test_reasoning_effort_levels():
-    for effort in ("low", "medium", "xhigh"):
+    for effort in ("low", "medium", "high", "xhigh"):
         kwargs = _reasoning_kwargs(OpenAIProfile(think=True, think_effort=effort))
         assert kwargs["reasoning_effort"] == effort
         assert kwargs["extra_body"]["reasoning"]["effort"] == effort
@@ -68,12 +68,77 @@ def test_reasoning_effort_override():
     assert kwargs["extra_body"]["reasoning"]["effort"] == "low"
 
 
-def test_parse_ui_think_effort():
-    from server.llm.base import parse_ui_think_effort
+def test_reasoning_effort_off_sends_none():
+    kwargs = _reasoning_kwargs(
+        OpenAIProfile(think=True, think_effort="high"),
+        effort_override="off",
+    )
+    assert kwargs["reasoning_effort"] == "none"
+    assert kwargs["extra_body"]["reasoning"]["enabled"] is False
+    assert kwargs["extra_body"]["reasoning"]["effort"] == "none"
+    assert kwargs["extra_body"]["chat_template_kwargs"]["enable_thinking"] is False
 
-    assert parse_ui_think_effort("xhigh") == "xhigh"
-    assert parse_ui_think_effort(" Medium ") == "medium"
-    assert parse_ui_think_effort("low") == "low"
-    assert parse_ui_think_effort("high") is None
-    assert parse_ui_think_effort("") is None
-    assert parse_ui_think_effort(None) is None
+
+def test_parse_ui_think_effort():
+    from server.llm.base import parse_ui_think_effort, profile_think_efforts
+
+    allowed = ("high", "off")
+    assert parse_ui_think_effort("high", allowed) == "high"
+    assert parse_ui_think_effort(" Off ", allowed) == "off"
+    assert parse_ui_think_effort("xhigh", allowed) is None
+    assert parse_ui_think_effort("low", allowed) is None
+    assert parse_ui_think_effort("", allowed) is None
+    assert parse_ui_think_effort(None, allowed) is None
+
+    qwen = ("low", "medium", "xhigh")
+    assert parse_ui_think_effort("xhigh", qwen) == "xhigh"
+    assert parse_ui_think_effort(" Medium ", qwen) == "medium"
+    assert parse_ui_think_effort("high", qwen) is None
+
+    profile = OpenAIProfile(think=True, think_effort="high", think_efforts=["high", "off"])
+    assert profile_think_efforts(profile) == ("high", "off")
+    fallback = OpenAIProfile(think=True, think_effort="xhigh")
+    assert profile_think_efforts(fallback) == ("xhigh",)
+
+
+def test_think_token_skipped_when_off():
+    from server.llm.base import _tool_result_content, _with_think_token, thinking_is_on
+
+    profile = OpenAIProfile(
+        think=True,
+        think_effort="high",
+        think_token="<|think|>",
+        think_efforts=["high", "off"],
+    )
+    assert thinking_is_on(profile, "high") is True
+    assert thinking_is_on(profile, "off") is False
+    assert _with_think_token("sys", profile, thinking=True).startswith("<|think|>")
+    assert _with_think_token("sys", profile, thinking=False) == "sys"
+    assert _tool_result_content("tool-out", profile, thinking=True).startswith("<|think|>")
+    assert _tool_result_content("tool-out", profile, thinking=False) == "tool-out"
+
+
+def test_ollama_yaml_think_efforts():
+    from server.utils.config import load_config
+
+    ollama = load_config().llm.profiles.ollama
+    assert ollama.think_effort == "high"
+    assert ollama.think_efforts == ["high", "off"]
+
+
+def test_public_llm_error_message_auth_and_quota():
+    from server.llm.base import public_llm_error_message
+
+    class AuthErr(Exception):
+        status_code = 401
+
+    class ForbiddenErr(Exception):
+        status_code = 403
+
+    class QuotaErr(Exception):
+        status_code = 429
+
+    assert "настройки" in public_llm_error_message(AuthErr("nope")).lower()
+    assert "настройки" in public_llm_error_message(ForbiddenErr("nope")).lower()
+    assert "лимит" in public_llm_error_message(QuotaErr("nope")).lower()
+    assert "secret-key" not in public_llm_error_message(RuntimeError("secret-key"))

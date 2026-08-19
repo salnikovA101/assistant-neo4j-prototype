@@ -40,6 +40,14 @@ const pauseIcon = document.getElementById('pause-icon');
 const statusText = document.getElementById('db-status-text');
 const connectionDot = document.getElementById('connection-dot');
 const clearBtn = document.getElementById('clear-btn');
+const settingsPicker = document.getElementById('settings-picker');
+const settingsBtn = document.getElementById('settings-btn');
+const settingsMenu = document.getElementById('settings-menu');
+const settingsKeyTitle = document.getElementById('settings-key-title');
+const settingsKeyStatus = document.getElementById('settings-key-status');
+const settingsKeyInput = document.getElementById('settings-key-input');
+const settingsKeySave = document.getElementById('settings-key-save');
+const settingsKeyClear = document.getElementById('settings-key-clear');
 const effortPicker = document.getElementById('effort-picker');
 const effortBtn = document.getElementById('effort-btn');
 const effortMenu = document.getElementById('effort-menu');
@@ -50,19 +58,16 @@ const depthMenu = document.getElementById('depth-menu');
 const depthLabel = document.getElementById('depth-label');
 
 const EFFORT_STORAGE_KEY = 'reasoning_effort';
-const EFFORT_OPTIONS = {
-    low: { label: 'Низкий' },
-    medium: { label: 'Средний' },
-    xhigh: { label: 'Максимум' },
-};
 const DEPTH_STORAGE_KEY = 'search_depth';
+const LLM_KEY_STORAGE = 'llm_api_key_override';
 const DEPTH_OPTIONS = {
     low: { label: 'Узко' },
     medium: { label: 'Обычно' },
     high: { label: 'Широко' },
 };
 let currentSearchDepth = 'medium';
-let currentReasoningEffort = 'xhigh';
+let effortOptions = [];
+let currentReasoningEffort = '';
 let reasoningEffortEnabled = true;
 let audioEnabled = false;
 let activeStreamShell = null;
@@ -81,6 +86,111 @@ function getSessionId() {
 
 function withSessionHeaders(headers) {
     return Object.assign({ 'X-Session-Id': getSessionId() }, headers || {});
+}
+
+function getLlmApiKeyOverride() {
+    try {
+        return (sessionStorage.getItem(LLM_KEY_STORAGE) || '').trim();
+    } catch (_) {
+        return '';
+    }
+}
+
+function setLlmApiKeyOverride(value) {
+    const key = (value || '').trim();
+    try {
+        if (key) sessionStorage.setItem(LLM_KEY_STORAGE, key);
+        else sessionStorage.removeItem(LLM_KEY_STORAGE);
+    } catch (_) {}
+}
+
+function maskLlmKey(key) {
+    const s = String(key || '');
+    if (s.length < 4) return '••••';
+    return `••••${s.slice(-4)}`;
+}
+
+function llmKeyTitleForProfile(profile) {
+    const name = String(profile || '').trim().toLowerCase();
+    if (name === 'ollama') return 'Ключ Ollama';
+    if (name === 'lm_studio') return 'Ключ LM Studio';
+    if (name) return `Ключ ${name}`;
+    return 'Ключ LLM';
+}
+
+function refreshSettingsStatus() {
+    const override = getLlmApiKeyOverride();
+    if (settingsKeyStatus) {
+        settingsKeyStatus.textContent = override
+            ? `Сейчас: свой ключ ${maskLlmKey(override)}`
+            : 'Сейчас: из конфига';
+    }
+    if (settingsBtn) {
+        settingsBtn.classList.toggle('has-override', Boolean(override));
+        settingsBtn.title = override
+            ? `Настройки · свой ключ ${maskLlmKey(override)}`
+            : 'Настройки';
+    }
+}
+
+function hintSettingsOnAuthError(message) {
+    if (!settingsBtn) return;
+    if (!/настройк/i.test(String(message || ''))) return;
+    settingsBtn.classList.add('needs-key');
+}
+
+function isSettingsMenuOpen() {
+    return settingsBtn && settingsBtn.getAttribute('aria-expanded') === 'true';
+}
+
+function closeSettingsMenu() {
+    if (!settingsBtn || !settingsMenu) return;
+    settingsBtn.setAttribute('aria-expanded', 'false');
+    settingsMenu.hidden = true;
+}
+
+function openSettingsMenu() {
+    if (!settingsBtn || !settingsMenu) return;
+    refreshSettingsStatus();
+    if (settingsKeyInput) settingsKeyInput.value = '';
+    settingsBtn.setAttribute('aria-expanded', 'true');
+    settingsMenu.hidden = false;
+    if (settingsKeyInput) settingsKeyInput.focus();
+}
+
+function toggleSettingsMenu() {
+    if (isSettingsMenuOpen()) closeSettingsMenu();
+    else openSettingsMenu();
+}
+
+function saveSettingsKey() {
+    const raw = (settingsKeyInput && settingsKeyInput.value) || '';
+    const key = raw.trim();
+    if (!key) {
+        setLlmApiKeyOverride('');
+        if (settingsBtn) settingsBtn.classList.remove('needs-key');
+        refreshSettingsStatus();
+        closeSettingsMenu();
+        return;
+    }
+    if (key.length < 8 || key.length > 512 || /\s/.test(key)) {
+        if (settingsKeyStatus) {
+            settingsKeyStatus.textContent = 'Ключ: 8–512 символов, без пробелов';
+        }
+        return;
+    }
+    setLlmApiKeyOverride(key);
+    if (settingsKeyInput) settingsKeyInput.value = '';
+    if (settingsBtn) settingsBtn.classList.remove('needs-key');
+    refreshSettingsStatus();
+    closeSettingsMenu();
+}
+
+function withLlmHeaders(headers) {
+    const out = withSessionHeaders(headers);
+    const key = getLlmApiKeyOverride();
+    if (key) out['X-LLM-Api-Key'] = key;
+    return out;
 }
 
 // ===== Audio Utilities =====
@@ -482,7 +592,7 @@ async function consumeProcessTextStream(text, signal) {
     try {
         const response = await fetch('/process_text_stream', {
             method: 'POST',
-            headers: withSessionHeaders({
+            headers: withLlmHeaders({
                 'Content-Type': 'application/json',
                 Accept: 'text/event-stream',
             }),
@@ -780,6 +890,7 @@ function finishStreamShell(shell, { status, message, finalContent, graphMeta } =
         }
     } else if (status === 'error') {
         const note = message || 'Ошибка стрима';
+        hintSettingsOnAuthError(note);
         if (!shell.answerText.trim()) {
             shell.answerEl.innerHTML = `<p class="stream-status-note stream-status-error">${escapeHtml(note)}</p>`;
         } else {
@@ -2466,7 +2577,7 @@ async function clearHistory() {
 
 function processTextPayload(text) {
     const payload = { text, search_depth: currentSearchDepth };
-    if (reasoningEffortEnabled) {
+    if (reasoningEffortEnabled && currentReasoningEffort) {
         payload.reasoning_effort = currentReasoningEffort;
     }
     return payload;
@@ -2491,15 +2602,42 @@ function toggleEffortMenu() {
     else openEffortMenu();
 }
 
+function renderEffortMenu(options) {
+    effortOptions = (options || [])
+        .map((value) => String(value).trim())
+        .filter(Boolean);
+    effortMenu.querySelectorAll('.effort-option').forEach((el) => el.remove());
+    for (const effort of effortOptions) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'effort-option';
+        btn.setAttribute('role', 'option');
+        btn.dataset.effort = effort;
+        btn.setAttribute('aria-selected', 'false');
+
+        const check = document.createElement('span');
+        check.className = 'effort-option-check';
+        check.setAttribute('aria-hidden', 'true');
+
+        const text = document.createElement('span');
+        text.className = 'effort-option-text';
+        const name = document.createElement('span');
+        name.className = 'effort-option-name';
+        name.textContent = effort;
+        text.appendChild(name);
+
+        btn.appendChild(check);
+        btn.appendChild(text);
+        effortMenu.appendChild(btn);
+    }
+}
+
 function setReasoningEffort(effort, persist = true) {
-    if (!EFFORT_OPTIONS[effort]) return;
+    if (!effortOptions.includes(effort)) return;
     currentReasoningEffort = effort;
-    effortLabel.textContent = EFFORT_OPTIONS[effort].label;
-    effortBtn.title = `Глубина рассуждения: ${EFFORT_OPTIONS[effort].label}`;
-    effortBtn.setAttribute(
-        'aria-label',
-        `Глубина рассуждения: ${EFFORT_OPTIONS[effort].label}`
-    );
+    effortLabel.textContent = effort;
+    effortBtn.title = `Глубина рассуждения: ${effort}`;
+    effortBtn.setAttribute('aria-label', `Глубина рассуждения: ${effort}`);
     effortMenu.querySelectorAll('.effort-option').forEach((btn) => {
         btn.setAttribute('aria-selected', btn.dataset.effort === effort ? 'true' : 'false');
     });
@@ -2513,7 +2651,7 @@ function setReasoningEffort(effort, persist = true) {
 function loadStoredEffort() {
     try {
         const stored = localStorage.getItem(EFFORT_STORAGE_KEY);
-        if (stored && EFFORT_OPTIONS[stored]) return stored;
+        if (stored && effortOptions.includes(stored)) return stored;
     } catch (_) {}
     return null;
 }
@@ -2562,9 +2700,9 @@ function loadStoredDepth() {
 }
 
 async function initComposerControls() {
-    const storedEffort = loadStoredEffort();
     const storedDepth = loadStoredDepth();
-    let serverDefault = 'xhigh';
+    let serverDefault = '';
+    let serverOptions = [];
     let serverDepth = 'medium';
     let thinkEnabled = true;
     try {
@@ -2573,24 +2711,43 @@ async function initComposerControls() {
             const data = await resp.json();
             thinkEnabled = data.think !== false;
             audioEnabled = data.audio_enabled === true;
-            if (data.reasoning_effort && EFFORT_OPTIONS[data.reasoning_effort]) {
-                serverDefault = data.reasoning_effort;
+            if (Array.isArray(data.reasoning_effort_options)) {
+                serverOptions = data.reasoning_effort_options
+                    .map((value) => String(value).trim())
+                    .filter(Boolean);
+            }
+            if (data.reasoning_effort) {
+                serverDefault = String(data.reasoning_effort).trim();
             }
             if (data.search_depth && DEPTH_OPTIONS[data.search_depth]) {
                 serverDepth = data.search_depth;
             }
+            if (settingsKeyTitle) {
+                settingsKeyTitle.textContent = llmKeyTitleForProfile(data.current_profile);
+            }
         }
     } catch (_) {}
 
-    reasoningEffortEnabled = thinkEnabled;
+    if (!serverOptions.length && serverDefault) {
+        serverOptions = [serverDefault];
+    }
+    renderEffortMenu(serverOptions);
+
+    reasoningEffortEnabled = thinkEnabled && serverOptions.length > 0;
     if (effortPicker) {
-        effortPicker.hidden = !thinkEnabled;
+        effortPicker.hidden = !reasoningEffortEnabled;
     }
     if (micBtn) {
         micBtn.hidden = !audioEnabled;
     }
-    setReasoningEffort(storedEffort || serverDefault, false);
+    const storedEffort = loadStoredEffort();
+    const initialEffort = storedEffort
+        || (serverOptions.includes(serverDefault) ? serverDefault : serverOptions[0]);
+    if (initialEffort) {
+        setReasoningEffort(initialEffort, false);
+    }
     setSearchDepth(storedDepth || serverDepth, false);
+    refreshSettingsStatus();
 }
 
 // ===== Init =====
@@ -2599,9 +2756,38 @@ async function initComposerControls() {
 micBtn.addEventListener('click', toggleMic);
 sendBtn.addEventListener('click', onComposerSubmit);
 clearBtn.addEventListener('click', clearHistory);
+if (settingsBtn) {
+    settingsBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeEffortMenu();
+        closeDepthMenu();
+        toggleSettingsMenu();
+    });
+}
+if (settingsKeySave) {
+    settingsKeySave.addEventListener('click', saveSettingsKey);
+}
+if (settingsKeyClear) {
+    settingsKeyClear.addEventListener('click', () => {
+        setLlmApiKeyOverride('');
+        if (settingsKeyInput) settingsKeyInput.value = '';
+        if (settingsBtn) settingsBtn.classList.remove('needs-key');
+        refreshSettingsStatus();
+        closeSettingsMenu();
+    });
+}
+if (settingsKeyInput) {
+    settingsKeyInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            saveSettingsKey();
+        }
+    });
+}
 effortBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     closeDepthMenu();
+    closeSettingsMenu();
     toggleEffortMenu();
 });
 effortMenu.addEventListener('click', (e) => {
@@ -2613,6 +2799,7 @@ effortMenu.addEventListener('click', (e) => {
 depthBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     closeEffortMenu();
+    closeSettingsMenu();
     toggleDepthMenu();
 });
 depthMenu.addEventListener('click', (e) => {
@@ -2624,6 +2811,7 @@ depthMenu.addEventListener('click', (e) => {
 document.addEventListener('click', (e) => {
     if (!effortPicker.contains(e.target)) closeEffortMenu();
     if (!depthPicker.contains(e.target)) closeDepthMenu();
+    if (settingsPicker && !settingsPicker.contains(e.target)) closeSettingsMenu();
 });
 document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
@@ -2634,6 +2822,10 @@ document.addEventListener('keydown', (e) => {
     if (isDepthMenuOpen()) {
         closeDepthMenu();
         depthBtn.focus();
+    }
+    if (isSettingsMenuOpen()) {
+        closeSettingsMenu();
+        settingsBtn.focus();
     }
 });
 textInput.addEventListener('keydown', (e) => {

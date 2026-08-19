@@ -5,7 +5,7 @@ from server.utils.config import AppConfig
 from server.utils.constants import LLMProviderType
 from server.core.sessions import current_session
 from server.core.turn_state import bind_turn, searches_state
-from server.llm.base import BaseLLMProvider
+from server.llm.base import BaseLLMProvider, public_llm_error_message
 from server.llm.history_manager import HistoryManager
 from server.llm.prompt_loader import PromptLoader
 from server.llm.providers.openai_provider import OpenAIProvider
@@ -57,12 +57,14 @@ class LLMManager:
         user_text: str,
         think_effort: str | None = None,
         search_depth: str | None = None,
+        api_key: str | None = None,
     ) -> str:
         text = ""
         async for event in self.generate_response_stream(
             user_text,
             think_effort=think_effort,
             search_depth=search_depth,
+            api_key=api_key,
         ):
             if event.type == "done":
                 text = event.data.get("final_content") or text
@@ -76,6 +78,7 @@ class LLMManager:
         user_text: str,
         think_effort: str | None = None,
         search_depth: str | None = None,
+        api_key: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Stream assistant events. History is updated only after a successful done
@@ -99,6 +102,7 @@ class LLMManager:
                     tools=self.tools.get_openai_tools(),
                     tool_map=self.tools.get_tool_map(),
                     think_effort=think_effort,
+                    api_key=api_key,
                 ):
                     if event.type == "done":
                         final_content = (
@@ -124,7 +128,7 @@ class LLMManager:
                         )
                     yield event
         except Exception as e:
-            yield StreamEvent("error", {"message": str(e)})
+            yield StreamEvent("error", {"message": public_llm_error_message(e)})
 
     def _log_turn_quality(self, answer: str, sources: SourceRegistry) -> None:
         """Groundedness signal per turn: citations, invented ids, searches spent."""

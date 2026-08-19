@@ -2,7 +2,7 @@ debug_mode: false
 audio_enabled: false
 # Corpus for V6 ANN/bridges (relationship.run_id). Empty = whole vector index + warning.
 run_id: "full_corpus_20260713"
-rerank_enabled: True
+rerank_enabled: false
 
 server:
   host: "0.0.0.0"
@@ -60,6 +60,7 @@ llm:
       max_turns: 2
       think: true
       think_effort: "xhigh"
+      think_efforts: ["low", "medium", "xhigh"]
       preserve_thinking: true
     lm_studio:
       provider: "openai"
@@ -72,6 +73,7 @@ llm:
       max_turns: 2
       think: true
       think_effort: "high"
+      think_efforts: ["high", "off"]
       preserve_thinking: true
       # Gemma: без этого токена в system думает только до tool call, после — reasoning_tokens=0
       think_token: "<|think|>"
@@ -86,4 +88,6 @@ llm:
       max_turns: 2
       think: true
       think_effort: "high"
+      # Gemma 4 31B: binary thinking. UI "off" is sent as reasoning_effort=none.
+      think_efforts: ["high", "off"]
       preserve_thinking: true

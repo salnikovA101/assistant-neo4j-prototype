@@ -7,6 +7,7 @@ from fastapi import Request
 from server.utils.config import AppConfig
 from server.llm.manager import LLMManager
 from server.llm.stream_events import StreamEvent
+from server.llm.base import public_llm_error_message
 from server.core.graph_runs import (
     current_graph_collector,
     graph_run_store,
@@ -108,6 +109,7 @@ class ServerPipeline:
         think_effort: Optional[str] = None,
         session_id: Optional[str] = None,
         search_depth: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> str:
         """
         Обрабатывает текстовый ввод: LLM (без STT).
@@ -134,6 +136,7 @@ class ServerPipeline:
                     user_text=text,
                     think_effort=think_effort,
                     search_depth=search_depth,
+                    api_key=api_key,
                 ),
                 timeout=self.config.server.llm_timeout,
             )
@@ -148,6 +151,7 @@ class ServerPipeline:
         think_effort: Optional[str] = None,
         session_id: Optional[str] = None,
         search_depth: Optional[str] = None,
+        api_key: Optional[str] = None,
     ) -> AsyncGenerator[StreamEvent, None]:
         """
         Stream LLM events (thinking / tools / content / done) for text input.
@@ -168,6 +172,7 @@ class ServerPipeline:
                     user_text=text,
                     think_effort=think_effort,
                     search_depth=search_depth,
+                    api_key=api_key,
                 ):
                     if request and await request.is_disconnected():
                         logger.info("Клиент отключился — остановка LLM stream")
@@ -200,7 +205,7 @@ class ServerPipeline:
 
                     yield event
             except Exception as e:
-                yield StreamEvent("error", {"message": str(e)})
+                yield StreamEvent("error", {"message": public_llm_error_message(e)})
             finally:
                 reset_graph_collector(collector_token)
 
