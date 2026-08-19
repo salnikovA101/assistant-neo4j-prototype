@@ -8,6 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from server.utils.constants import LLMProviderType, TTSModes
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 class Neo4jConfig(BaseModel):
     uri: str = "bolt://localhost:7687"
@@ -103,7 +105,7 @@ class ServerConfig(BaseModel):
 
 class AppConfig(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_REPO_ROOT / ".env",
         env_file_encoding="utf-8",
         env_nested_delimiter="__",
         extra="ignore",

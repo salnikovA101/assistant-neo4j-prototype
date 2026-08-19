@@ -4,9 +4,17 @@ from __future__ import annotations
 
 import pytest
 
-from server.algorithm.embed_client import _resolve_embed_settings
+from server.algorithm.embed_client import _ensure_env_loaded, _resolve_embed_settings
 from server.utils.config import AppConfig, load_config
 from server.utils.constants import EmbeddingBackend
+
+
+def test_ensure_env_loaded_does_not_read_ragas_file():
+    import inspect
+
+    src = inspect.getsource(_ensure_env_loaded)
+    assert ".env.ragas-testing" not in src
+    assert 'root / ".env"' in src
 
 
 def test_app_config_has_no_graph_embeddings_field():

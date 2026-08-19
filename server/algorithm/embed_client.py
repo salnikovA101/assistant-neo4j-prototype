@@ -34,10 +34,9 @@ def _ensure_env_loaded() -> None:
     from dotenv import load_dotenv
 
     root = Path(__file__).resolve().parents[2]
-    for name in (".env.ragas-testing", ".env"):
-        path = root / name
-        if path.exists():
-            load_dotenv(path, override=False)
+    env_path = root / ".env"
+    if env_path.exists():
+        load_dotenv(env_path, override=False)
 
 
 def _resolve_embed_settings(
