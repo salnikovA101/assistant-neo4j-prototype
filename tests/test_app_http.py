@@ -306,6 +306,10 @@ def test_chat_html_uses_mobile_safe_viewport():
     assert 'id="effort-label">high<' not in html
     assert ".message.assistant .message-text:empty" in css
     assert "min(76rem" in css
+    assert "--chrome-bottom" in css
+    assert "grid-template-columns" in css
+    assert "ResizeObserver" in js
+    assert "setSize" in js
 
 
 def test_browser_ui_redirects_to_login():

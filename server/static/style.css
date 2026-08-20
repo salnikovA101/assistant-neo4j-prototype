@@ -34,6 +34,8 @@
     --safe-left: env(safe-area-inset-left, 0px);
     --app-height: 100dvh;
     --vv-offset-top: 0px;
+    --vv-offset-left: 0px;
+    --chrome-bottom: 0px;
     --header-content-height: 56px;
 }
 
@@ -83,9 +85,10 @@ input {
     flex-direction: column;
     position: fixed;
     top: var(--vv-offset-top);
-    left: 0;
-    right: 0;
+    left: var(--vv-offset-left);
+    right: auto;
     width: 100%;
+    max-width: 100%;
     height: 100%;
     height: 100dvh;
     height: var(--app-height);
@@ -99,6 +102,8 @@ input {
     flex-direction: column;
     height: 100%;
     width: 100%;
+    min-width: 0;
+    max-width: 100%;
     overflow: hidden;
     position: relative;
 }
@@ -343,8 +348,9 @@ input {
 /* ===== Chat Area ===== */
 #chat-messages {
     flex: 1;
-    min-height: 0; /* allow flex child to scroll instead of growing forever */
-    overflow-x: hidden;
+    min-height: 0;
+    min-width: 0;
+    max-width: 100%;
     overflow-x: clip;
     overflow-y: auto;
     padding: 40px max(24px, var(--safe-right)) 48px max(24px, var(--safe-left));
@@ -537,6 +543,9 @@ input {
     margin-top: 1.25em;
     padding-top: 0.85em;
     border-top: 1px solid var(--border-color);
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    min-width: 0;
 }
 
 .md-sources h3 {
@@ -686,6 +695,8 @@ input {
     flex-wrap: wrap;
     gap: 10px;
     margin-top: 12px;
+    max-width: 100%;
+    min-width: 0;
 }
 
 .copy-btn {
@@ -1040,7 +1051,7 @@ input {
 /* ===== Input Panel ===== */
 #input-panel {
     background: var(--bg-chat);
-    padding: 0 max(24px, var(--safe-right)) calc(16px + var(--safe-bottom)) max(24px, var(--safe-left));
+    padding: 0 max(24px, var(--safe-right)) calc(12px + var(--safe-bottom) + var(--chrome-bottom)) max(24px, var(--safe-left));
     display: flex;
     justify-content: center;
     flex-shrink: 0;
@@ -1049,21 +1060,27 @@ input {
 .input-container {
     width: 100%;
     max-width: var(--chat-max-width);
+    min-width: 0;
     display: flex;
     flex-direction: column;
 }
 
 .input-wrapper {
-    display: flex;
-    align-items: flex-end;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: end;
+    column-gap: 8px;
+    row-gap: 6px;
     background: var(--bg-input);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
     padding: 6px 12px;
-    gap: 8px;
     box-shadow: var(--shadow);
     transition: border-color 0.25s, box-shadow 0.25s;
+}
+
+.input-wrapper:has(#mic-btn:not([hidden])) {
+    grid-template-columns: auto 1fr auto;
 }
 
 .input-wrapper:focus-within {
@@ -1075,7 +1092,18 @@ input {
     align-items: flex-end;
     gap: 8px;
     flex-shrink: 0;
+    grid-column: 2;
+    grid-row: 1;
     margin-bottom: 3px;
+}
+
+.input-wrapper:has(#mic-btn:not([hidden])) .composer-actions {
+    grid-column: 3;
+}
+
+#mic-btn:not([hidden]) {
+    grid-column: 1;
+    grid-row: 1;
 }
 
 /* Mic Button Inside Input Wrapper */
@@ -1133,7 +1161,9 @@ input {
 
 /* Text Input inside wrapper */
 #text-input {
-    flex: 1;
+    grid-column: 1;
+    grid-row: 1;
+    width: 100%;
     min-width: 0;
     background: none;
     border: none;
@@ -1151,6 +1181,10 @@ input {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     word-break: break-word;
+}
+
+.input-wrapper:has(#mic-btn:not([hidden])) #text-input {
+    grid-column: 2;
 }
 
 #text-input::placeholder {
@@ -1448,12 +1482,15 @@ body.graph-modal-open {
 
 .graph-modal-overlay {
     position: fixed;
-    inset: 0;
+    top: var(--vv-offset-top);
+    left: var(--vv-offset-left);
+    width: 100%;
+    height: var(--app-height);
     z-index: 1000;
     display: none;
     align-items: center;
     justify-content: center;
-    padding: max(12px, var(--safe-top)) max(12px, var(--safe-right)) max(12px, var(--safe-bottom)) max(12px, var(--safe-left));
+    padding: max(12px, var(--safe-top)) max(12px, var(--safe-right)) calc(12px + var(--safe-bottom) + var(--chrome-bottom)) max(12px, var(--safe-left));
     background: rgba(0, 0, 0, 0.62);
 }
 
@@ -1882,7 +1919,7 @@ body.graph-modal-open {
 
 @media (max-width: 768px) {
     .graph-modal-overlay {
-        padding: max(8px, var(--safe-top)) max(8px, var(--safe-right)) max(8px, var(--safe-bottom)) max(8px, var(--safe-left));
+        padding: 8px max(8px, var(--safe-right)) calc(8px + var(--safe-bottom) + var(--chrome-bottom)) max(8px, var(--safe-left));
         align-items: stretch;
     }
 
@@ -1891,6 +1928,7 @@ body.graph-modal-open {
         height: auto;
         flex: 1;
         max-height: none;
+        min-height: 0;
         border-radius: 16px;
     }
 
@@ -1900,10 +1938,14 @@ body.graph-modal-open {
 
     .graph-modal-inspector {
         width: 100%;
-        max-height: 42%;
+        max-height: 30%;
         border-left: none;
         border-top: 1px solid var(--border-color);
-        padding-bottom: max(20px, var(--safe-bottom));
+        padding-bottom: 12px;
+    }
+
+    .graph-modal-inspector.is-empty {
+        display: none;
     }
 
     .graph-modal-toolbar {
@@ -1914,6 +1956,14 @@ body.graph-modal-open {
     .graph-modal-close {
         width: 44px;
         height: 44px;
+    }
+
+    .graph-modal-search {
+        padding: 8px 12px;
+    }
+
+    .graph-modal-header {
+        padding: 10px 12px;
     }
 }
 
@@ -1955,24 +2005,15 @@ body.graph-modal-open {
     }
 
     #input-panel {
-        padding: 0 max(12px, var(--safe-right)) calc(10px + var(--safe-bottom)) max(12px, var(--safe-left));
+        padding: 0 max(12px, var(--safe-right)) calc(8px + var(--safe-bottom) + var(--chrome-bottom)) max(12px, var(--safe-left));
     }
 
     #db-status-text {
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        padding: 0;
-        margin: -1px;
-        overflow: hidden;
-        clip: rect(0, 0, 0, 0);
-        white-space: nowrap;
-        border: 0;
+        display: none;
     }
 
     .header-status-wrapper {
         padding: 8px;
-        position: relative;
     }
 
     .header-controls {
@@ -1985,26 +2026,40 @@ body.graph-modal-open {
         height: 44px;
     }
 
-    #text-input {
-        flex: 1 1 100%;
-        order: 1;
+    .input-wrapper,
+    .input-wrapper:has(#mic-btn:not([hidden])) {
+        grid-template-columns: 1fr auto;
+    }
+
+    #text-input,
+    .input-wrapper:has(#mic-btn:not([hidden])) #text-input {
+        grid-column: 1 / -1;
+        grid-row: 1;
+        width: 100%;
         min-height: 44px;
     }
 
-    #mic-btn {
-        order: 2;
+    #mic-btn:not([hidden]),
+    .input-wrapper:has(#mic-btn:not([hidden])) #mic-btn {
+        grid-column: 1;
+        grid-row: 2;
         width: 44px;
         height: 44px;
         min-width: 44px;
         margin-bottom: 0;
+        justify-self: start;
     }
 
     .composer-actions {
-        order: 3;
-        flex: 1 1 auto;
-        justify-content: flex-end;
+        grid-column: 1 / -1;
+        grid-row: 2;
+        justify-self: end;
         margin-bottom: 0;
         min-height: 44px;
+    }
+
+    .input-wrapper:has(#mic-btn:not([hidden])) .composer-actions {
+        grid-column: 2;
     }
 
     #effort-label,
@@ -2036,6 +2091,22 @@ body.graph-modal-open {
 
     .message.assistant {
         gap: 10px;
+    }
+
+    .message-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .show-graph-btn,
+    .copy-btn {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .markdown-body th,
+    .markdown-body td {
+        max-width: 12rem;
     }
 
     .welcome-message {

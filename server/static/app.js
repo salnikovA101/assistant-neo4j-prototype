@@ -1144,6 +1144,39 @@ const GRAPH_NETWORK_OPTIONS = {
         smooth: { enabled: true, type: 'cubicBezier', roundness: 0.35 },
     },
 };
+
+function isCoarsePointer() {
+    return window.matchMedia('(pointer: coarse)').matches;
+}
+
+function graphNetworkOptions() {
+    const coarse = isCoarsePointer();
+    const base = GRAPH_NETWORK_OPTIONS;
+    return {
+        ...base,
+        physics: {
+            ...base.physics,
+            enabled: true,
+            forceAtlas2Based: {
+                ...base.physics.forceAtlas2Based,
+                gravitationalConstant: coarse ? -46 : -90,
+                centralGravity: coarse ? 0.025 : 0.01,
+                springLength: coarse ? 88 : 180,
+            },
+            stabilization: { iterations: coarse ? 80 : 120, fit: true },
+        },
+        nodes: {
+            font: {
+                size: coarse ? 14 : 13,
+                face: 'Inter, sans-serif',
+            },
+        },
+        edges: {
+            ...base.edges,
+            font: { size: coarse ? 12 : 10 },
+        },
+    };
+}
 const graphPayloadCache = new Map();
 const pendingHighlights = new Map();
 let graphModal = null;
@@ -1569,6 +1602,8 @@ function ensureGraphModal() {
         focusEdgeId: null,
         selected: null,
         renderedKey: '',
+        resizeObserver: null,
+        _lastSize: null,
     };
 
     renderGraphLegend(graphModal);
@@ -1578,6 +1613,7 @@ function ensureGraphModal() {
         if (event.target === overlay) closeGraphModal();
     });
     overlay.querySelector('.graph-modal-close').addEventListener('click', closeGraphModal);
+    bindGraphResize(graphModal);
     graphModal.allBtn.addEventListener('click', () => {
         if (!graphModal.payload) return;
         graphModal.viewIndex = -1;
@@ -1854,6 +1890,7 @@ async function openGraphModal(graphMeta, btn) {
     modal.overlay.classList.add('open');
     document.body.classList.add('graph-modal-open');
     setGraphModalMessage('Загрузка графа...', true);
+    requestAnimationFrame(() => resizeGraphNetwork(modal));
 
     try {
         const payload = await fetchGraphViz(graphMeta.runId);
@@ -1901,6 +1938,7 @@ function destroyGraphNetwork(modal) {
     modal.visNodes = null;
     modal.visEdges = null;
     modal.renderedKey = '';
+    modal._lastSize = null;
 }
 
 function setGraphModalMessage(text, loading) {
@@ -2033,7 +2071,7 @@ function visNodeRecord(modal, node, view, filtering, bucket) {
         },
         font: {
             color: filtering && !matched ? 'rgba(255,255,255,0.35)' : '#ffffff',
-            size: 13,
+            size: isCoarsePointer() ? 14 : 13,
             face: 'Inter, sans-serif',
             strokeWidth: 3,
             strokeColor: 'rgba(0,0,0,0.65)',
@@ -2091,7 +2129,7 @@ function visEdgeRecord(modal, edge, view, filtering, bucket) {
         },
         font: {
             color: matched ? '#e5e7eb' : '#9a9a9a',
-            size: 10,
+            size: isCoarsePointer() ? 12 : 10,
             face: 'Inter, sans-serif',
             strokeWidth: 2,
             strokeColor: 'rgba(0,0,0,0.5)',
@@ -2117,6 +2155,33 @@ function bindGraphNetworkEvents(modal) {
     });
 }
 
+function resizeGraphNetwork(modal, { fit = false } = {}) {
+    if (!modal || !modal.network || !modal.canvas) return;
+    const wrap = modal.canvas.parentElement || modal.canvas;
+    const w = wrap.clientWidth;
+    const h = wrap.clientHeight;
+    if (w < 16 || h < 16) return;
+    const prev = modal._lastSize;
+    if (!fit && prev && prev.w === w && prev.h === h) return;
+    modal._lastSize = { w, h };
+    modal.network.setSize(`${w}px`, `${h}px`);
+    modal.network.redraw();
+    if (fit) {
+        modal.network.fit({ animation: false });
+    }
+}
+
+function bindGraphResize(modal) {
+    if (!modal || modal.resizeObserver || typeof ResizeObserver === 'undefined') return;
+    const wrap = modal.canvas && modal.canvas.parentElement;
+    if (!wrap) return;
+    modal.resizeObserver = new ResizeObserver(() => {
+        if (!modal.overlay.classList.contains('open')) return;
+        resizeGraphNetwork(modal, { fit: true });
+    });
+    modal.resizeObserver.observe(wrap);
+}
+
 function freezeGraphPhysics(modal) {
     if (!modal.network) return;
     modal.network.setOptions({ physics: { enabled: false } });
@@ -2124,6 +2189,7 @@ function freezeGraphPhysics(modal) {
 
 function afterGraphStabilize(modal) {
     freezeGraphPhysics(modal);
+    resizeGraphNetwork(modal, { fit: true });
     const focusId = modal.focusEdgeId;
     modal.focusEdgeId = null;
     if (focusId && modal.visEdges && modal.visEdges.get(focusId)) {
@@ -2230,18 +2296,18 @@ function renderGraphView() {
     modal.network = new vis.Network(
         modal.canvas,
         { nodes: modal.visNodes, edges: modal.visEdges },
-        {
-            ...GRAPH_NETWORK_OPTIONS,
-            physics: { ...GRAPH_NETWORK_OPTIONS.physics, enabled: true },
-        }
+        graphNetworkOptions()
     );
     bindGraphNetworkEvents(modal);
+    bindGraphResize(modal);
     modal.network.once('stabilizationIterationsDone', () => afterGraphStabilize(modal));
+    requestAnimationFrame(() => resizeGraphNetwork(modal));
 }
 
 function showInspectorEmpty() {
     const modal = ensureGraphModal();
     modal.selected = null;
+    modal.details.classList.add('is-empty');
     modal.details.innerHTML = '<div class="graph-inspector-empty">Выберите узел или ребро</div>';
 }
 
@@ -2263,6 +2329,7 @@ function showInspector(kind, data) {
     const modal = ensureGraphModal();
     const view = currentGraphView() || { nodes: [], edges: [] };
     modal.selected = { kind, id: data.id };
+    modal.details.classList.remove('is-empty');
 
     if (kind === 'node') {
         const caption = nodeCaption(data);
@@ -2879,8 +2946,30 @@ function syncAppViewport() {
     const vv = window.visualViewport;
     const height = vv ? vv.height : window.innerHeight;
     const offsetTop = vv ? vv.offsetTop : 0;
+    const offsetLeft = vv ? vv.offsetLeft : 0;
+    let chromeBottom = 0;
+    if (vv) {
+        chromeBottom = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+    }
+    const keyboardOpen = vv && vv.height < window.innerHeight * 0.75;
+    if (keyboardOpen) {
+        chromeBottom = 0;
+    } else {
+        chromeBottom = Math.min(chromeBottom, 96);
+        const standalone = window.matchMedia('(display-mode: standalone)').matches
+            || Boolean(window.navigator.standalone);
+        const coarse = window.matchMedia('(pointer: coarse)').matches;
+        if (!standalone && coarse && chromeBottom < 8) {
+            chromeBottom = 64;
+        }
+    }
     root.style.setProperty('--app-height', `${Math.round(height)}px`);
     root.style.setProperty('--vv-offset-top', `${Math.round(offsetTop)}px`);
+    root.style.setProperty('--vv-offset-left', `${Math.round(offsetLeft)}px`);
+    root.style.setProperty('--chrome-bottom', `${chromeBottom}px`);
+    if (graphModal && graphModal.overlay.classList.contains('open')) {
+        resizeGraphNetwork(graphModal);
+    }
 }
 
 function initViewportSync() {
