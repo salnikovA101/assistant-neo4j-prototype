@@ -65,6 +65,15 @@ const DEPTH_OPTIONS = {
     medium: { label: 'Обычно' },
     high: { label: 'Широко' },
 };
+const EFFORT_LABELS = {
+    off: { label: 'Выкл', hint: 'без рассуждения' },
+    none: { label: 'Выкл', hint: 'без рассуждения' },
+    on: { label: 'Вкл', hint: 'с рассуждением' },
+    low: { label: 'Коротко', hint: 'быстрее' },
+    medium: { label: 'Обычно', hint: 'баланс' },
+    high: { label: 'Глубоко', hint: 'длиннее цепочка' },
+    xhigh: { label: 'Максимум', hint: 'самая длинная цепочка' },
+};
 let currentSearchDepth = 'medium';
 let effortOptions = [];
 let currentReasoningEffort = '';
@@ -2575,6 +2584,11 @@ async function clearHistory() {
 
 // ===== Reasoning effort / search depth pickers =====
 
+function effortDisplay(value) {
+    const key = String(value || '').trim().toLowerCase();
+    return EFFORT_LABELS[key] || { label: String(value || ''), hint: '' };
+}
+
 function processTextPayload(text) {
     const payload = { text, search_depth: currentSearchDepth };
     if (reasoningEffortEnabled && currentReasoningEffort) {
@@ -2623,8 +2637,15 @@ function renderEffortMenu(options) {
         text.className = 'effort-option-text';
         const name = document.createElement('span');
         name.className = 'effort-option-name';
-        name.textContent = effort;
+        const meta = effortDisplay(effort);
+        name.textContent = meta.label;
         text.appendChild(name);
+        if (meta.hint) {
+            const hint = document.createElement('span');
+            hint.className = 'effort-option-hint';
+            hint.textContent = meta.hint;
+            text.appendChild(hint);
+        }
 
         btn.appendChild(check);
         btn.appendChild(text);
@@ -2635,9 +2656,10 @@ function renderEffortMenu(options) {
 function setReasoningEffort(effort, persist = true) {
     if (!effortOptions.includes(effort)) return;
     currentReasoningEffort = effort;
-    effortLabel.textContent = effort;
-    effortBtn.title = `Глубина рассуждения: ${effort}`;
-    effortBtn.setAttribute('aria-label', `Глубина рассуждения: ${effort}`);
+    const meta = effortDisplay(effort);
+    effortLabel.textContent = meta.label;
+    effortBtn.title = `Глубина рассуждения: ${meta.label}`;
+    effortBtn.setAttribute('aria-label', `Глубина рассуждения: ${meta.label}`);
     effortMenu.querySelectorAll('.effort-option').forEach((btn) => {
         btn.setAttribute('aria-selected', btn.dataset.effort === effort ? 'true' : 'false');
     });
@@ -2846,7 +2868,27 @@ function resizeTextInput() {
 
 initComposerControls();
 resizeTextInput();
+initViewportSync();
 
 // Проверяем здоровье сервера при загрузке и периодически
 checkHealth();
 setInterval(checkHealth, 30000);
+
+function syncAppViewport() {
+    const root = document.documentElement;
+    const vv = window.visualViewport;
+    const height = vv ? vv.height : window.innerHeight;
+    const offsetTop = vv ? vv.offsetTop : 0;
+    root.style.setProperty('--app-height', `${Math.round(height)}px`);
+    root.style.setProperty('--vv-offset-top', `${Math.round(offsetTop)}px`);
+}
+
+function initViewportSync() {
+    syncAppViewport();
+    window.addEventListener('resize', syncAppViewport);
+    window.addEventListener('orientationchange', syncAppViewport);
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', syncAppViewport);
+        window.visualViewport.addEventListener('scroll', syncAppViewport);
+    }
+}

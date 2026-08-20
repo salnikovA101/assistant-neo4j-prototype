@@ -2,7 +2,9 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#212121">
     <title>Neo4j Assistant</title>
     <meta name="description" content="ИИ-ассистент для работы с графовой базой знаний Neo4j">
     <link rel="icon" href="icon.svg" type="image/svg+xml">
@@ -86,8 +88,9 @@
                         </button>
 
                         <!-- Input field -->
-                        <textarea id="text-input" rows="1" placeholder="Спросить Neo4j Assistant..." autocomplete="off"></textarea>
+                        <textarea id="text-input" rows="1" placeholder="Спросить Neo4j Assistant..." autocomplete="off" enterkeyhint="send"></textarea>
 
+                        <div class="composer-actions">
                         <div class="effort-picker" id="depth-picker">
                             <button type="button" id="depth-btn" class="effort-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="depth-menu" title="Глубина поиска">
                                 <svg class="effort-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -138,7 +141,7 @@
                                     <path d="M7.7 8.7L5.6 6.6"></path>
                                     <circle cx="12" cy="12" r="3.2"></circle>
                                 </svg>
-                                <span id="effort-label">high</span>
+                                <span id="effort-label">Глубоко</span>
                                 <svg class="effort-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                     <polyline points="6 9 12 15 18 9"></polyline>
                                 </svg>
@@ -157,6 +160,7 @@
                                 <rect x="6" y="6" width="12" height="12" rx="2"/>
                             </svg>
                         </button>
+                        </div>
                     </div>
                 </div>
             </footer>

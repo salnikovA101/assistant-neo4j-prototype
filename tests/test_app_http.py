@@ -275,6 +275,8 @@ def test_login_html_has_no_inline_script():
     ).read_text(encoding="utf-8")
     assert "<script" not in html.lower()
     assert "super-secret" not in html
+    assert 'value="demo"' not in html
+    assert ' class="login-error" hidden' in html
     assert is_public_auth_path("/login") is True
     assert is_public_auth_path("/logout") is True
     assert is_public_auth_path("/ui/style.css") is True
@@ -282,6 +284,28 @@ def test_login_html_has_no_inline_script():
     assert is_public_auth_path("/ui/") is False
     assert is_public_auth_path("/health") is False
     assert is_public_auth_path("/ui/app.js") is False
+
+
+def test_chat_html_uses_mobile_safe_viewport():
+    root = Path(__file__).resolve().parents[1] / "server" / "static"
+    html = (root / "index.html").read_text(encoding="utf-8")
+    css = (root / "style.css").read_text(encoding="utf-8")
+    login = (root / "login.html").read_text(encoding="utf-8")
+    js = (root / "app.js").read_text(encoding="utf-8")
+
+    assert "viewport-fit=cover" in html
+    assert "interactive-widget=resizes-content" in html
+    assert "viewport-fit=cover" in login
+    assert "width: 100vw" not in css
+    assert "height: 100vh" not in css
+    assert "100dvh" in css
+    assert "safe-area-inset-top" in css
+    assert "safe-area-inset-bottom" in css
+    assert "visualViewport" in js
+    assert "composer-actions" in html
+    assert 'id="effort-label">high<' not in html
+    assert ".message.assistant .message-text:empty" in css
+    assert "min(76rem" in css
 
 
 def test_browser_ui_redirects_to_login():
