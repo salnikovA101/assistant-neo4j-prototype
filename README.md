@@ -236,6 +236,8 @@ cp .env.example .env
 | `NEO4J__URI` | Адрес графовой БД (например, `bolt://localhost:7687`) |
 | `NEO4J__USER` / `NEO4J__PASSWORD` | Логин и пароль от базы Neo4j |
 | `UI_BASIC_PASSWORD` | Логин-форма UI и HTTP Basic для curl. Пустой пароль — все запросы 503 |
+| `EMBED__BASE_URL` | Ollama embeddings, из Docker обычно `http://host.docker.internal:11434/v1` |
+| `EMBED__MODEL` | `embeddinggemma:300m-qat-q8_0` |
 | `LLM__PROFILES__GEMINI__API_KEY` | Ключ для работы с Gemini API напрямую |
 | `LLM__PROFILES__GEMINI__BASE_URL` | Базовый URL для Gemini API |
 | `LLM__PROFILES__OTHER__API_KEY` | Ключ от OpenRouter (или другого OpenAI-совместимого провайдера) |
@@ -243,7 +245,7 @@ cp .env.example .env
 | `TTS__CLOUD__API_KEY` | Ключ для работы с облачным режимом TTS |
 | `TTS__CLOUD__BASE_URL` | Базовый URL провайдера облачного TTS |
 
-Связи в Neo4j несут свойство `run_id` (идентификатор загрузки корпуса). V6 ANN и S3-мосты фильтруют по `run_id` из `server/config.yaml` (пустой = весь индекс, warning при старте). Vector indexes на `evidence_embedding` должны быть созданы с `WITH [r.run_id]`; один раз: `python scripts/vectorize_edges.py --recreate-indexes`.
+Связи в Neo4j несут свойство `run_id` (идентификатор загрузки корпуса). V6 ANN и S3-мосты фильтруют по `run_id` из `server/config.yaml` (пустой = весь индекс, warning при старте). Эмбеддинг retrieval — локальный Ollama `embeddinggemma:300m-qat-q8_0` (не OpenRouter). После смены модели: `python scripts/vectorize_edges.py --run-id full_corpus_20260713 --force` и `--recreate-indexes`.
 
 > **Совет:** Чтобы переключить активную модель LLM или TTS, откройте `server/config.yaml` и измените значения `llm.current_profile` (или `tts.mode`). 
 > 

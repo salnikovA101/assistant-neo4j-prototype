@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Host script: embed relationship.evidence via OpenRouter, SET evidence_embedding.
+"""Host script: embed relationship.evidence via local Ollama, SET evidence_embedding.
 
 Runs on the host (not the app container). Uses server.algorithm.embed_client
-(nvidia/nemotron-3-embed-1b, no torch).
+(embeddinggemma:300m-qat-q8_0, no torch). Stop the Docker app first on a 3 GB VM.
 
   .venv/bin/python scripts/vectorize_edges.py
   .venv/bin/python scripts/vectorize_edges.py --run-id full_corpus_20260713
-  .venv/bin/python scripts/vectorize_edges.py --recreate-indexes --yes
+  .venv/bin/python scripts/vectorize_edges.py --force --recreate-indexes --yes
   .venv/bin/python scripts/vectorize_edges.py --force --dry-run
+  .venv/bin/python scripts/bench_embed.py
 """
 
 from __future__ import annotations
@@ -31,16 +32,18 @@ from neo4j.exceptions import AuthError, ServiceUnavailable
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from server.algorithm.embed import format_document  # noqa: E402
 from server.algorithm.embed_client import (  # noqa: E402
-    OPENROUTER_DEFAULT_MODEL,
+    DEFAULT_EMBED_MODEL,
     get_embeddings_batch,
+    _resolve_embed_settings,
 )
 from server.utils.config import load_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
 _INDEX_NAME_RE_OK = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
-_WRITE_BATCH = 32
+_WRITE_BATCH = 8
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "host.docker.internal"}
 T = TypeVar("T")
 
@@ -371,18 +374,19 @@ async def _embed_and_write(
     if not total:
         print("Nothing to embed")
         return expected_dim
+    _backend, model, embeddings_url, _headers = _resolve_embed_settings()
     print(
-        f"Sending {total} evidence texts to OpenRouter "
-        f"({OPENROUTER_DEFAULT_MODEL})"
+        f"Sending {total} evidence texts to Ollama "
+        f"model={model} url={embeddings_url}"
     )
     done = 0
     dim = expected_dim
     for i in range(0, total, _WRITE_BATCH):
         chunk = pending[i : i + _WRITE_BATCH]
-        texts = [c["evidence"] for c in chunk]
+        texts = [format_document(c["evidence"]) for c in chunk]
         vecs = await get_embeddings_batch(
             texts,
-            model_id=OPENROUTER_DEFAULT_MODEL,
+            model_id=model,
         )
         if len(vecs) != len(chunk):
             raise SystemExit(
@@ -416,8 +420,10 @@ def _require_neo4j_password() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Embed r.evidence via OpenRouter nemotron and SET r.evidence_embedding. "
-            "Host-only; key from OPENROUTER_API_KEY or LLM__PROFILES__OTHER__API_KEY."
+            "Embed r.evidence via local Ollama (embeddinggemma:300m-qat-q8_0) "
+            "and SET r.evidence_embedding. Host-only. Stop docker compose app "
+            "on the 3 GB VM first. After a model/dim change: --force then "
+            "--recreate-indexes --yes."
         )
     )
     parser.add_argument(
@@ -464,15 +470,19 @@ def main() -> None:
         if args.force and pending:
             _confirm(
                 f"Overwrite evidence_embedding on {len(pending)} edges "
-                f"(sends texts to OpenRouter).",
+                f"(sends texts to local Ollama {DEFAULT_EMBED_MODEL}).",
                 yes=args.yes,
                 dry_run=args.dry_run,
             )
-        expected_dim = _unique_dim(db)  # whole graph; refuse mixed dims
-        if expected_dim is None:
-            expected_dim = _unique_dim(db, run_id)
+        if args.force:
+            expected_dim = None
+            print("--force: ignoring existing evidence_embedding dimensions")
+        else:
+            expected_dim = _unique_dim(db)
+            if expected_dim is None:
+                expected_dim = _unique_dim(db, run_id)
         if args.dry_run:
-            print("dry-run: no OpenRouter calls, no SET")
+            print("dry-run: no Ollama calls, no SET")
         else:
             asyncio.run(
                 _embed_and_write(db, pending, expected_dim=expected_dim)

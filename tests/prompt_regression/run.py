@@ -1,6 +1,6 @@
 """Prompt regression harness: run cases against a live server and score them.
 
-Needs a running backend (Neo4j + OpenRouter embeddings + LLM):
+Needs a running backend (Neo4j + local Ollama embeddings + LLM):
 
     .venv/bin/python -m tests.prompt_regression.run
     .venv/bin/python -m tests.prompt_regression.run --case catalog_freshness_indicators

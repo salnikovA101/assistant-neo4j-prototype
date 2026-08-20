@@ -9,13 +9,27 @@ from server.utils.constants import EmbeddingBackend
 
 logger = logging.getLogger(__name__)
 
-_V6_EMBED_BACKEND = EmbeddingBackend.OPENROUTER
-_V6_EMBED_MODEL = "nvidia/nemotron-3-embed-1b:free"
+_V6_EMBED_BACKEND = EmbeddingBackend.OLLAMA
+
+# EmbeddingGemma retrieval prefixes (Google model card). Queries and
+# documents must use the matching pair or ANN quality drops.
+QUERY_PREFIX = "task: search result | query: "
+DOCUMENT_PREFIX = "title: none | text: "
+
+
+def format_query(text: str) -> str:
+    return f"{QUERY_PREFIX}{text}"
+
+
+def format_document(text: str) -> str:
+    return f"{DOCUMENT_PREFIX}{text}"
 
 
 async def embed_texts(
     texts: list[str],
     cache: dict[str, list[float]],
+    *,
+    as_query: bool = True,
 ) -> list[list[float]]:
     out: list[list[float] | None] = [None] * len(texts)
     missing_idx: list[int] = []
@@ -26,13 +40,14 @@ async def embed_texts(
             out[i] = cache[key]
         else:
             missing_idx.append(i)
-            missing_texts.append(t)
+            missing_texts.append(
+                format_query(t) if as_query else format_document(t)
+            )
 
     if missing_texts:
         vectors = await get_embeddings_batch(
             missing_texts,
             backend=_V6_EMBED_BACKEND,
-            model_id=_V6_EMBED_MODEL,
         )
         if len(vectors) != len(missing_texts):
             raise EmbeddingError(

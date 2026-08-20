@@ -39,7 +39,7 @@ tts:
 
 # Algorithm knobs (L, effort K, rerank_url, …) live in server/algorithm/params.py.
 # Deploy switches: run_id and rerank_enabled at the top of this file.
-# V6 embeddings: hardcoded OpenRouter nemotron in server/algorithm/embed.py (not yaml).
+# V6 embeddings: local Ollama embeddinggemma:300m-qat-q8_0 (EMBED__* in .env, not yaml).
 llm:
   current_profile: "ollama"
   tool_profile: "ollama"

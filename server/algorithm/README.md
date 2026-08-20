@@ -60,7 +60,7 @@ metrics are on the emitted set.
 # unit
 .venv/bin/python -m pytest tests/algorithm tests/test_graph_viz.py -q
 
-# eval (needs Neo4j + OpenRouter embeddings; mock_decompose SLM unless --sq-cache)
+# eval (needs Neo4j + local Ollama embeddings; mock_decompose SLM unless --sq-cache)
 .venv/bin/python tests/evaluate_v6.py --effort auto --limit 1 --sq-cache
 # reports → tests/reports/v6/ (wiped each run)
 # sq cache → tests/reports/v6_cache/sq_cache.json (preserved)

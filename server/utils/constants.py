@@ -14,7 +14,7 @@ class EmbeddingBackend(StrEnum):
     Backend for graph retrieval embeddings (must match Neo4j vector dims).
     """
 
-    OPENROUTER = "openrouter"  # OpenRouter / remote OpenAI-compatible API
+    OLLAMA = "ollama"  # Local Ollama OpenAI-compatible /v1/embeddings
 
 
 class TTSModes(StrEnum):

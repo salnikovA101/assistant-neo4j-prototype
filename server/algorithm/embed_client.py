@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from pathlib import Path
 
 import httpx
 from neo4j import AsyncDriver
@@ -18,19 +19,28 @@ class EmbeddingError(RuntimeError):
     """Embedding HTTP/backend failed after retries."""
 
 
-OPENROUTER_DEFAULT_MODEL = "nvidia/nemotron-3-embed-1b:free"
-OPENROUTER_DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+DEFAULT_EMBED_MODEL = "embeddinggemma:300m-qat-q8_0"
+DEFAULT_EMBED_API_KEY = "ollama"
+_HOST_EMBED_BASE_URL = "http://127.0.0.1:11434/v1"
+_DOCKER_EMBED_BASE_URL = "http://host.docker.internal:11434/v1"
 _MAX_RETRIES = 5
 _RETRY_BASE_SEC = 2.0
-_BATCH_SIZE = 32
+_BATCH_SIZE = 8
 _MAX_INPUT_CHARS = 8192
 
 
-def _ensure_env_loaded() -> None:
-    if os.environ.get("OPENROUTER_API_KEY") or os.environ.get("LLM__PROFILES__OTHER__API_KEY"):
-        return
-    from pathlib import Path
+def running_in_docker() -> bool:
+    return Path("/.dockerenv").exists()
 
+
+def default_embed_base_url() -> str:
+    """Ollama on the VM host: Docker uses host-gateway, scripts use loopback."""
+    if running_in_docker():
+        return _DOCKER_EMBED_BASE_URL
+    return _HOST_EMBED_BASE_URL
+
+
+def _ensure_env_loaded() -> None:
     from dotenv import load_dotenv
 
     root = Path(__file__).resolve().parents[2]
@@ -44,22 +54,20 @@ def _resolve_embed_settings(
     url: str | None = None,
     backend: EmbeddingBackend | str | None = None,
 ) -> tuple[EmbeddingBackend, str, str, dict[str, str]]:
-    """Resolve OpenRouter model, embeddings URL, and request headers.
-
-    Defaults match embed.py (nvidia/nemotron-3-embed-1b).
-    """
-    resolved_backend = EmbeddingBackend(backend or EmbeddingBackend.OPENROUTER)
+    """Resolve Ollama model, embeddings URL, and request headers."""
+    resolved_backend = EmbeddingBackend(backend or EmbeddingBackend.OLLAMA)
     _ensure_env_loaded()
-    model = model_id or OPENROUTER_DEFAULT_MODEL
-    base = (url or OPENROUTER_DEFAULT_BASE_URL).rstrip("/")
-    key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get(
-        "LLM__PROFILES__OTHER__API_KEY"
+    model = (
+        model_id
+        or (os.environ.get("EMBED__MODEL") or "").strip()
+        or DEFAULT_EMBED_MODEL
     )
-    if not key:
-        raise RuntimeError(
-            "OpenRouter API key not found "
-            "(OPENROUTER_API_KEY or LLM__PROFILES__OTHER__API_KEY)"
-        )
+    base = (
+        url
+        or (os.environ.get("EMBED__BASE_URL") or "").strip()
+        or default_embed_base_url()
+    ).rstrip("/")
+    key = (os.environ.get("EMBED__API_KEY") or "").strip() or DEFAULT_EMBED_API_KEY
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
@@ -106,7 +114,10 @@ async def _post_embeddings_once(
                 await asyncio.sleep(wait)
                 continue
             response.raise_for_status()
-            data = response.json()["data"]
+            body = response.json()
+            data = body.get("data")
+            if not isinstance(data, list):
+                raise EmbeddingError("embedding response missing data[]")
             data_sorted = sorted(data, key=lambda item: item.get("index", 0))
             return [item["embedding"] for item in data_sorted]
         except EmbeddingError:
@@ -135,7 +146,7 @@ async def get_embeddings_batch(
     url: str | None = None,
     backend: EmbeddingBackend | str | None = None,
 ) -> list[list[float]]:
-    """Fetch embeddings via OpenRouter (nvidia/nemotron-3-embed-1b by default).
+    """Fetch embeddings via local Ollama (embeddinggemma QAT Q8 by default).
 
     Raises EmbeddingError after retries instead of returning empty vectors.
     """
@@ -162,7 +173,6 @@ async def get_embeddings_batch(
             payload: dict = {
                 "model": model,
                 "input": chunk,
-                "encoding_format": "float",
             }
             vectors = await _post_embeddings_once(
                 client,
@@ -177,7 +187,6 @@ async def get_embeddings_batch(
                     one_payload: dict = {
                         "model": model,
                         "input": [t],
-                        "encoding_format": "float",
                     }
                     one = await _post_embeddings_once(
                         client,
