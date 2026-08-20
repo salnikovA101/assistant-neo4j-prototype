@@ -56,6 +56,8 @@ const depthPicker = document.getElementById('depth-picker');
 const depthBtn = document.getElementById('depth-btn');
 const depthMenu = document.getElementById('depth-menu');
 const depthLabel = document.getElementById('depth-label');
+const appRoot = document.getElementById('app');
+const composerReveal = document.getElementById('composer-reveal');
 
 const EFFORT_STORAGE_KEY = 'reasoning_effort';
 const DEPTH_STORAGE_KEY = 'search_depth';
@@ -80,6 +82,8 @@ let currentReasoningEffort = '';
 let reasoningEffortEnabled = true;
 let audioEnabled = false;
 let activeStreamShell = null;
+let composerKeepOpen = false;
+let composerSyncTick = 0;
 
 function getSessionId() {
     if (!window.__assistantSessionId) {
@@ -482,6 +486,7 @@ async function sendText() {
 
     addMessage('user', text);
     textInput.value = '';
+    composerKeepOpen = false;
     resizeTextInput();
     setUIState('processing');
 
@@ -2613,6 +2618,7 @@ function setUIState(state) {
         playing: 'Озвучивание…',
     };
     statusText.textContent = statusMap[state] || 'Подключено';
+    scheduleComposerSync();
 }
 
 function escapeHtml(text) {
@@ -2949,7 +2955,18 @@ textInput.addEventListener('keydown', (e) => {
         sendText();
     }
 });
-textInput.addEventListener('input', resizeTextInput);
+textInput.addEventListener('input', () => {
+    resizeTextInput();
+    scheduleComposerSync();
+});
+textInput.addEventListener('focus', () => {
+    composerKeepOpen = true;
+    scheduleComposerSync();
+});
+textInput.addEventListener('blur', () => {
+    composerKeepOpen = false;
+    scheduleComposerSync();
+});
 
 function resizeTextInput() {
     textInput.style.height = 'auto';
@@ -2959,7 +2976,77 @@ function resizeTextInput() {
     textInput.style.overflowY = textInput.scrollHeight > max + 1 ? 'auto' : 'hidden';
 }
 
+function chatIsNearBottom(threshold = 80) {
+    return chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight < threshold;
+}
+
+function expandComposer() {
+    composerKeepOpen = true;
+    if (!appRoot) return;
+    appRoot.classList.remove('composer-collapsed');
+    if (composerReveal) composerReveal.hidden = true;
+}
+
+function shouldKeepComposerOpen() {
+    if (chatMessages.querySelector('.welcome-message')) return true;
+    if (currentUIState !== 'idle') return true;
+    if (document.activeElement === textInput) return true;
+    if (textInput.value.trim()) return true;
+    if (composerKeepOpen) return true;
+    return false;
+}
+
+function syncComposerCollapse() {
+    if (!appRoot || !composerReveal) return;
+    const keepOpen = shouldKeepComposerOpen();
+    const collapsed = !keepOpen;
+    const wasCollapsed = appRoot.classList.contains('composer-collapsed');
+    const pinBottom = collapsed && !wasCollapsed && chatIsNearBottom();
+
+    if (collapsed && !wasCollapsed) {
+        closeEffortMenu();
+        closeDepthMenu();
+    }
+
+    appRoot.classList.toggle('composer-collapsed', collapsed);
+    composerReveal.hidden = !collapsed;
+
+    if (pinBottom) {
+        chatMessages.scrollTop = chatMessages.scrollHeight - chatMessages.clientHeight;
+    }
+}
+
+function scheduleComposerSync() {
+    if (composerSyncTick) return;
+    composerSyncTick = requestAnimationFrame(() => {
+        composerSyncTick = 0;
+        syncComposerCollapse();
+    });
+}
+
+function initComposerCollapse() {
+    if (composerReveal) {
+        composerReveal.addEventListener('click', () => {
+            expandComposer();
+            textInput.focus();
+        });
+    }
+    chatMessages.addEventListener('scroll', () => {
+        if (document.activeElement !== textInput && !textInput.value.trim()) {
+            composerKeepOpen = false;
+        }
+        scheduleComposerSync();
+    }, { passive: true });
+    chatMessages.addEventListener('pointerdown', () => {
+        if (document.activeElement === textInput) return;
+        composerKeepOpen = false;
+        scheduleComposerSync();
+    }, { passive: true });
+    syncComposerCollapse();
+}
+
 initComposerControls();
+initComposerCollapse();
 resizeTextInput();
 initViewportSync();
 
@@ -2987,6 +3074,7 @@ function syncAppViewport() {
     root.style.setProperty('--vv-offset-top', `${Math.round(offsetTop)}px`);
     root.style.setProperty('--vv-offset-left', `${Math.round(offsetLeft)}px`);
     root.style.setProperty('--chrome-bottom', `${chromeBottom}px`);
+    scheduleComposerSync();
     if (graphModal && graphModal.overlay.classList.contains('open')) {
         resizeGraphNetwork(graphModal);
     }

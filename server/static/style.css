@@ -1057,6 +1057,38 @@ input {
     flex-shrink: 0;
 }
 
+#app.composer-collapsed #input-panel {
+    padding-bottom: calc(12px + var(--safe-bottom) + var(--chrome-bottom));
+}
+
+.composer-reveal {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-height: 44px;
+    padding: 0 16px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    background: var(--bg-input);
+    color: var(--text-muted);
+    font-family: var(--font);
+    font-size: 16px;
+    text-align: left;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    box-shadow: var(--shadow);
+    touch-action: manipulation;
+}
+
+.composer-reveal[hidden] {
+    display: none !important;
+}
+
+#app.composer-collapsed .input-wrapper {
+    display: none;
+}
+
 .input-container {
     width: 100%;
     max-width: var(--chat-max-width);
@@ -2006,6 +2038,10 @@ body.graph-modal-open {
 
     #input-panel {
         padding: 0 max(12px, var(--safe-right)) calc(8px + var(--safe-bottom) + var(--chrome-bottom)) max(12px, var(--safe-left));
+    }
+
+    #app.composer-collapsed #input-panel {
+        padding-bottom: calc(8px + var(--safe-bottom) + var(--chrome-bottom));
     }
 
     #db-status-text {

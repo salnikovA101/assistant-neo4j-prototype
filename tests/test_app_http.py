@@ -311,6 +311,9 @@ def test_chat_html_uses_mobile_safe_viewport():
     assert "ResizeObserver" in js
     assert "setSize" in js
     assert "copyTextToClipboard" in js
+    assert 'id="composer-reveal"' in html
+    assert "composer-collapsed" in css
+    assert "syncComposerCollapse" in js
 
 
 def test_browser_ui_redirects_to_login():
