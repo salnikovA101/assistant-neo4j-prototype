@@ -2383,7 +2383,7 @@ function showInspector(kind, data) {
     if (copyBtn) {
         copyBtn.addEventListener('click', async () => {
             try {
-                await navigator.clipboard.writeText(evidence);
+                await copyTextToClipboard(evidence);
                 copyBtn.textContent = 'Скопировано';
                 setTimeout(() => { copyBtn.textContent = 'Копировать цитату'; }, 1400);
             } catch (_) {
@@ -2441,6 +2441,32 @@ function wrapSourcesBlock(html) {
     return holder.innerHTML;
 }
 
+function copyTextToClipboard(text) {
+    const value = String(text ?? '');
+    if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(value);
+    }
+    return new Promise((resolve, reject) => {
+        const ta = document.createElement('textarea');
+        ta.value = value;
+        ta.setAttribute('readonly', '');
+        ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        ta.setSelectionRange(0, ta.value.length);
+        let ok = false;
+        try {
+            ok = document.execCommand('copy');
+        } catch (_) {
+            ok = false;
+        }
+        document.body.removeChild(ta);
+        if (ok) resolve();
+        else reject(new Error('copy failed'));
+    });
+}
+
 function ensureMessageToolbar(wrapper) {
     let bar = wrapper.querySelector('.message-toolbar');
     if (bar) return bar;
@@ -2470,7 +2496,7 @@ function addCopyButton(wrapper, plainText) {
 
     btn.addEventListener('click', async () => {
         try {
-            await navigator.clipboard.writeText(plainText);
+            await copyTextToClipboard(plainText);
             btn.classList.add('copied');
             btn.querySelector('.copy-icon').style.display = 'none';
             btn.querySelector('.check-icon').style.display = 'block';
@@ -2955,13 +2981,7 @@ function syncAppViewport() {
     if (keyboardOpen) {
         chromeBottom = 0;
     } else {
-        chromeBottom = Math.min(chromeBottom, 96);
-        const standalone = window.matchMedia('(display-mode: standalone)').matches
-            || Boolean(window.navigator.standalone);
-        const coarse = window.matchMedia('(pointer: coarse)').matches;
-        if (!standalone && coarse && chromeBottom < 8) {
-            chromeBottom = 64;
-        }
+        chromeBottom = Math.min(chromeBottom, 48);
     }
     root.style.setProperty('--app-height', `${Math.round(height)}px`);
     root.style.setProperty('--vv-offset-top', `${Math.round(offsetTop)}px`);

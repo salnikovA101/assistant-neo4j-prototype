@@ -1051,7 +1051,7 @@ input {
 /* ===== Input Panel ===== */
 #input-panel {
     background: var(--bg-chat);
-    padding: 0 max(24px, var(--safe-right)) calc(12px + var(--safe-bottom) + var(--chrome-bottom)) max(24px, var(--safe-left));
+    padding: 0 max(24px, var(--safe-right)) calc(32px + var(--safe-bottom) + var(--chrome-bottom)) max(24px, var(--safe-left));
     display: flex;
     justify-content: center;
     flex-shrink: 0;
@@ -2031,35 +2031,43 @@ body.graph-modal-open {
         grid-template-columns: 1fr auto;
     }
 
-    #text-input,
-    .input-wrapper:has(#mic-btn:not([hidden])) #text-input {
-        grid-column: 1 / -1;
+    .input-wrapper:has(#mic-btn:not([hidden])) {
+        grid-template-columns: auto 1fr auto;
+    }
+
+    #text-input {
+        grid-column: 1;
         grid-row: 1;
         width: 100%;
+        min-width: 0;
         min-height: 44px;
+    }
+
+    .input-wrapper:has(#mic-btn:not([hidden])) #text-input {
+        grid-column: 2;
     }
 
     #mic-btn:not([hidden]),
     .input-wrapper:has(#mic-btn:not([hidden])) #mic-btn {
         grid-column: 1;
-        grid-row: 2;
+        grid-row: 1;
         width: 44px;
         height: 44px;
         min-width: 44px;
         margin-bottom: 0;
-        justify-self: start;
     }
 
-    .composer-actions {
-        grid-column: 1 / -1;
-        grid-row: 2;
+    .composer-actions,
+    .input-wrapper:has(#mic-btn:not([hidden])) .composer-actions {
+        grid-column: 2;
+        grid-row: 1;
         justify-self: end;
         margin-bottom: 0;
         min-height: 44px;
     }
 
     .input-wrapper:has(#mic-btn:not([hidden])) .composer-actions {
-        grid-column: 2;
+        grid-column: 3;
     }
 
     #effort-label,
@@ -2094,14 +2102,12 @@ body.graph-modal-open {
     }
 
     .message-toolbar {
-        flex-direction: column;
-        align-items: stretch;
+        flex-wrap: wrap;
+        align-items: center;
     }
 
-    .show-graph-btn,
-    .copy-btn {
-        width: 100%;
-        justify-content: center;
+    .show-graph-btn {
+        max-width: 100%;
     }
 
     .markdown-body th,
