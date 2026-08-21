@@ -1,7 +1,7 @@
 import logging
 from typing import AsyncIterator
 
-from server.utils.config import AppConfig
+from server.utils.config import AppConfig, resolve_request_profile
 from server.utils.constants import LLMProviderType
 from server.core.sessions import current_session
 from server.core.turn_state import bind_turn, searches_state
@@ -42,7 +42,18 @@ class LLMManager:
         )
         self.history_manager = HistoryManager(self.config.history_len)
         self.tools = Tools(config)
-        self.model: BaseLLMProvider = self._load(self.config.current_profile)
+        self._providers: dict[str, BaseLLMProvider] = {}
+        self.model: BaseLLMProvider = self.provider_for(self.config.current_profile)
+
+    def provider_for(self, name: str | None = None) -> BaseLLMProvider:
+        """Return a cached provider for a UI-selectable profile (or the default)."""
+        key = resolve_request_profile(self.config, name)
+        cached = self._providers.get(key)
+        if cached is not None:
+            return cached
+        provider = self._load(key)
+        self._providers[key] = provider
+        return provider
 
     def _active_history(self) -> HistoryManager:
         sess = current_session()
@@ -58,6 +69,7 @@ class LLMManager:
         think_effort: str | None = None,
         search_depth: str | None = None,
         api_key: str | None = None,
+        profile_name: str | None = None,
     ) -> str:
         text = ""
         async for event in self.generate_response_stream(
@@ -65,6 +77,7 @@ class LLMManager:
             think_effort=think_effort,
             search_depth=search_depth,
             api_key=api_key,
+            profile_name=profile_name,
         ):
             if event.type == "done":
                 text = event.data.get("final_content") or text
@@ -79,6 +92,7 @@ class LLMManager:
         think_effort: str | None = None,
         search_depth: str | None = None,
         api_key: str | None = None,
+        profile_name: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Stream assistant events. History is updated only after a successful done
@@ -88,14 +102,15 @@ class LLMManager:
         history_manager = self._active_history()
         sources = self._active_sources()
         history = history_manager.get_history()
+        provider = self.provider_for(profile_name)
         logger.debug(prompt)
         logger.debug(history)
 
         final_content = ""
-        max_searches = max(1, int(self.model.profile.max_turns))
+        max_searches = max(1, int(provider.profile.max_turns))
         try:
             with bind_turn(search_depth, max_searches=max_searches):
-                async for event in self.model.generate_response_stream(
+                async for event in provider.generate_response_stream(
                     user_text=user_text,
                     prompt=prompt,
                     history=history,
@@ -155,10 +170,15 @@ class LLMManager:
         self.tools.clear_history()
 
     async def unload(self) -> None:
-        await self.model.unload()
+        seen: list[BaseLLMProvider] = []
+        for provider in self._providers.values():
+            if provider in seen:
+                continue
+            seen.append(provider)
+            await provider.unload()
 
     async def warmup(self) -> None:
-        await self.model.warmup()
+        await self.provider_for(self.config.current_profile).warmup()
 
     def _load(self, name: str) -> BaseLLMProvider:
         profile = getattr(self.config.profiles, name, None)

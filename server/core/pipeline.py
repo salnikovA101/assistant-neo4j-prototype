@@ -110,6 +110,7 @@ class ServerPipeline:
         session_id: Optional[str] = None,
         search_depth: Optional[str] = None,
         api_key: Optional[str] = None,
+        profile_name: Optional[str] = None,
     ) -> str:
         """
         Обрабатывает текстовый ввод: LLM (без STT).
@@ -119,14 +120,16 @@ class ServerPipeline:
             think_effort: Optional per-request reasoning_effort override.
             session_id: Per-tab conversation id (X-Session-Id).
             search_depth: UI-selected ask_subgraph depth (low|medium|high).
+            profile_name: UI-selected LLM profile id (ollama / ollama_gptoss / qwen_cloud).
 
         Returns:
             Ответ LLM.
         """
         async with bind_conversation(session_id, self.config.llm.history_len):
             logger.info(
-                "Текст: %s effort=%s depth=%s",
+                "Текст: %s profile=%s effort=%s depth=%s",
                 text,
+                profile_name or "-",
                 think_effort or "-",
                 search_depth or "-",
             )
@@ -137,6 +140,7 @@ class ServerPipeline:
                     think_effort=think_effort,
                     search_depth=search_depth,
                     api_key=api_key,
+                    profile_name=profile_name,
                 ),
                 timeout=self.config.server.llm_timeout,
             )
@@ -152,14 +156,16 @@ class ServerPipeline:
         session_id: Optional[str] = None,
         search_depth: Optional[str] = None,
         api_key: Optional[str] = None,
+        profile_name: Optional[str] = None,
     ) -> AsyncGenerator[StreamEvent, None]:
         """
         Stream LLM events (thinking / tools / content / done) for text input.
         """
         async with bind_conversation(session_id, self.config.llm.history_len):
             logger.info(
-                "Текст (stream): %s effort=%s depth=%s",
+                "Текст (stream): %s profile=%s effort=%s depth=%s",
                 text,
+                profile_name or "-",
                 think_effort or "-",
                 search_depth or "-",
             )
@@ -173,6 +179,7 @@ class ServerPipeline:
                     think_effort=think_effort,
                     search_depth=search_depth,
                     api_key=api_key,
+                    profile_name=profile_name,
                 ):
                     if request and await request.is_disconnected():
                         logger.info("Клиент отключился — остановка LLM stream")

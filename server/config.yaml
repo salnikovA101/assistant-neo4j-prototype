@@ -43,43 +43,44 @@ tts:
 llm:
   current_profile: "ollama"
   tool_profile: "ollama"
+  ui_profiles: ["ollama", "ollama_gptoss", "qwen_cloud"]
   history_len: 30
   prompt_folder: "prompts"
   profiles:
-    other:
-      provider: "openai"
-      model: "qwen/qwen3.8-27b" #Локально
-      temperature: 0.7
-      top_p: 0.80
-      top_k: 20
-      min_p: 0.0
-      presence_penalty: 1.5
-      repetition_penalty: 1.0
-      max_output_tokens: 32768
-      # Бюджет одного ответа: 2 tool-хода = 2 поиска ask_subgraph.
-      max_turns: 2
-      think: true
-      think_effort: "xhigh"
-      think_efforts: ["low", "medium", "xhigh"]
-      preserve_thinking: true
-    lm_studio:
-      provider: "openai"
-      model: "google/gemma-4-12b-qat"
-      base_url: "http://host.docker.internal:1234/v1"
-      temperature: 1.0
-      top_p: 0.95
-      top_k: 64
-      max_output_tokens: 16384
-      max_turns: 2
-      think: true
-      think_effort: "high"
-      think_efforts: ["high", "off"]
-      preserve_thinking: true
-      # Gemma: без этого токена в system думает только до tool call, после — reasoning_tokens=0
-      think_token: "<|think|>"
+    # other:
+    #   provider: "openai"
+    #   model: "qwen/qwen3.8-27b:exacto" #Локально
+    #   temperature: 0.7
+    #   top_p: 0.80
+    #   top_k: 20
+    #   min_p: 0.0
+    #   presence_penalty: 1.5
+    #   repetition_penalty: 1.0
+    #   max_output_tokens: 32768
+    #   max_turns: 2
+    #   think: true
+    #   think_effort: "xhigh"
+    #   think_efforts: ["low", "medium", "xhigh"]
+    #   preserve_thinking: true
+    # lm_studio:
+    #   provider: "openai"
+    #   model: "google/gemma-4-12b-qat"
+    #   base_url: "http://host.docker.internal:1234/v1"
+    #   temperature: 1.0
+    #   top_p: 0.95
+    #   top_k: 64
+    #   max_output_tokens: 16384
+    #   max_turns: 2
+    #   think: true
+    #   think_effort: "high"
+    #   think_efforts: ["high", "off"]
+    #   preserve_thinking: true
+    #   # Gemma: без этого токена в system думает только до tool call, после — reasoning_tokens=0
+    #   think_token: "<|think|>"
     ollama:
       provider: "openai"
       model: "gemma4:31b-cloud"
+      display_name: "Gemma 4 31B"
       base_url: "https://ollama.com/v1"
       temperature: 1.0
       top_p: 0.95
@@ -90,4 +91,34 @@ llm:
       think_effort: "high"
       # Gemma 4 31B: binary thinking. UI "off" is sent as reasoning_effort=none.
       think_efforts: ["high", "off"]
+      preserve_thinking: true
+    ollama_gptoss:
+      provider: "openai"
+      model: "gpt-oss:120b-cloud"
+      display_name: "GPT-OSS 120B"
+      # api_key / base_url inherited from ollama (LLM__PROFILES__OLLAMA__*).
+      temperature: 1.0
+      top_p: 1.0
+      max_output_tokens: 16384
+      max_turns: 2
+      think: true
+      think_effort: "medium"
+      # gpt-oss: thinking cannot be disabled. UI has no "off".
+      think_efforts: ["low", "medium", "high"]
+    qwen_cloud:
+      provider: "openai"
+      model: "qwen3.8-27b"
+      display_name: "Qwen 3.8 27B"
+      base_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+      temperature: 0.7
+      top_p: 0.80
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 1.5
+      repetition_penalty: 1.0
+      max_output_tokens: 32768
+      max_turns: 2
+      think: true
+      think_effort: "xhigh"
+      think_efforts: ["low", "medium", "xhigh"]
       preserve_thinking: true

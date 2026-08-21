@@ -43,6 +43,7 @@ def test_qwen_thinking_sampling_goes_to_request():
     assert merged["extra_body"]["preserve_thinking"] is True
     assert merged["extra_body"]["chat_template_kwargs"]["preserve_thinking"] is True
     assert merged["extra_body"]["chat_template_kwargs"]["enable_thinking"] is True
+    assert merged["extra_body"]["enable_thinking"] is True
 
 
 def test_preserve_thinking_omitted_by_default():
@@ -55,6 +56,8 @@ def test_reasoning_effort_levels():
     for effort in ("low", "medium", "high", "xhigh"):
         kwargs = _reasoning_kwargs(OpenAIProfile(think=True, think_effort=effort))
         assert kwargs["reasoning_effort"] == effort
+        assert kwargs["extra_body"]["reasoning_effort"] == effort
+        assert kwargs["extra_body"]["enable_thinking"] is True
         assert kwargs["extra_body"]["reasoning"]["effort"] == effort
         assert kwargs["extra_body"]["reasoning"]["enabled"] is True
 
@@ -74,6 +77,7 @@ def test_reasoning_effort_off_sends_none():
         effort_override="off",
     )
     assert kwargs["reasoning_effort"] == "none"
+    assert kwargs["extra_body"]["enable_thinking"] is False
     assert kwargs["extra_body"]["reasoning"]["enabled"] is False
     assert kwargs["extra_body"]["reasoning"]["effort"] == "none"
     assert kwargs["extra_body"]["chat_template_kwargs"]["enable_thinking"] is False
@@ -124,6 +128,92 @@ def test_ollama_yaml_think_efforts():
     ollama = load_config().llm.profiles.ollama
     assert ollama.think_effort == "high"
     assert ollama.think_efforts == ["high", "off"]
+
+
+def test_ollama_gptoss_yaml_profile():
+    from server.llm.base import parse_ui_think_effort, profile_think_efforts
+    from server.utils.config import load_config
+
+    cfg = load_config()
+    gptoss = cfg.llm.profiles.ollama_gptoss
+    ollama = cfg.llm.profiles.ollama
+    assert gptoss.model == "gpt-oss:120b-cloud"
+    assert gptoss.display_name == "GPT-OSS 120B"
+    assert gptoss.temperature == 1.0
+    assert gptoss.top_p == 1.0
+    assert gptoss.top_k is None
+    assert gptoss.think_effort == "medium"
+    assert gptoss.think_efforts == ["low", "medium", "high"]
+    assert gptoss.think_token == ""
+    assert gptoss.preserve_thinking is False
+    allowed = profile_think_efforts(gptoss)
+    assert parse_ui_think_effort("off", allowed) is None
+    assert parse_ui_think_effort("medium", allowed) == "medium"
+    assert parse_ui_think_effort("high", allowed) == "high"
+    if (ollama.api_key or "").strip():
+        assert gptoss.api_key == ollama.api_key
+    if (ollama.base_url or "").strip():
+        assert gptoss.base_url == ollama.base_url
+
+
+def test_ollama_gptoss_inherits_empty_credentials():
+    from server.utils.config import AppConfig, inherit_ollama_cloud_credentials
+
+    cfg = AppConfig()
+    cfg.llm.profiles.ollama.api_key = "shared-ollama-key"
+    cfg.llm.profiles.ollama.base_url = "https://ollama.com/v1"
+    cfg.llm.profiles.ollama_gptoss.api_key = ""
+    cfg.llm.profiles.ollama_gptoss.base_url = ""
+    inherit_ollama_cloud_credentials(cfg)
+    assert cfg.llm.profiles.ollama_gptoss.api_key == "shared-ollama-key"
+    assert cfg.llm.profiles.ollama_gptoss.base_url == "https://ollama.com/v1"
+
+
+def test_qwen_cloud_yaml_profile():
+    from server.llm.base import parse_ui_think_effort, profile_think_efforts
+    from server.utils.config import load_config
+
+    qwen = load_config().llm.profiles.qwen_cloud
+    assert qwen.model == "qwen3.8-27b"
+    assert qwen.display_name == "Qwen 3.8 27B"
+    assert "dashscope" in (qwen.base_url or "")
+    assert qwen.temperature == 1.0
+    assert qwen.top_p == 0.95
+    assert qwen.top_k == 20
+    assert qwen.think_effort == "xhigh"
+    assert qwen.think_efforts == ["low", "medium", "xhigh"]
+    assert qwen.preserve_thinking is True
+    allowed = profile_think_efforts(qwen)
+    assert parse_ui_think_effort("off", allowed) is None
+    assert parse_ui_think_effort("xhigh", allowed) == "xhigh"
+    assert parse_ui_think_effort("medium", allowed) == "medium"
+
+
+def test_resolve_request_profile_ui_allowlist():
+    from server.utils.config import load_config, resolve_request_profile
+
+    llm = load_config().llm
+    assert resolve_request_profile(llm, "ollama_gptoss") == "ollama_gptoss"
+    assert resolve_request_profile(llm, "qwen_cloud") == "qwen_cloud"
+    assert resolve_request_profile(llm, "other") == llm.current_profile
+    assert resolve_request_profile(llm, None) == llm.current_profile
+    assert resolve_request_profile(llm, "nope") == llm.current_profile
+
+
+def test_provider_for_caches_ui_profiles():
+    from server.llm.manager import LLMManager
+    from server.utils.config import load_config
+
+    mgr = LLMManager(load_config())
+    gptoss = mgr.provider_for("ollama_gptoss")
+    assert gptoss is mgr.provider_for("ollama_gptoss")
+    assert gptoss.profile.model == "gpt-oss:120b-cloud"
+    qwen = mgr.provider_for("qwen_cloud")
+    assert qwen is mgr.provider_for("qwen_cloud")
+    assert qwen.profile.model == "qwen3.8-27b"
+    rejected = mgr.provider_for("other")
+    assert rejected is mgr.provider_for(mgr.config.current_profile)
+    assert rejected.profile.model == mgr.model.profile.model
 
 
 def test_public_llm_error_message_auth_and_quota():

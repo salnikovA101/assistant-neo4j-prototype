@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from server.utils.config import load_config
+from server.utils.config import load_config, resolve_request_profile, ui_selectable_profiles
 from server.core.db import get_driver
 from server.core.graph_runs import graph_run_store
 from server.core.http_api import (
@@ -83,10 +83,18 @@ def _login_html(show_error: bool) -> HTMLResponse:
     return HTMLResponse(html, headers=_LOGIN_SECURITY_HEADERS)
 
 
-def _request_think_effort(
+def _request_profile_name(
     pipeline: ServerPipeline, body: TextProcessBody
+) -> str:
+    return resolve_request_profile(pipeline.config.llm, body.profile)
+
+
+def _request_think_effort(
+    pipeline: ServerPipeline, body: TextProcessBody, profile_name: str
 ) -> str | None:
-    profile = pipeline.llm.model.profile
+    profile = getattr(pipeline.config.llm.profiles, profile_name, None)
+    if profile is None:
+        profile = pipeline.llm.provider_for(profile_name).profile
     return parse_ui_think_effort(
         body.reasoning_effort, profile_think_efforts(profile)
     )
@@ -245,7 +253,8 @@ async def process_text(request: Request, body: TextProcessBody):
     """
     pipeline: ServerPipeline = request.app.state.pipeline
     text = body.text.strip()
-    think_effort = _request_think_effort(pipeline, body)
+    profile_name = _request_profile_name(pipeline, body)
+    think_effort = _request_think_effort(pipeline, body, profile_name)
     search_depth = parse_search_depth(body.search_depth)
 
     if not text:
@@ -257,6 +266,7 @@ async def process_text(request: Request, body: TextProcessBody):
         session_id=session_id_from_request(request),
         search_depth=search_depth,
         api_key=llm_api_key_from_request(request),
+        profile_name=profile_name,
     )
 
     if not pipeline.config.audio_enabled:
@@ -279,12 +289,13 @@ async def process_text_stream(request: Request, body: TextProcessBody):
     """
     SSE stream of assistant events: thinking, tool_call, tool_result, content, done, error.
 
-    Request body: {"text": "вопрос пользователя", "reasoning_effort": "<profile think_efforts>",
-    "search_depth": "low"|"medium"|"high"}
+    Request body: {"text": "вопрос пользователя", "profile": "ollama"|"ollama_gptoss"|"qwen_cloud",
+    "reasoning_effort": "<profile think_efforts>", "search_depth": "low"|"medium"|"high"}
     """
     pipeline: ServerPipeline = request.app.state.pipeline
     text = body.text.strip()
-    think_effort = _request_think_effort(pipeline, body)
+    profile_name = _request_profile_name(pipeline, body)
+    think_effort = _request_think_effort(pipeline, body, profile_name)
     search_depth = parse_search_depth(body.search_depth)
 
     if not text:
@@ -300,6 +311,7 @@ async def process_text_stream(request: Request, body: TextProcessBody):
             session_id=session_id,
             search_depth=search_depth,
             api_key=llm_api_key_from_request(request),
+            profile_name=profile_name,
         ):
             yield event.to_sse()
 
@@ -320,12 +332,13 @@ async def process_text_test(request: Request, body: TextProcessBody):
     Принимает текст JSON, возвращает ответ LLM (без TTS).
     Специально для скриптов тестирования.
 
-    Request body: {"text": "вопрос пользователя", "reasoning_effort": "<profile think_efforts>",
-    "search_depth": "low"|"medium"|"high"}
+    Request body: {"text": "вопрос пользователя", "profile": "ollama"|"ollama_gptoss"|"qwen_cloud",
+    "reasoning_effort": "<profile think_efforts>", "search_depth": "low"|"medium"|"high"}
     """
     pipeline: ServerPipeline = request.app.state.pipeline
     text = body.text.strip()
-    think_effort = _request_think_effort(pipeline, body)
+    profile_name = _request_profile_name(pipeline, body)
+    think_effort = _request_think_effort(pipeline, body, profile_name)
     search_depth = parse_search_depth(body.search_depth)
 
     if not text:
@@ -337,6 +350,7 @@ async def process_text_test(request: Request, body: TextProcessBody):
         session_id=session_id_from_request(request),
         search_depth=search_depth,
         api_key=llm_api_key_from_request(request),
+        profile_name=profile_name,
     )
 
     return JSONResponse({"answer": answer})
@@ -358,23 +372,81 @@ async def health(request: Request):
     return JSONResponse(payload, status_code=status_code)
 
 
-def build_ui_config(pipeline: ServerPipeline) -> dict:
-    """Public UI defaults. Never includes API keys."""
-    profile = pipeline.llm.model.profile
+def _ui_profile_for(pipeline: ServerPipeline, name: str):
+    """Yaml profile for the catalog. Runtime only if that id is missing in yaml."""
+    llm_cfg = pipeline.config.llm
+    cfg_profile = getattr(llm_cfg.profiles, name, None)
+    if cfg_profile is not None:
+        return cfg_profile
+    if name == llm_cfg.current_profile:
+        return getattr(getattr(pipeline.llm, "model", None), "profile", None)
+    return None
+
+
+def _ui_model_entry(name: str, profile) -> dict:
     options = list(profile_think_efforts(profile))
     default_effort = parse_ui_think_effort(profile.think_effort, options)
     if default_effort is None:
         default_effort = options[0] if options else ""
+    label = (getattr(profile, "display_name", None) or "").strip() or name
     return {
+        "id": name,
+        "label": label,
         "think": bool(profile.think) and bool(options),
+        "reasoning_effort": default_effort,
+        "reasoning_effort_options": options,
+    }
+
+
+def build_ui_config(pipeline: ServerPipeline) -> dict:
+    """Public UI defaults. Never includes API keys."""
+    llm_cfg = pipeline.config.llm
+    models = []
+    for name in ui_selectable_profiles(llm_cfg):
+        profile = _ui_profile_for(pipeline, name)
+        if profile is None:
+            continue
+        models.append(_ui_model_entry(name, profile))
+
+    default_name = llm_cfg.current_profile
+    default_profile = _ui_profile_for(pipeline, default_name)
+    if default_profile is None and models:
+        default_name = models[0]["id"]
+        default_profile = _ui_profile_for(pipeline, default_name)
+    if default_profile is None:
+        default_profile = getattr(getattr(pipeline.llm, "model", None), "profile", None)
+
+    options = list(profile_think_efforts(default_profile)) if default_profile else []
+    default_effort = (
+        parse_ui_think_effort(default_profile.think_effort, options)
+        if default_profile
+        else None
+    )
+    if default_effort is None:
+        default_effort = options[0] if options else ""
+
+    ollama = getattr(llm_cfg.profiles, "ollama", None)
+    key_configured = bool((getattr(ollama, "api_key", None) or "").strip())
+    if not key_configured and default_profile is not None:
+        key_configured = bool((default_profile.api_key or "").strip())
+    if not key_configured:
+        runtime = getattr(getattr(pipeline.llm, "model", None), "profile", None)
+        if runtime is not None:
+            key_configured = bool((runtime.api_key or "").strip())
+
+    return {
+        "think": bool(default_profile and default_profile.think) and bool(options),
         "reasoning_effort": default_effort,
         "reasoning_effort_options": options,
         "search_depth": DEFAULT_SEARCH_DEPTH,
         "search_depth_options": list(SEARCH_DEPTHS),
-        "max_searches_per_answer": max(1, int(profile.max_turns)),
+        "max_searches_per_answer": (
+            max(1, int(default_profile.max_turns)) if default_profile else 2
+        ),
         "audio_enabled": bool(pipeline.config.audio_enabled),
-        "current_profile": pipeline.config.llm.current_profile,
-        "llm_key_configured": bool((profile.api_key or "").strip()),
+        "current_profile": default_name,
+        "llm_key_configured": key_configured,
+        "models": models,
     }
 
 

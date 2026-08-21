@@ -49,9 +49,12 @@ def test_cors_regex_is_localhost_only():
 def test_text_process_body_requires_text():
     with pytest.raises(ValidationError):
         TextProcessBody()
-    parsed = TextProcessBody(text="  hello  ", reasoning_effort="low")
+    parsed = TextProcessBody(
+        text="  hello  ", reasoning_effort="low", profile="ollama_gptoss"
+    )
     assert parsed.text == "  hello  "
     assert parsed.reasoning_effort == "low"
+    assert parsed.profile == "ollama_gptoss"
 
 
 def test_graph_viz_body_defaults():
@@ -104,6 +107,89 @@ def test_ui_config_does_not_leak_api_key():
     assert secret not in dumped
     assert payload["current_profile"] == "ollama"
     assert payload["llm_key_configured"] is True
+    assert payload["models"][0]["id"] == "ollama"
+    assert "api_key" not in payload["models"][0]
+
+
+def test_ui_config_models_catalog_hides_secrets():
+    from server.core.app import build_ui_config
+    from server.utils.config import load_config
+
+    cfg = load_config()
+    ollama = cfg.llm.profiles.ollama
+
+    class Pipeline:
+        llm = type("L", (), {"model": type("M", (), {"profile": ollama})()})()
+        config = cfg
+
+    payload = build_ui_config(Pipeline())
+    dumped = str(payload)
+    ids = [item["id"] for item in payload["models"]]
+    assert ids == ["ollama", "ollama_gptoss", "qwen_cloud"]
+    gemma = payload["models"][0]
+    gptoss = payload["models"][1]
+    qwen = payload["models"][2]
+    assert gemma["label"] == "Gemma 4 31B"
+    assert gemma["reasoning_effort_options"] == ["high", "off"]
+    assert gptoss["label"] == "GPT-OSS 120B"
+    assert gptoss["reasoning_effort"] == "medium"
+    assert gptoss["reasoning_effort_options"] == ["low", "medium", "high"]
+    assert qwen["label"] == "Qwen 3.8 27B"
+    assert qwen["reasoning_effort"] == "xhigh"
+    assert qwen["reasoning_effort_options"] == ["low", "medium", "xhigh"]
+    assert "api_key" not in dumped
+    secret = (ollama.api_key or "").strip()
+    if secret:
+        assert secret not in dumped
+    gptoss_key = (cfg.llm.profiles.ollama_gptoss.api_key or "").strip()
+    if gptoss_key:
+        assert gptoss_key not in dumped
+    qwen_key = (cfg.llm.profiles.qwen_cloud.api_key or "").strip()
+    if qwen_key:
+        assert qwen_key not in dumped
+
+
+def test_request_think_effort_follows_selected_profile():
+    from server.core.app import _request_profile_name, _request_think_effort
+    from server.utils.config import load_config
+
+    cfg = load_config()
+
+    class Pipeline:
+        config = cfg
+        llm = type(
+            "L",
+            (),
+            {"model": type("M", (), {"profile": cfg.llm.profiles.ollama})()},
+        )()
+
+    pipeline = Pipeline()
+    gptoss_off = TextProcessBody(
+        text="hi", profile="ollama_gptoss", reasoning_effort="off"
+    )
+    gptoss_name = _request_profile_name(pipeline, gptoss_off)
+    assert gptoss_name == "ollama_gptoss"
+    assert _request_think_effort(pipeline, gptoss_off, gptoss_name) is None
+
+    gptoss_low = TextProcessBody(
+        text="hi", profile="ollama_gptoss", reasoning_effort="low"
+    )
+    assert _request_think_effort(pipeline, gptoss_low, gptoss_name) == "low"
+
+    gemma_off = TextProcessBody(text="hi", profile="ollama", reasoning_effort="off")
+    gemma_name = _request_profile_name(pipeline, gemma_off)
+    assert gemma_name == "ollama"
+    assert _request_think_effort(pipeline, gemma_off, gemma_name) == "off"
+
+    qwen_xhigh = TextProcessBody(
+        text="hi", profile="qwen_cloud", reasoning_effort="xhigh"
+    )
+    qwen_name = _request_profile_name(pipeline, qwen_xhigh)
+    assert qwen_name == "qwen_cloud"
+    assert _request_think_effort(pipeline, qwen_xhigh, qwen_name) == "xhigh"
+
+    unknown = TextProcessBody(text="hi", profile="other", reasoning_effort="xhigh")
+    assert _request_profile_name(pipeline, unknown) == cfg.llm.current_profile
 
 
 @pytest.mark.asyncio

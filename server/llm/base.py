@@ -127,11 +127,11 @@ def public_llm_error_message(exc: BaseException) -> str:
     status = getattr(exc, "status_code", None)
     if status in (401, 403):
         return (
-            "Ключ LLM отклонён. Откройте настройки и вставьте свой ключ Ollama."
+            "Ключ LLM отклонён. Откройте настройки и вставьте свой ключ."
         )
     if status == 429:
         return (
-            "Лимит ключа исчерпан. Откройте настройки и вставьте свой ключ Ollama."
+            "Лимит ключа исчерпан. Откройте настройки и вставьте свой ключ."
         )
     return "Ошибка LLM. Попробуйте ещё раз."
 
@@ -146,7 +146,9 @@ def _reasoning_kwargs(
     - OpenAI SDK top-level reasoning_effort (LM Studio / OpenAI / Ollama /v1)
     - OpenRouter: extra_body.reasoning
     - DeepSeek direct: extra_body.thinking
-    - Qwen3.8: extra_body.chat_template_kwargs.preserve_thinking (+ body flag)
+    - Qwen Cloud: extra_body.enable_thinking + extra_body.reasoning_effort
+      (top-level reasoning_effort is ignored on DashScope compatible-mode)
+    - Qwen3.8 local/vLLM: extra_body.chat_template_kwargs.preserve_thinking
 
     UI "off" is mapped to reasoning_effort=none (Ollama /v1 rejects "off").
     LM Studio Gemma: "on" omits top-level reasoning_effort (LMS warns on high).
@@ -155,6 +157,7 @@ def _reasoning_kwargs(
         return {
             "reasoning_effort": "none",
             "extra_body": {
+                "enable_thinking": False,
                 "reasoning": {"enabled": False, "effort": "none"},
                 "thinking": {"type": "disabled"},
             },
@@ -165,6 +168,7 @@ def _reasoning_kwargs(
     if effort in _THINK_OFF_EFFORTS:
         template_kwargs: Dict[str, Any] = {"enable_thinking": False}
         extra = {
+            "enable_thinking": False,
             "reasoning": {"enabled": False, "effort": "none"},
             "thinking": {"type": "disabled"},
             "chat_template_kwargs": template_kwargs,
@@ -178,6 +182,7 @@ def _reasoning_kwargs(
     if effort == "on":
         template_kwargs = {"enable_thinking": True}
         extra = {
+            "enable_thinking": True,
             "reasoning": {"enabled": True},
             "thinking": {"type": "enabled"},
             "chat_template_kwargs": template_kwargs,
@@ -192,6 +197,9 @@ def _reasoning_kwargs(
     sdk_effort = "high" if effort == "max" else effort
     template_kwargs = {"enable_thinking": True}
     extra = {
+        "enable_thinking": True,
+        # Qwen Cloud reads extra_body.reasoning_effort; top-level is ignored there.
+        "reasoning_effort": sdk_effort,
         "reasoning": {"enabled": True, "effort": effort},
         "thinking": {"type": "enabled"},
         "chat_template_kwargs": template_kwargs,

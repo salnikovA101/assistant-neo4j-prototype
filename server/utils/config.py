@@ -38,8 +38,11 @@ class OpenAIProfile(BaseModel):
     think_effort: str = "high"
     # Per-model menu: UI renders these strings as-is. Empty → [think_effort].
     think_efforts: list[str] = Field(default_factory=list)
-    # Qwen3.8: keep <think> from prior turns (tool loop). Official default is True.
+    # Qwen3.8 / Qwen Cloud: keep <think> from prior turns (tool loop).
+    # Official Qwen3.8 default is True; Qwen Cloud reads extra_body.preserve_thinking.
     preserve_thinking: bool = False
+    # Label in the UI model picker. Empty → profile id.
+    display_name: str = ""
 
 
 class LlmProfiles(BaseModel):
@@ -47,12 +50,16 @@ class LlmProfiles(BaseModel):
     other: OpenAIProfile = Field(default_factory=OpenAIProfile)
     lm_studio: OpenAIProfile = Field(default_factory=OpenAIProfile)
     ollama: OpenAIProfile = Field(default_factory=OpenAIProfile)
+    ollama_gptoss: OpenAIProfile = Field(default_factory=OpenAIProfile)
+    qwen_cloud: OpenAIProfile = Field(default_factory=OpenAIProfile)
 
 
 class LlmConfig(BaseModel):
     current_profile: str = "other"
     # Nested LLM for mock_decompose / tools that need a second profile
     tool_profile: str = "other"
+    # Profiles shown in the UI picker. Empty → [current_profile].
+    ui_profiles: list[str] = Field(default_factory=list)
     history_len: int = 6
     prompt_folder: str = "prompts"
     profiles: LlmProfiles = Field(default_factory=LlmProfiles)
@@ -138,6 +145,62 @@ def retrieval_param_overrides(config: AppConfig | None = None) -> dict:
     }
 
 
+def llm_profile(config: LlmConfig, name: str) -> OpenAIProfile | None:
+    """Return a named LLM profile, or None if the id is unknown."""
+    key = (name or "").strip()
+    if not key:
+        return None
+    return getattr(config.profiles, key, None)
+
+
+def ui_selectable_profiles(llm: LlmConfig) -> list[str]:
+    """Profile ids the web UI may send. Unknown yaml names are dropped."""
+    raw = [str(item).strip() for item in (llm.ui_profiles or []) if str(item).strip()]
+    names = [name for name in raw if llm_profile(llm, name) is not None]
+    if names:
+        return names
+    current = (llm.current_profile or "").strip()
+    if current and llm_profile(llm, current) is not None:
+        return [current]
+    return []
+
+
+def resolve_request_profile(llm: LlmConfig, name: str | None) -> str:
+    """Accept a UI profile id, else fall back to current_profile."""
+    requested = (name or "").strip()
+    allowed = set(ui_selectable_profiles(llm))
+    if requested and requested in allowed:
+        return requested
+    current = (llm.current_profile or "").strip()
+    if current and llm_profile(llm, current) is not None:
+        return current
+    selectable = ui_selectable_profiles(llm)
+    if selectable:
+        return selectable[0]
+    raise ValueError("No LLM profile configured")
+
+
+def inherit_ollama_cloud_credentials(config: AppConfig) -> None:
+    """Copy Ollama Cloud api_key/base_url onto sibling ollama_* profiles."""
+    source = getattr(config.llm.profiles, "ollama", None)
+    if source is None:
+        return
+    source_key = (source.api_key or "").strip()
+    source_url = (source.base_url or "").strip()
+    if not source_key and not source_url:
+        return
+    for name in type(config.llm.profiles).model_fields:
+        if name == "ollama" or not name.startswith("ollama"):
+            continue
+        profile = getattr(config.llm.profiles, name, None)
+        if profile is None:
+            continue
+        if source_key and not (profile.api_key or "").strip():
+            profile.api_key = source_key
+        if source_url and not (profile.base_url or "").strip():
+            profile.base_url = source_url
+
+
 def load_config() -> AppConfig:
     """Загружает конфиг из server/config.yaml + .env переменных."""
 
@@ -151,4 +214,6 @@ def load_config() -> AppConfig:
         )
         data = {}
 
-    return AppConfig(**data)
+    config = AppConfig(**data)
+    inherit_ollama_cloud_credentials(config)
+    return config

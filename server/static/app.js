@@ -43,11 +43,18 @@ const clearBtn = document.getElementById('clear-btn');
 const settingsPicker = document.getElementById('settings-picker');
 const settingsBtn = document.getElementById('settings-btn');
 const settingsMenu = document.getElementById('settings-menu');
-const settingsKeyTitle = document.getElementById('settings-key-title');
-const settingsKeyStatus = document.getElementById('settings-key-status');
-const settingsKeyInput = document.getElementById('settings-key-input');
-const settingsKeySave = document.getElementById('settings-key-save');
-const settingsKeyClear = document.getElementById('settings-key-clear');
+const settingsKeyStatusOllama = document.getElementById('settings-key-status-ollama');
+const settingsKeyStatusQwen = document.getElementById('settings-key-status-qwen');
+const settingsKeyInputOllama = document.getElementById('settings-key-input-ollama');
+const settingsKeyInputQwen = document.getElementById('settings-key-input-qwen');
+const settingsKeySaveOllama = document.getElementById('settings-key-save-ollama');
+const settingsKeySaveQwen = document.getElementById('settings-key-save-qwen');
+const settingsKeyClearOllama = document.getElementById('settings-key-clear-ollama');
+const settingsKeyClearQwen = document.getElementById('settings-key-clear-qwen');
+const modelPicker = document.getElementById('model-picker');
+const modelBtn = document.getElementById('model-btn');
+const modelMenu = document.getElementById('model-menu');
+const modelName = document.getElementById('model-name');
 const effortPicker = document.getElementById('effort-picker');
 const effortBtn = document.getElementById('effort-btn');
 const effortMenu = document.getElementById('effort-menu');
@@ -61,7 +68,9 @@ const composerReveal = document.getElementById('composer-reveal');
 
 const EFFORT_STORAGE_KEY = 'reasoning_effort';
 const DEPTH_STORAGE_KEY = 'search_depth';
+const PROFILE_STORAGE_KEY = 'llm_profile';
 const LLM_KEY_STORAGE = 'llm_api_key_override';
+const LLM_KEY_STORAGE_QWEN = 'llm_api_key_override:qwen_cloud';
 const DEPTH_OPTIONS = {
     low: { label: 'Узко' },
     medium: { label: 'Обычно' },
@@ -80,6 +89,8 @@ let currentSearchDepth = 'medium';
 let effortOptions = [];
 let currentReasoningEffort = '';
 let reasoningEffortEnabled = true;
+let uiModels = [];
+let currentProfile = '';
 let audioEnabled = false;
 let activeStreamShell = null;
 let composerKeepOpen = false;
@@ -101,20 +112,43 @@ function withSessionHeaders(headers) {
     return Object.assign({ 'X-Session-Id': getSessionId() }, headers || {});
 }
 
-function getLlmApiKeyOverride() {
+function keyFamilyForProfile(profile) {
+    const name = String(profile || '').trim().toLowerCase();
+    if (name === 'qwen_cloud' || name.startsWith('qwen_')) return 'qwen';
+    return 'ollama';
+}
+
+function llmKeyStorageId(family) {
+    return family === 'qwen' ? LLM_KEY_STORAGE_QWEN : LLM_KEY_STORAGE;
+}
+
+function getLlmApiKeyOverrideFor(family) {
     try {
-        return (sessionStorage.getItem(LLM_KEY_STORAGE) || '').trim();
+        return (sessionStorage.getItem(llmKeyStorageId(family)) || '').trim();
     } catch (_) {
         return '';
     }
 }
 
-function setLlmApiKeyOverride(value) {
+function setLlmApiKeyOverrideFor(family, value) {
     const key = (value || '').trim();
+    const storageId = llmKeyStorageId(family);
     try {
-        if (key) sessionStorage.setItem(LLM_KEY_STORAGE, key);
-        else sessionStorage.removeItem(LLM_KEY_STORAGE);
+        if (key) sessionStorage.setItem(storageId, key);
+        else sessionStorage.removeItem(storageId);
     } catch (_) {}
+}
+
+function getLlmApiKeyOverride() {
+    return getLlmApiKeyOverrideFor(keyFamilyForProfile(currentProfile));
+}
+
+function settingsInputForFamily(family) {
+    return family === 'qwen' ? settingsKeyInputQwen : settingsKeyInputOllama;
+}
+
+function settingsStatusForFamily(family) {
+    return family === 'qwen' ? settingsKeyStatusQwen : settingsKeyStatusOllama;
 }
 
 function maskLlmKey(key) {
@@ -123,25 +157,23 @@ function maskLlmKey(key) {
     return `••••${s.slice(-4)}`;
 }
 
-function llmKeyTitleForProfile(profile) {
-    const name = String(profile || '').trim().toLowerCase();
-    if (name === 'ollama') return 'Ключ Ollama';
-    if (name === 'lm_studio') return 'Ключ LM Studio';
-    if (name) return `Ключ ${name}`;
-    return 'Ключ LLM';
+function setKeyStatusText(el, override) {
+    if (!el) return;
+    el.textContent = override
+        ? `Сейчас: свой ключ ${maskLlmKey(override)}`
+        : 'Сейчас: из конфига';
 }
 
 function refreshSettingsStatus() {
-    const override = getLlmApiKeyOverride();
-    if (settingsKeyStatus) {
-        settingsKeyStatus.textContent = override
-            ? `Сейчас: свой ключ ${maskLlmKey(override)}`
-            : 'Сейчас: из конфига';
-    }
+    const ollamaKey = getLlmApiKeyOverrideFor('ollama');
+    const qwenKey = getLlmApiKeyOverrideFor('qwen');
+    setKeyStatusText(settingsStatusForFamily('ollama'), ollamaKey);
+    setKeyStatusText(settingsStatusForFamily('qwen'), qwenKey);
+    const anyOverride = Boolean(ollamaKey || qwenKey);
     if (settingsBtn) {
-        settingsBtn.classList.toggle('has-override', Boolean(override));
-        settingsBtn.title = override
-            ? `Настройки · свой ключ ${maskLlmKey(override)}`
+        settingsBtn.classList.toggle('has-override', anyOverride);
+        settingsBtn.title = anyOverride
+            ? 'Настройки · есть свой ключ'
             : 'Настройки';
     }
 }
@@ -165,10 +197,11 @@ function closeSettingsMenu() {
 function openSettingsMenu() {
     if (!settingsBtn || !settingsMenu) return;
     refreshSettingsStatus();
-    if (settingsKeyInput) settingsKeyInput.value = '';
+    if (settingsKeyInputOllama) settingsKeyInputOllama.value = '';
+    if (settingsKeyInputQwen) settingsKeyInputQwen.value = '';
     settingsBtn.setAttribute('aria-expanded', 'true');
     settingsMenu.hidden = false;
-    if (settingsKeyInput) settingsKeyInput.focus();
+    if (settingsKeyInputOllama) settingsKeyInputOllama.focus();
 }
 
 function toggleSettingsMenu() {
@@ -176,27 +209,33 @@ function toggleSettingsMenu() {
     else openSettingsMenu();
 }
 
-function saveSettingsKey() {
-    const raw = (settingsKeyInput && settingsKeyInput.value) || '';
+function saveSettingsKey(family) {
+    const input = settingsInputForFamily(family);
+    const status = settingsStatusForFamily(family);
+    const raw = (input && input.value) || '';
     const key = raw.trim();
     if (!key) {
-        setLlmApiKeyOverride('');
+        setLlmApiKeyOverrideFor(family, '');
         if (settingsBtn) settingsBtn.classList.remove('needs-key');
         refreshSettingsStatus();
-        closeSettingsMenu();
         return;
     }
     if (key.length < 8 || key.length > 512 || /\s/.test(key)) {
-        if (settingsKeyStatus) {
-            settingsKeyStatus.textContent = 'Ключ: 8–512 символов, без пробелов';
-        }
+        if (status) status.textContent = 'Ключ: 8–512 символов, без пробелов';
         return;
     }
-    setLlmApiKeyOverride(key);
-    if (settingsKeyInput) settingsKeyInput.value = '';
+    setLlmApiKeyOverrideFor(family, key);
+    if (input) input.value = '';
     if (settingsBtn) settingsBtn.classList.remove('needs-key');
     refreshSettingsStatus();
-    closeSettingsMenu();
+}
+
+function clearSettingsKey(family) {
+    setLlmApiKeyOverrideFor(family, '');
+    const input = settingsInputForFamily(family);
+    if (input) input.value = '';
+    if (settingsBtn) settingsBtn.classList.remove('needs-key');
+    refreshSettingsStatus();
 }
 
 function withLlmHeaders(headers) {
@@ -2690,6 +2729,9 @@ function effortDisplay(value) {
 
 function processTextPayload(text) {
     const payload = { text, search_depth: currentSearchDepth };
+    if (currentProfile) {
+        payload.profile = currentProfile;
+    }
     if (reasoningEffortEnabled && currentReasoningEffort) {
         payload.reasoning_effort = currentReasoningEffort;
     }
@@ -2777,6 +2819,114 @@ function loadStoredEffort() {
     return null;
 }
 
+function findUiModel(id) {
+    const key = String(id || '').trim();
+    if (!key) return null;
+    return uiModels.find((model) => model.id === key) || null;
+}
+
+function loadStoredProfile() {
+    try {
+        const stored = localStorage.getItem(PROFILE_STORAGE_KEY);
+        if (stored && findUiModel(stored)) return stored;
+    } catch (_) {}
+    return null;
+}
+
+function isModelMenuOpen() {
+    return modelBtn && modelBtn.getAttribute('aria-expanded') === 'true';
+}
+
+function closeModelMenu() {
+    if (!modelBtn || !modelMenu) return;
+    modelBtn.setAttribute('aria-expanded', 'false');
+    modelMenu.hidden = true;
+}
+
+function openModelMenu() {
+    if (!modelBtn || !modelMenu) return;
+    modelBtn.setAttribute('aria-expanded', 'true');
+    modelMenu.hidden = false;
+}
+
+function toggleModelMenu() {
+    if (isModelMenuOpen()) closeModelMenu();
+    else openModelMenu();
+}
+
+function renderModelMenu(models) {
+    if (!modelMenu) return;
+    modelMenu.querySelectorAll('.effort-option').forEach((el) => el.remove());
+    for (const model of models) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'effort-option';
+        btn.setAttribute('role', 'option');
+        btn.dataset.profile = model.id;
+        btn.setAttribute('aria-selected', 'false');
+
+        const check = document.createElement('span');
+        check.className = 'effort-option-check';
+        check.setAttribute('aria-hidden', 'true');
+
+        const text = document.createElement('span');
+        text.className = 'effort-option-text';
+        const name = document.createElement('span');
+        name.className = 'effort-option-name';
+        name.textContent = model.label;
+        text.appendChild(name);
+
+        btn.appendChild(check);
+        btn.appendChild(text);
+        modelMenu.appendChild(btn);
+    }
+}
+
+function applyEffortForModel(model) {
+    const options = (model && model.reasoning_effort_options) || [];
+    renderEffortMenu(options);
+    reasoningEffortEnabled = Boolean(model && model.think !== false && options.length > 0);
+    if (effortPicker) {
+        effortPicker.hidden = !reasoningEffortEnabled;
+    }
+    const storedEffort = loadStoredEffort();
+    const serverDefault = model && model.reasoning_effort
+        ? String(model.reasoning_effort).trim()
+        : '';
+    const initialEffort = storedEffort
+        || (options.includes(serverDefault) ? serverDefault : options[0]);
+    if (initialEffort) {
+        setReasoningEffort(initialEffort, false);
+    } else {
+        currentReasoningEffort = '';
+    }
+}
+
+function setCurrentProfile(profileId, persist = true) {
+    const model = findUiModel(profileId);
+    if (!model) return;
+    currentProfile = model.id;
+    if (modelName) modelName.textContent = model.label;
+    if (modelBtn) {
+        modelBtn.title = `Модель: ${model.label}`;
+        modelBtn.setAttribute('aria-label', `Модель: ${model.label}`);
+    }
+    if (modelMenu) {
+        modelMenu.querySelectorAll('.effort-option').forEach((btn) => {
+            btn.setAttribute(
+                'aria-selected',
+                btn.dataset.profile === model.id ? 'true' : 'false'
+            );
+        });
+    }
+    applyEffortForModel(model);
+    if (persist) {
+        try {
+            localStorage.setItem(PROFILE_STORAGE_KEY, model.id);
+        } catch (_) {}
+    }
+}
+
 function isDepthMenuOpen() {
     return depthBtn.getAttribute('aria-expanded') === 'true';
 }
@@ -2826,12 +2976,33 @@ async function initComposerControls() {
     let serverOptions = [];
     let serverDepth = 'medium';
     let thinkEnabled = true;
+    let serverProfile = '';
     try {
         const resp = await fetch('/ui_config', { signal: AbortSignal.timeout(3000) });
         if (resp.ok) {
             const data = await resp.json();
             thinkEnabled = data.think !== false;
             audioEnabled = data.audio_enabled === true;
+            if (Array.isArray(data.models)) {
+                uiModels = data.models
+                    .map((item) => ({
+                        id: String(item && item.id ? item.id : '').trim(),
+                        label: String(item && item.label ? item.label : '').trim(),
+                        think: item && item.think !== false,
+                        reasoning_effort: String(
+                            item && item.reasoning_effort ? item.reasoning_effort : ''
+                        ).trim(),
+                        reasoning_effort_options: Array.isArray(item.reasoning_effort_options)
+                            ? item.reasoning_effort_options
+                                .map((value) => String(value).trim())
+                                .filter(Boolean)
+                            : [],
+                    }))
+                    .filter((item) => item.id);
+                uiModels.forEach((item) => {
+                    if (!item.label) item.label = item.id;
+                });
+            }
             if (Array.isArray(data.reasoning_effort_options)) {
                 serverOptions = data.reasoning_effort_options
                     .map((value) => String(value).trim())
@@ -2843,29 +3014,40 @@ async function initComposerControls() {
             if (data.search_depth && DEPTH_OPTIONS[data.search_depth]) {
                 serverDepth = data.search_depth;
             }
-            if (settingsKeyTitle) {
-                settingsKeyTitle.textContent = llmKeyTitleForProfile(data.current_profile);
+            if (data.current_profile) {
+                serverProfile = String(data.current_profile).trim();
             }
         }
     } catch (_) {}
 
-    if (!serverOptions.length && serverDefault) {
-        serverOptions = [serverDefault];
-    }
-    renderEffortMenu(serverOptions);
-
-    reasoningEffortEnabled = thinkEnabled && serverOptions.length > 0;
-    if (effortPicker) {
-        effortPicker.hidden = !reasoningEffortEnabled;
-    }
     if (micBtn) {
         micBtn.hidden = !audioEnabled;
     }
-    const storedEffort = loadStoredEffort();
-    const initialEffort = storedEffort
-        || (serverOptions.includes(serverDefault) ? serverDefault : serverOptions[0]);
-    if (initialEffort) {
-        setReasoningEffort(initialEffort, false);
+
+    renderModelMenu(uiModels);
+    const storedProfile = loadStoredProfile();
+    const initialProfile = storedProfile
+        || (findUiModel(serverProfile) ? serverProfile : (uiModels[0] && uiModels[0].id));
+    if (initialProfile) {
+        setCurrentProfile(initialProfile, false);
+    } else {
+        if (!serverOptions.length && serverDefault) {
+            serverOptions = [serverDefault];
+        }
+        renderEffortMenu(serverOptions);
+        reasoningEffortEnabled = thinkEnabled && serverOptions.length > 0;
+        if (effortPicker) {
+            effortPicker.hidden = !reasoningEffortEnabled;
+        }
+        const storedEffort = loadStoredEffort();
+        const initialEffort = storedEffort
+            || (serverOptions.includes(serverDefault) ? serverDefault : serverOptions[0]);
+        if (initialEffort) {
+            setReasoningEffort(initialEffort, false);
+        }
+    }
+    if (modelBtn && modelBtn.querySelector('.effort-chevron')) {
+        modelBtn.querySelector('.effort-chevron').hidden = uiModels.length < 2;
     }
     setSearchDepth(storedDepth || serverDepth, false);
     refreshSettingsStatus();
@@ -2882,26 +3064,35 @@ if (settingsBtn) {
         e.stopPropagation();
         closeEffortMenu();
         closeDepthMenu();
+        closeModelMenu();
         toggleSettingsMenu();
     });
 }
-if (settingsKeySave) {
-    settingsKeySave.addEventListener('click', saveSettingsKey);
+if (settingsKeySaveOllama) {
+    settingsKeySaveOllama.addEventListener('click', () => saveSettingsKey('ollama'));
 }
-if (settingsKeyClear) {
-    settingsKeyClear.addEventListener('click', () => {
-        setLlmApiKeyOverride('');
-        if (settingsKeyInput) settingsKeyInput.value = '';
-        if (settingsBtn) settingsBtn.classList.remove('needs-key');
-        refreshSettingsStatus();
-        closeSettingsMenu();
-    });
+if (settingsKeySaveQwen) {
+    settingsKeySaveQwen.addEventListener('click', () => saveSettingsKey('qwen'));
 }
-if (settingsKeyInput) {
-    settingsKeyInput.addEventListener('keydown', (e) => {
+if (settingsKeyClearOllama) {
+    settingsKeyClearOllama.addEventListener('click', () => clearSettingsKey('ollama'));
+}
+if (settingsKeyClearQwen) {
+    settingsKeyClearQwen.addEventListener('click', () => clearSettingsKey('qwen'));
+}
+if (settingsKeyInputOllama) {
+    settingsKeyInputOllama.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
             e.preventDefault();
-            saveSettingsKey();
+            saveSettingsKey('ollama');
+        }
+    });
+}
+if (settingsKeyInputQwen) {
+    settingsKeyInputQwen.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            saveSettingsKey('qwen');
         }
     });
 }
@@ -2909,6 +3100,7 @@ effortBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     closeDepthMenu();
     closeSettingsMenu();
+    closeModelMenu();
     toggleEffortMenu();
 });
 effortMenu.addEventListener('click', (e) => {
@@ -2917,10 +3109,29 @@ effortMenu.addEventListener('click', (e) => {
     setReasoningEffort(option.dataset.effort);
     closeEffortMenu();
 });
+if (modelBtn) {
+    modelBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (uiModels.length < 2) return;
+        closeEffortMenu();
+        closeDepthMenu();
+        closeSettingsMenu();
+        toggleModelMenu();
+    });
+}
+if (modelMenu) {
+    modelMenu.addEventListener('click', (e) => {
+        const option = e.target.closest('.effort-option');
+        if (!option) return;
+        setCurrentProfile(option.dataset.profile);
+        closeModelMenu();
+    });
+}
 depthBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     closeEffortMenu();
     closeSettingsMenu();
+    closeModelMenu();
     toggleDepthMenu();
 });
 depthMenu.addEventListener('click', (e) => {
@@ -2933,6 +3144,7 @@ document.addEventListener('click', (e) => {
     if (!effortPicker.contains(e.target)) closeEffortMenu();
     if (!depthPicker.contains(e.target)) closeDepthMenu();
     if (settingsPicker && !settingsPicker.contains(e.target)) closeSettingsMenu();
+    if (modelPicker && !modelPicker.contains(e.target)) closeModelMenu();
 });
 document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
@@ -2943,6 +3155,10 @@ document.addEventListener('keydown', (e) => {
     if (isDepthMenuOpen()) {
         closeDepthMenu();
         depthBtn.focus();
+    }
+    if (isModelMenuOpen()) {
+        closeModelMenu();
+        if (modelBtn) modelBtn.focus();
     }
     if (isSettingsMenuOpen()) {
         closeSettingsMenu();

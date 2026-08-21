@@ -19,8 +19,16 @@
         <div id="main-content">
             <!-- Header/Top Bar -->
             <header id="top-bar">
-                <div class="model-selector">
-                    <span class="model-name">Neo4j Assistant</span>
+                <div class="model-selector" id="model-picker">
+                    <button type="button" id="model-btn" class="model-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="model-menu" title="Модель">
+                        <span id="model-name" class="model-name">Neo4j Assistant</span>
+                        <svg class="effort-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                    </button>
+                    <div class="effort-menu model-menu" id="model-menu" hidden role="listbox" aria-labelledby="model-btn">
+                        <div class="effort-menu-title">Модель</div>
+                    </div>
                 </div>
                 <div class="header-controls">
                     <div class="header-status-wrapper">
@@ -35,13 +43,24 @@
                             </svg>
                         </button>
                         <div class="settings-menu" id="settings-menu" hidden role="dialog" aria-labelledby="settings-key-title">
-                            <div class="settings-menu-title" id="settings-key-title">Ключ Ollama</div>
-                            <p class="settings-key-status" id="settings-key-status">Сейчас: из конфига</p>
-                            <label class="settings-key-label" for="settings-key-input">Свой ключ</label>
-                            <input id="settings-key-input" type="password" autocomplete="off" spellcheck="false" placeholder="Вставьте ключ">
-                            <div class="settings-menu-actions">
-                                <button type="button" id="settings-key-save" class="settings-action-primary">Сохранить</button>
-                                <button type="button" id="settings-key-clear" class="settings-action-ghost">Сбросить</button>
+                            <div class="settings-menu-title" id="settings-key-title">Ключи API</div>
+                            <div class="settings-key-block">
+                                <label class="settings-key-label" for="settings-key-input-ollama">Ключ Ollama</label>
+                                <p class="settings-key-status" id="settings-key-status-ollama">Сейчас: из конфига</p>
+                                <input id="settings-key-input-ollama" class="settings-key-input" type="password" autocomplete="off" spellcheck="false" placeholder="Вставьте ключ">
+                                <div class="settings-menu-actions">
+                                    <button type="button" id="settings-key-save-ollama" class="settings-action-primary" data-key-family="ollama">Сохранить</button>
+                                    <button type="button" id="settings-key-clear-ollama" class="settings-action-ghost" data-key-family="ollama">Сбросить</button>
+                                </div>
+                            </div>
+                            <div class="settings-key-block">
+                                <label class="settings-key-label" for="settings-key-input-qwen">Ключ Qwen Cloud</label>
+                                <p class="settings-key-status" id="settings-key-status-qwen">Сейчас: из конфига</p>
+                                <input id="settings-key-input-qwen" class="settings-key-input" type="password" autocomplete="off" spellcheck="false" placeholder="Вставьте ключ">
+                                <div class="settings-menu-actions">
+                                    <button type="button" id="settings-key-save-qwen" class="settings-action-primary" data-key-family="qwen">Сохранить</button>
+                                    <button type="button" id="settings-key-clear-qwen" class="settings-action-ghost" data-key-family="qwen">Сбросить</button>
+                                </div>
                             </div>
                         </div>
                     </div>
