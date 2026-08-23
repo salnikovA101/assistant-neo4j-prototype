@@ -185,7 +185,9 @@ def build_s3_bundle(
 def load_s3_bundle_graphs(
     bundle: dict[str, Any], *, branch_cap: int
 ) -> dict[str, CandidateGraph]:
-    return graphs_from_cache_dict(bundle.get("graphs") or {}, branch_cap=branch_cap)
+    graphs = graphs_from_cache_dict(bundle.get("graphs") or {}, branch_cap=branch_cap)
+    graphs.pop("global", None)
+    return graphs
 
 
 def bundle_matches(

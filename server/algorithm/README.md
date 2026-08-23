@@ -4,15 +4,15 @@ Edge-native GraphRAG pipeline:
 
 S1 embed sq → S2 ANN (L per index → merge → L_raw_max) →
 S2b Ettin CE (full L_raw_max pool → keep L) →
-S3 N+1 graphs (anchors=L + bridges) **once** →
-S4 profitable tours until path budget (TOARP, prize once) → reshape SPINE+FANS
-(for viz / S5 spine dedup) → format UNIT as the walk-ordered tour →
-S5 exact spine-evidence-seq dedup, keep up to budget →
-emit: sort by S4 score, cap (`emit_top_k_*`), drop score cliff (`emit_score_frac`).
+S3 per-sq graphs (anchors=L + bridges) **once** →
+S4 carousel (one tour / sq / round, shared `p`) until path budget →
+reshape SPINE+FANS (for viz / S5 spine dedup) → format UNIT as the walk-ordered tour →
+S5 exact spine-evidence-seq dedup (keep first, carousel order) →
+assistant gets the full S5 pool (`accepted` = `accepted_all`).
 
-`effort` only sets how many units to mine (low=10 / medium=15 / hard=20)
-and how many to emit (5 / 10 / 15). It comes from the UI search-depth control
-(`server/core/turn_state.py`), not from the assistant model.
+`effort` only picks `max_paths_low|medium|high` (how many units to mine).
+It comes from the UI search-depth control (`server/core/turn_state.py`),
+not from the assistant model. Defaults live in `Params`.
 
 S2/S3 optionally restrict to one relationship `run_id` from `server/config.yaml`
 (`Params.run_id`). Non-empty: Cypher 25 `SEARCH … WHERE r.run_id = $run_id`
@@ -24,19 +24,33 @@ Empty `run_id`: unfiltered ANN (legacy `queryRelationships`) and a startup warni
 
 ### S4
 
-- `s4_paths_per_graph` (default 3) profitable tours per S3 graph per fill
-  round, length `min_path_len`..`max_hops` (default 1..10). Drop a tour
-  with fewer than `s4_min_prize_edges` prize arcs or score ≤ 0. After each
-  tour, collected arcs get local p=0 (prize once). S4 repeats rounds until
-  the path budget is unique spines (or prize runs out). Collecting a prize
-  arc does **not** promote demoted ANN into `prize_top` (frozen ranks).
-- Global start (all edges); score = Σ rank contribs.
-- Non-bridge edges ranked by `(CE|sim) · p`; top `prize_top` (default 50)
-  get linear rank prizes. Prize is shared across graphs in one S4 pass.
-- Demoted ANN pay `bridge_cost_c0·(1+γ·x²)·(2−p)`; structural bridges pay
-  flat `bridge_struct_cost·(2−p)`.
-- Star walks reshaped to SPINE + FANS via `unit_reshape` (UI roles + S5).
-  Print tags (`linger_hubs`): entry unmarked; rays **and** exit get `@Hub`.
+Carousel over sq graphs in dict order: round 1 is always complete (one tour
+per graph if DP finds a path). Later rounds continue until `effort_max_paths()`;
+the last round may be partial.
+
+Shared `p` starts at 1 on the UNION of all graph `edge_key`s. After a tour,
+every walk key gets `p *= s4_p_decay` (default 0.7; `0` zeros the keys).
+Ranks are recomputed each step — no freeze.
+
+On a graph, **all** edges (anchors and bridges) share one list. Sort by
+`(CE|sim) · p`. `p` only moves order; prize/cost amounts come from rank:
+
+- `r ≤ prize_top`: `prize_rank_max · (K−r+1)/K` (linear `+1 → ~0`)
+- `r > prize_top`: `−prize_rank_max · x^s4_cost_power` (`s4_cost_power=1.5`),
+  `x=(r−K)/(N−K)`; last rank pays `prize_rank_max`
+
+DP inside a tour is unchanged: length `min_path_len`..`max_hops`,
+no edge/evidence revisit, drop if fewer than `s4_min_prize_edges` prize arcs
+or score ≤ 0. Global start (all edges); score = Σ rank contribs.
+
+Star walks reshaped to SPINE + FANS via `unit_reshape` (UI roles + S5).
+Print tags (`linger_hubs`): entry unmarked; rays **and** exit get `@Hub`.
+
+### S5
+
+Exact `spine_evidence_seq` duplicates drop; the **first** (carousel order) is
+kept. No per-graph quota and no emit cap / score-cliff. The assistant sees
+the whole S5 pool in carousel order.
 
 Unit = hop-DP tour in walk order (not spine-then-FANS dump). Each edge prints
 as a card: `Label: A —REL→ Label: B` and the verbatim quote with
@@ -44,15 +58,10 @@ as a card: `Label: A —REL→ Label: B` and the verbatim quote with
 vertex (sibling incidents, not the next process step). Endpoints use primary
 Neo4j labels from
 `Microbe|Metabolite|StarterCulture|EnvironmentCondition` (extra labels dropped).
-Evidence may not repeat inside one unit; S5 drops exact SPINE evidence
-duplicates in the pool.
+Evidence may not repeat inside one unit.
 
-ANN/CE/bridges run once per question. S4 fills the path cap in one
-stage (low=10 / medium=15 / hard=20 accepted units), then emit cuts to
-what the assistant sees: `emit_top_k_*` (easy=5 / medium=10 / hard=15),
-then `emit_score_frac` (drop below 25% of the best score inside that cap).
-Eval reports recall@1/2/3/5/10/15/20 on the uncut ranked pool; headline
-metrics are on the emitted set.
+ANN/CE/bridges run once per question. Eval headline recall is on the full
+`accepted` set; recall@k uses a **score-sorted copy** of that pool.
 
 ## Run
 
@@ -63,7 +72,7 @@ metrics are on the emitted set.
 # eval (needs Neo4j + local Ollama embeddings; mock_decompose SLM unless --sq-cache)
 .venv/bin/python tests/evaluate_v6.py --effort auto --limit 1 --sq-cache
 # reports → tests/reports/v6/ (wiped each run)
-# sq cache → tests/reports/v6_cache/sq_cache.json (preserved)
+# sq cache (open) → tests/reports/v6_cache/sq_open20_grok46.json (preserved)
 
 # Build S3 graph cache once, then sweep S4 params without ANN/CE:
 .venv/bin/python tests/evaluate_v6.py --sq-cache --graph-cache

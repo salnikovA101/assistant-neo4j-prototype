@@ -5,13 +5,12 @@ from __future__ import annotations
 from server.algorithm.models import CandidateGraph, Chain, EdgeRecord, SubQuestion
 from server.algorithm.params import Params
 from server.algorithm.scoring import (
-    anchor_prize,
     edge_prize_weight,
     rank_contribs,
 )
 from server.algorithm.stage3_graphs import _finalize_graph, transition_allowed
-from server.algorithm.stage4_hop_dp import best_path_for_graph, hop_dp_paths
-from server.algorithm.stage5_select import dedup_s4_pool, select_budget_batch
+from server.algorithm.stage4_hop_dp import best_path_for_graph
+from server.algorithm.stage5_select import dedup_s4_pool, prepare_s5_batch
 from tests.algorithm.mock_decompose import _fallback_statements, _parse_sq
 
 
@@ -36,10 +35,8 @@ def test_decompose_fallback_is_declarative():
     assert all(not s["text"].lower().startswith("what ") for s in sqs)
 
 
-def test_anchor_prize_ranking_weight():
+def test_edge_prize_weight_uses_ce():
     p = Params(s_floor=1e-6)
-    prize = anchor_prize(0.9, "a1", p_store={"a1": 1.0}, params=p)
-    assert abs(prize - 0.9) < 1e-9
     e = EdgeRecord("a", "id-a", "R", "x", "y", "X", "Y", sim=0.5, rerank_score=0.8, source="ann")
     w = edge_prize_weight(e, p_store={}, params=p)
     assert abs(w - 0.8) < 1e-9
@@ -91,7 +88,7 @@ def test_s4_p_discount_moves_order_when_ce_unclipped():
     assert wa < wb
 
 
-def test_dedup_and_spine_seq_batch():
+def test_dedup_keeps_first_spine():
     e12a = EdgeRecord("e1", "1", "R", "a", "b", "A", "B", evidence="ev1")
     e12b = EdgeRecord("e2", "2", "R", "b", "c", "B", "C", evidence="ev2")
     e3 = EdgeRecord("e3", "3", "R", "x", "y", "X", "Y", evidence="ev3")
@@ -105,8 +102,8 @@ def test_dedup_and_spine_seq_batch():
     b = Chain(
         "y",
         ["e1", "e2"],
-        0.8,
-        source_graph="global",
+        1.5,
+        source_graph="sq3",
         edges=[
             EdgeRecord("e1", "1", "R", "a", "b", "A", "B", evidence="ev1"),
             EdgeRecord("e2", "2", "R", "b", "c", "B", "C", evidence="ev2"),
@@ -114,9 +111,11 @@ def test_dedup_and_spine_seq_batch():
     )
     c = Chain("z", ["e3"], 0.7, source_graph="sq2", edges=[e3])
     uniq = dedup_s4_pool([a, b, c])
-    assert len(uniq) == 2
-    batch = select_budget_batch(uniq, k=10)
-    assert len(batch) == 2
+    assert [u.chain_id for u in uniq] == ["x", "z"]
+    assert uniq[0].score == 0.9
+    assert uniq[0].source_graphs == ["sq1", "sq3"]
+    batch = prepare_s5_batch(uniq, params=Params())
+    assert [u.chain_id for u in batch] == ["c1", "c2"]
 
 
 def test_s5_batch_copies_walk():
@@ -132,75 +131,15 @@ def test_s5_batch_copies_walk():
         fans={"h": [e2]},
         walk=[e1, e2, e3],
     )
-    batch = select_budget_batch([src], k=10)
+    batch = prepare_s5_batch([src], params=Params())
     assert len(batch) == 1
     assert [e.edge_key for e in batch[0].walk] == ["e1", "e2", "e3"]
 
 
-def test_batch_per_graph_quota_then_fill():
-    """k=10, 5 graphs → 2 each; thin graph frees slots for global fill."""
-
-    def _unit(gid: str, i: int, score: float) -> Chain:
-        ek = f"{gid}_{i}"
-        e = EdgeRecord(ek, ek, "R", "a", "b", "A", "B", evidence=f"ev-{gid}-{i}", sim=score)
-        return Chain(ek, [ek], score, source_graph=gid, edges=[e])
-
-    pool: list[Chain] = []
-    # sq1..sq4 + global: 3 candidates each except sq4 has 1
-    for gid in ("sq1", "sq2", "sq3", "global"):
-        for i in range(3):
-            pool.append(_unit(gid, i, score=0.5 + 0.1 * i + (0.01 if gid == "global" else 0)))
-    pool.append(_unit("sq4", 0, 0.4))
-
-    graph_ids = ["sq1", "sq2", "sq3", "sq4", "global"]
-    batch = select_budget_batch(pool, k=10, graph_ids=graph_ids)
-    assert len(batch) == 10
-    counts: dict[str, int] = {}
-    for c in batch:
-        counts[c.source_graph] = counts.get(c.source_graph, 0) + 1
-    # Round 1: 2 per graph, but sq4 only has 1 → 9; round 2 fills 1 more
-    assert counts.get("sq4", 0) == 1
-    for gid in ("sq1", "sq2", "sq3", "global"):
-        assert counts.get(gid, 0) >= 2
-    assert sum(counts.values()) == 10
-    # PathRAG: ascending score
-    scores = [c.score for c in batch]
-    assert scores == sorted(scores)
-
-
-def test_batch_quota_shrinks_with_fewer_graphs():
-    """3 graphs, k=10 → floor 3 each, then 1 fill."""
-
-    def _unit(gid: str, i: int, score: float) -> Chain:
-        ek = f"{gid}_{i}"
-        e = EdgeRecord(ek, ek, "R", "a", "b", "A", "B", evidence=f"ev-{gid}-{i}", sim=score)
-        return Chain(ek, [ek], score, source_graph=gid, edges=[e])
-
-    pool = []
-    for gid in ("sq1", "sq2", "global"):
-        for i in range(5):
-            pool.append(_unit(gid, i, 0.5 + 0.05 * i))
-    batch = select_budget_batch(
-        pool,
-        k=10,
-        graph_ids=["sq1", "sq2", "global"],
-    )
-    assert len(batch) == 10
-    counts: dict[str, int] = {}
-    for c in batch:
-        counts[c.source_graph] = counts.get(c.source_graph, 0) + 1
-    # Each got at least per=3
-    assert all(v >= 3 for v in counts.values())
-    assert sum(counts.values()) == 10
-
-
-def test_batch_allows_partial_evidence_overlap():
+def test_dedup_allows_partial_evidence_overlap():
     """S5 only cuts exact spine copies; shared single evidence is OK."""
     e1 = EdgeRecord("ek1", "id1", "INHIBITS", "a", "b", "A", "B", sim=0.9, evidence="shared")
-    e2 = EdgeRecord("ek2", "id2", "INHIBITS", "a", "c", "A", "C", sim=0.9, evidence="shared")
     e3 = EdgeRecord("ek3", "id3", "INHIBITS", "x", "y", "X", "Y", sim=0.8, evidence="other")
-    # Different spine seqs: ("shared",) vs ("shared",) would collide for single-edge
-    # Give c1/c2 distinct second edges so seq differs, or single-edge same seq → one kept
     c1 = Chain("x", ["ek1"], 0.9, edges=[e1])
     c2 = Chain(
         "y",
@@ -211,10 +150,8 @@ def test_batch_allows_partial_evidence_overlap():
             e3,
         ],
     )
-    batch = select_budget_batch([c1, c2], k=10)
-    assert len(batch) == 2
-    # Ascending score: best last
-    assert batch[0].score <= batch[1].score
+    uniq = dedup_s4_pool([c1, c2])
+    assert [u.chain_id for u in uniq] == ["x", "y"]
 
 
 def test_s4_blocks_same_evidence_reentry_via_hub():
@@ -235,12 +172,10 @@ def test_s4_blocks_same_evidence_reentry_via_hub():
     assert "e_sal" in g.transition_adj["e_eco"]
 
     p = Params(min_path_len=1, max_hops=5)
-    paths = hop_dp_paths(g, p_store={}, params=p)
-    # No unit may contain both e_yer and e_sal (same evidence)
-    assert len(paths) <= 1
-    for c in paths:
-        keys = set(c.all_edge_keys())
-        assert not ({"e_yer", "e_sal"} <= keys)
+    c = best_path_for_graph(g, p_store={}, params=p)
+    assert c is not None
+    keys = set(c.all_edge_keys())
+    assert not ({"e_yer", "e_sal"} <= keys)
 
 
 def test_hop_dp_single_and_two_hop():
@@ -277,11 +212,11 @@ def test_hop_dp_single_and_two_hop():
         transition_adj={"e1": ["e2"], "e2": ["e1"]},
     )
     p = Params(min_path_len=1, max_hops=3)
-    paths = hop_dp_paths(g, p_store={}, params=p)
-    assert len(paths) == 1
-    assert 1 <= len(paths[0].all_edge_keys()) <= 3
+    c = best_path_for_graph(g, p_store={}, params=p)
+    assert c is not None
+    assert 1 <= len(c.all_edge_keys()) <= 3
     # Prefer longer high-prize path: e1+e2 score > either alone
-    assert set(paths[0].all_edge_keys()) == {"e1", "e2"}
+    assert set(c.all_edge_keys()) == {"e1", "e2"}
 
 
 def test_hop_dp_skips_isolated_prize_continues_cluster():
@@ -340,12 +275,11 @@ def test_hop_dp_skips_isolated_prize_continues_cluster():
         min_path_len=1,
         max_hops=5,
         prize_top=10,
-        s4_paths_per_graph=2,
         s4_min_prize_edges=2,
     )
-    paths = hop_dp_paths(g, p_store={}, params=params)
-    assert len(paths) == 1
-    assert set(paths[0].all_edge_keys()) == {"a", "b"}
+    c = best_path_for_graph(g, p_store={}, params=params)
+    assert c is not None
+    assert set(c.all_edge_keys()) == {"a", "b"}
 
 
 def test_s4_min_prize_edges_zero_allows_single():
@@ -372,12 +306,11 @@ def test_s4_min_prize_edges_zero_allows_single():
         min_path_len=1,
         max_hops=3,
         prize_top=10,
-        s4_paths_per_graph=1,
         s4_min_prize_edges=0,
     )
-    paths = hop_dp_paths(g, p_store={}, params=params)
-    assert len(paths) == 1
-    assert paths[0].all_edge_keys() == ["iso"]
+    c = best_path_for_graph(g, p_store={}, params=params)
+    assert c is not None
+    assert c.all_edge_keys() == ["iso"]
 
 
 def test_s4_one_path_per_graph_global_start():
@@ -393,40 +326,50 @@ def test_s4_one_path_per_graph_global_start():
         max_hops=5,
         prize_top=3,
         prize_rank_max=1.0,
-        bridge_cost_c0=0.25,
-        bridge_struct_cost=0.30,
     )
-    paths = hop_dp_paths(g, p_store={}, params=p)
-    assert len(paths) == 1
-    keys = paths[0].all_edge_keys()
+    c = best_path_for_graph(g, p_store={}, params=p)
+    assert c is not None
+    keys = c.all_edge_keys()
     assert set(keys) == {"e_low", "e_mid", "e_hi"}
     # ranks: mid=1 → 1.0, hi=2 → 2/3, low=3 → 1/3
-    assert abs(paths[0].score - (1.0 + 2.0 / 3.0 + 1.0 / 3.0)) < 1e-6
+    assert abs(c.score - (1.0 + 2.0 / 3.0 + 1.0 / 3.0)) < 1e-6
 
 
-def test_s4_struct_bridge_cost_penalizes_p():
-    """Structural bridge pays bridge_struct_cost·(2−p); lower p raises cost."""
+def test_s4_bridge_in_same_rank_list():
+    """Bridges share the sort with anchors; high sim can take a prize seat."""
     a1 = EdgeRecord("a1", "1", "R", "x", "y", "X", "Y", sim=0.8, evidence="a1", source="ann")
     br = EdgeRecord("br", "2", "R", "y", "z", "Y", "Z", sim=0.99, evidence="br", source="bridge")
-    a2 = EdgeRecord("a2", "3", "R", "z", "w", "Z", "W", sim=0.8, evidence="a2", source="ann")
+    a2 = EdgeRecord("a2", "3", "R", "z", "w", "Z", "W", sim=0.5, evidence="a2", source="ann")
     g = _finalize_graph("sq1", {"a1": a1, "br": br, "a2": a2}, branch_cap=20)
-    c_struct = 0.30
     p = Params(
         min_path_len=3,
         max_hops=5,
         prize_top=2,
         prize_rank_max=1.0,
-        bridge_struct_cost=c_struct,
+        s4_cost_power=1.5,
+        s4_min_prize_edges=2,
     )
-    c_p1 = best_path_for_graph(g, p_store={}, params=p)
-    assert c_p1 is not None
-    # two ANN prizes at ranks 1,2 → 1.0 + 0.5; bridge −c_struct
-    assert abs(c_p1.score - (1.5 - c_struct)) < 1e-6
-    roles = {e.edge_key: e.source for e in c_p1.all_edges()}
-    assert roles == {"a1": "prize", "a2": "prize", "br": "bridge"}
-    c_pen = best_path_for_graph(g, p_store={"br": 0.7}, params=p)
-    assert c_pen is not None
-    assert abs(c_pen.score - (1.5 - c_struct * 1.3)) < 1e-6
+    c = best_path_for_graph(g, p_store={}, params=p)
+    assert c is not None
+    roles = {e.edge_key: e.source for e in c.all_edges()}
+    assert roles["br"] == "prize"
+    assert roles["a1"] == "prize"
+    assert roles["a2"] == "bridge"
+    # br r1=1.0, a1 r2=0.5, a2 last x=1 → −1
+    assert abs(c.score - (1.5 - 1.0)) < 1e-6
+
+
+def test_s4_p_only_moves_sort_not_prize_amount():
+    """p discounts ranking weight only; rank-1 still pays prize_rank_max."""
+    a = EdgeRecord("a", "1", "R", "x", "y", "X", "Y", sim=0.9, evidence="a", source="ann")
+    b = EdgeRecord("b", "2", "R", "y", "z", "Y", "Z", sim=0.8, evidence="b", source="ann")
+    edges = {"a": a, "b": b}
+    p = Params(prize_top=2, prize_rank_max=1.0, s4_cost_power=1.5)
+    contrib, prize_keys = rank_contribs(edges, p_store={"a": 0.5}, params=p)
+    assert prize_keys == {"a", "b"}
+    # 0.9·0.5 = 0.45 < 0.8 → b is rank 1
+    assert abs(contrib["b"] - 1.0) < 1e-6
+    assert abs(contrib["a"] - 0.5) < 1e-6
 
 
 def test_s4_prize_top_demotes_weak_ann():
@@ -435,20 +378,18 @@ def test_s4_prize_top_demotes_weak_ann():
     e_weak = EdgeRecord("e_weak", "2", "R", "b", "c", "B", "C", sim=0.4, evidence="wk", source="ann")
     e_mid = EdgeRecord("e_mid", "3", "R", "c", "d", "C", "D", sim=0.85, evidence="md", source="ann")
     g = _finalize_graph("sq1", {"e_hi": e_hi, "e_weak": e_weak, "e_mid": e_mid}, branch_cap=20)
-    c0 = 0.25
     p = Params(
         min_path_len=3,
         max_hops=5,
         prize_top=2,
         prize_rank_max=1.0,
-        bridge_cost_c0=c0,
-        bridge_cost_gamma=0.0,
+        s4_cost_power=1.5,
     )
     c = best_path_for_graph(g, p_store={}, params=p)
     assert c is not None
     assert set(c.all_edge_keys()) == {"e_hi", "e_weak", "e_mid"}
-    # hi r1=1.0, mid r2=0.5, weak demoted r3 → −c0 (gamma=0)
-    assert abs(c.score - (1.5 - c0)) < 1e-6
+    # hi r1=1.0, mid r2=0.5, weak demoted r3 x=1 → −1.0
+    assert abs(c.score - (1.5 - 1.0)) < 1e-6
     by_key = {e.edge_key: e.source for e in c.all_edges()}
     assert by_key["e_hi"] == "prize"
     assert by_key["e_mid"] == "prize"
@@ -456,18 +397,18 @@ def test_s4_prize_top_demotes_weak_ann():
 
 
 def test_s4_no_free_bridge_padding_to_max_hops():
-    """Structural bridge cost > 0 at p=1: do not pad with unused bridges."""
+    """Tail-rank cost > 0: do not pad a prize pair with unused low-rank edges."""
     e1 = EdgeRecord("e1", "1", "R", "a", "b", "A", "B", sim=0.9, evidence="p1", source="ann")
     e2 = EdgeRecord("e2", "2", "R", "b", "c", "B", "C", sim=0.8, evidence="p2", source="ann")
-    b1 = EdgeRecord("b1", "3", "R", "c", "d", "C", "D", sim=0.99, evidence="g1", source="bridge")
-    b2 = EdgeRecord("b2", "4", "R", "d", "e", "D", "E", sim=0.99, evidence="g2", source="bridge")
+    b1 = EdgeRecord("b1", "3", "R", "c", "d", "C", "D", sim=0.1, evidence="g1", source="bridge")
+    b2 = EdgeRecord("b2", "4", "R", "d", "e", "D", "E", sim=0.05, evidence="g2", source="bridge")
     g = _finalize_graph("sq1", {"e1": e1, "e2": e2, "b1": b1, "b2": b2}, branch_cap=20)
     p = Params(
         min_path_len=2,
         max_hops=4,
         prize_top=2,
         prize_rank_max=1.0,
-        bridge_struct_cost=0.30,
+        s4_cost_power=1.5,
     )
     c = best_path_for_graph(g, p_store={}, params=p)
     assert c is not None
@@ -477,7 +418,7 @@ def test_s4_no_free_bridge_padding_to_max_hops():
 
 
 def test_s4_rank_prizes_economics():
-    """Rank mode: linear prizes over top-K, quadratic demoted cost, flat struct."""
+    """One list: linear prizes over top-K, x^1.5 tail; p only in sort."""
     edges = {}
     for i in range(14):
         key = f"a{i:02d}"
@@ -501,27 +442,24 @@ def test_s4_rank_prizes_economics():
         "ex",
         "SX",
         "EX",
-        sim=0.99,
+        sim=0.0,
         evidence="br",
         source="bridge",
     )
-    p = Params(prize_top=4, prize_rank_max=1.0, bridge_cost_c0=0.4, bridge_cost_gamma=0.5, bridge_struct_cost=0.5)
+    p = Params(prize_top=4, prize_rank_max=1.0, s4_cost_power=1.5)
     contrib, prize_keys = rank_contribs(edges, p_store={}, params=p)
 
     assert prize_keys == {"a00", "a01", "a02", "a03"}
     assert [round(contrib[f"a{i:02d}"], 3) for i in range(4)] == [1.0, 0.75, 0.5, 0.25]
-    # demoted: cost = c0·(1+γ·x²), x=(r−K)/(N−K); N=14 ANN edges, K=4
-    assert abs(contrib["a04"] - (-0.4 * 1.005)) < 1e-6  # r=5, x=0.1
-    assert abs(contrib["a13"] - (-0.4 * 1.5)) < 1e-6  # r=14, x=1
-    # mid-rank stays much closer to c0 than to the tail price
-    mid = -contrib["a08"]  # r=9, x=0.5 → 0.4·(1+0.5·0.25)=0.45
-    assert abs(mid - 0.45) < 1e-6
-    assert contrib["br"] == -0.5
-    # p dynamics: discount demotes in ranking (a00: w=0.9·0.9=0.81 < a01 0.85)
-    contrib2, prize2 = rank_contribs(edges, p_store={"a00": 0.9, "a13": 0.5}, params=p)
-    assert abs(contrib2["a01"] - 1.0) < 1e-6  # a01 takes rank 1
-    assert abs(contrib2["a00"] - 0.75 * 0.9) < 1e-6  # rank 2 prize × p
-    assert abs(contrib2["a13"] - (-0.6 * 1.5)) < 1e-6  # rejected: tail cost × (2−0.5)
+    # N=15, K=4, span=11; cost = −x^1.5
+    n, k = 15, 4
+    span = n - k
+    assert abs(contrib["a04"] - (-((5 - k) / span) ** 1.5)) < 1e-6
+    assert abs(contrib["a13"] - (-((14 - k) / span) ** 1.5)) < 1e-6
+    assert abs(contrib["br"] - (-1.0)) < 1e-6
+    contrib2, _ = rank_contribs(edges, p_store={"a00": 0.9}, params=p)
+    assert abs(contrib2["a01"] - 1.0) < 1e-6
+    assert abs(contrib2["a00"] - 0.75) < 1e-6
 
 
 def _edge(key: str, start: str, end: str, sim: float = 0.9, evidence: str = "") -> EdgeRecord:
@@ -1009,19 +947,17 @@ def test_star_walk_forms_unit_with_fans():
     g = _finalize_graph("sq1", edges, branch_cap=20)
     assert "e_sal" in g.transition_adj["e_in"]
     assert "e_yer" in g.transition_adj["e_sal"] or "e_out" in g.transition_adj["e_sal"]
+    assert transition_allowed(e_sal, e_yer)
 
     p = Params(
         min_path_len=2,
         max_hops=5,
     )
-    paths = hop_dp_paths(g, p_store={}, params=p)
-    assert len(paths) <= 1
-    # Adjacency must allow star steps
-    assert transition_allowed(e_sal, e_yer)
-    if paths:
-        assert [e.edge_key for e in paths[0].walk] == paths[0].all_edge_keys()
-    if paths and paths[0].fans:
-        assert any(paths[0].fans.values())
+    c = best_path_for_graph(g, p_store={}, params=p)
+    assert c is not None
+    assert [e.edge_key for e in c.walk] == c.all_edge_keys()
+    if c.fans:
+        assert any(c.fans.values())
 
 
 def _chain_with_ev(cid: str, edge_key: str, evidence: str, score: float = 0.9) -> Chain:
@@ -1154,7 +1090,7 @@ def test_n_gold_in_keys():
     assert n_gold_in_keys([], gold, key_to_ev) == 0
 
 
-def test_graphs_for_sqs_keeps_sq_and_global():
+def test_graphs_for_sqs_drops_global_and_other_sqs():
     from server.algorithm.pipeline import _graphs_for_sqs
 
     g1 = CandidateGraph(source_graph="sq1", edges={"a": _fake_edge("a", 0.9)})
@@ -1163,9 +1099,8 @@ def test_graphs_for_sqs_keeps_sq_and_global():
     graphs = {"sq1": g1, "sq2": g2, "global": gg}
     open_sqs = [SubQuestion(id="sq1", text="open one")]
     sliced = _graphs_for_sqs(graphs, open_sqs)
-    assert set(sliced.keys()) == {"sq1", "global"}
+    assert set(sliced.keys()) == {"sq1"}
     assert sliced["sq1"] is g1
-    assert sliced["global"] is gg
 
 
 def test_run_from_graph_cache_skips_s1_s3():
@@ -1191,16 +1126,14 @@ def test_run_from_graph_cache_skips_s1_s3():
         max_hops=3,
         max_paths_low=5,
         prize_top=25,
-        s4_paths_per_graph=1,
         s4_min_prize_edges=1,
-        emit_score_frac=0.0,
     )
     bundle = build_s3_bundle(
         qid="q0",
         question="Q?",
         params=params,
         sqs=sqs,
-        graphs={"sq1": g, "global": g},
+        graphs={"sq1": g},
         ann_keys={"sq1": ["e1", "e2"]},
         rerank_keys={"sq1": ["e1", "e2"]},
         ann_edge_sims={"e1": 0.9, "e2": 0.8},
@@ -1329,6 +1262,21 @@ def test_graph_cache_edge_roundtrip():
     loaded = load_s3_bundle_graphs(bundle, branch_cap=20)
     assert set(loaded["sq1"].edges) == {"k1"}
     assert loaded["sq1"].edges["k1"].rerank_score == 0.42
+    loaded_drop = load_s3_bundle_graphs(
+        build_s3_bundle(
+            qid="q0",
+            question="Q?",
+            params=p,
+            sqs=sqs,
+            graphs={"sq1": g, "global": g},
+            ann_keys={"sq1": ["k1"]},
+            rerank_keys={"sq1": ["k1"]},
+            ann_edge_sims={"k1": 0.77},
+        ),
+        branch_cap=20,
+    )
+    assert "global" not in loaded_drop
+    assert "sq1" in loaded_drop
 
     missing = EdgeRecord(
         edge_key="k2",

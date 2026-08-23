@@ -1,17 +1,16 @@
-"""S4: Team Arc Orienteering on the line-graph (k profitable tours / graph).
+"""S4: carousel over sq graphs with a shared p overlay.
 
-Each tour is a global best-path DP: maximize sum of rank contribs over
-L ∈ [min_path_len, max_hops], no node/evidence revisit. After a tour is
-taken, its arcs are zeroed in a *local* p overlay so the next tour must
-collect leftover prize (TOARP: prize at most once).
+Each tour is a best-path DP: maximize sum of rank contribs over
+L ∈ [min_path_len, max_hops], no edge/evidence revisit. After a tour,
+walk keys get p *= s4_p_decay in a UNION store shared across graphs.
 
 DP with path_so_far revisit ban is a practical optimum under no-revisit
-(not color-coding exact). Sufficient for n≤300, L≤10, k≤3.
+(not color-coding exact). Sufficient for n≤300, L≤10.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import replace
 
 from server.algorithm.evidence import edge_evidence_key
@@ -34,7 +33,7 @@ def _path_evidence_keys(graph: CandidateGraph, path: list[str]) -> set[str]:
 
 
 def _tag_s4_role(edge: EdgeRecord, prize_keys: set[str]) -> EdgeRecord:
-    """Serialize S4 role: prize if in prize set, else bridge (demoted ANN or glue)."""
+    """Serialize S4 role: prize if in prize set, else bridge (tail rank)."""
     role = "prize" if edge.edge_key in prize_keys else "bridge"
     return replace(edge, source=role)
 
@@ -73,8 +72,7 @@ def best_path_for_graph(
 ) -> Chain | None:
     """
     One profitable tour: start from every edge; maximize sum of rank contribs
-    over L ∈ [min_path_len, max_hops]. Prize on top prize_top ranked
-    non-bridge edges; demoted ANN + structural bridges pay rank costs.
+    over L ∈ [min_path_len, max_hops]. All graph edges share one rank list.
     Returns one Chain (walk-ordered tour; spine+fans for viz) or None.
     """
     if not graph.edges:
@@ -151,119 +149,64 @@ def best_path_for_graph(
     )
 
 
-def _n_prize_edges(chain: Chain) -> int:
-    return sum(1 for e in chain.all_edges() if (e.source or "").strip().lower() == "prize")
+def _decay_keys(p_store: dict[str, float], keys: list[str], decay: float) -> None:
+    d = float(decay)
+    for ek in keys:
+        if d <= 0.0:
+            p_store[ek] = 0.0
+        else:
+            p_store[ek] = float(p_store.get(ek, 1.0)) * d
 
 
-def hop_dp_paths(
-    graph: CandidateGraph,
-    *,
-    p_store: Mapping[str, float] | None = None,
-    params: Params,
-    id_prefix: str = "c",
-) -> list[Chain]:
-    """k disjoint-prize tours on one graph (local p overlay)."""
-    k = max(1, int(params.s4_paths_per_graph))
-    local_p: dict[str, float] = dict(p_store or {})
-    out: list[Chain] = []
-    seen_spines: set[tuple[str, ...]] = set()
-    min_len = max(1, int(params.min_path_len))
-    min_prize = max(0, int(params.s4_min_prize_edges))
-
-    for i in range(1, k + 1):
-        chain = best_path_for_graph(
-            graph,
-            p_store=local_p,
-            params=params,
-            id_prefix=id_prefix,
-            path_index=i,
-        )
-        if chain is None:
-            break
-        too_short = len(chain.all_edge_keys()) < min_len
-        too_few_prize = _n_prize_edges(chain) < min_prize
-        bad_score = chain.score <= 0.0
-        if too_short or too_few_prize or bad_score:
-            for ek in chain.all_edge_keys():
-                local_p[ek] = 0.0
-            continue
-        for ek in chain.all_edge_keys():
-            local_p[ek] = 0.0
-        spine = chain.spine_evidence_seq()
-        if spine in seen_spines:
-            continue
-        seen_spines.add(spine)
-        out.append(chain)
-    return out
-
-
-def run_s4_all_graphs(
+def run_s4_carousel(
     graphs: dict[str, CandidateGraph],
     *,
-    p_store: Mapping[str, float] | None = None,
-    params: Params,
-    collected_keys: Iterable[str] | None = None,
-) -> list[Chain]:
-    """k tours / graph. Collected arcs keep frozen prize_top (no ANN promotion)."""
-    seed_p: dict[str, float] = dict(p_store or {})
-    for ek in collected_keys or ():
-        if ek:
-            seed_p[ek] = 0.0
-    pool: list[Chain] = []
-    share = bool(params.s4_share_prize_across_graphs)
-    for src, g in graphs.items():
-        chains = hop_dp_paths(
-            g,
-            p_store=seed_p,
-            params=params,
-            id_prefix=f"{src}_",
-        )
-        pool.extend(chains)
-        if share:
-            for c in chains:
-                for ek in c.all_edge_keys():
-                    seed_p[ek] = 0.0
-    return pool
-
-
-def run_s4_fill_budget(
-    graphs: dict[str, CandidateGraph],
-    *,
-    p_store: Mapping[str, float] | None = None,
     params: Params,
     budget: int,
-    collected_keys: Iterable[str] | None = None,
 ) -> list[Chain]:
-    """Mine prize-once tours until ``budget`` unique spines (or prize runs out).
+    """Round-robin tours across sq graphs until ``budget`` (first round full).
 
-    One S4 stage: repeats ``run_s4_all_graphs`` (k tours / graph) with an
-    accumulating overlay. May overshoot by one round; S5 cuts to ``budget``.
+    Shared p starts at 1 on the UNION of all graph edge keys. After each
+    accepted tour, walk keys are multiplied by ``s4_p_decay``.
     """
     cap = max(0, int(budget))
     if cap <= 0 or not graphs:
         return []
-    collected: set[str] = {str(ek) for ek in (collected_keys or ()) if ek}
+
+    p_store: dict[str, float] = {}
+    for g in graphs.values():
+        for ek in g.edges:
+            p_store.setdefault(ek, 1.0)
+
+    items = list(graphs.items())
     pool: list[Chain] = []
-    seen: set[tuple[str, ...]] = set()
-    while len(seen) < cap:
-        n_before = len(seen)
-        chunk = run_s4_all_graphs(
-            graphs,
-            p_store=p_store,
-            params=params,
-            collected_keys=collected,
-        )
-        if not chunk:
-            break
-        for c in chunk:
-            spine = c.spine_evidence_seq()
-            if spine in seen:
+    counts: dict[str, int] = {src: 0 for src, _ in items}
+    decay = float(params.s4_p_decay)
+
+    def one_round(*, stop_at_cap: bool) -> int:
+        added = 0
+        for src, g in items:
+            if stop_at_cap and len(pool) >= cap:
+                break
+            counts[src] += 1
+            chain = best_path_for_graph(
+                g,
+                p_store=p_store,
+                params=params,
+                id_prefix=f"{src}_",
+                path_index=counts[src],
+            )
+            if chain is None:
                 continue
-            seen.add(spine)
-            pool.append(c)
-            collected.update(c.all_edge_keys())
-        if len(seen) == n_before:
-            break
-        if len(pool) > cap * 4:
+            pool.append(chain)
+            _decay_keys(p_store, chain.all_edge_keys(), decay)
+            added += 1
+        return added
+
+    one_round(stop_at_cap=False)
+    while len(pool) < cap:
+        n_before = len(pool)
+        one_round(stop_at_cap=True)
+        if len(pool) == n_before:
             break
     return pool

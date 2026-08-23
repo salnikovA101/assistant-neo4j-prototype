@@ -4,6 +4,7 @@ Primary metrics match on evidence *text* (unique stripped strings), not edge_key
 
 Default dataset: tests/qa_open_20.json. Close pack: tests/qa_evidence_50.json
 ({id, question, evidence[], ...}). Legacy gold_edge_keys still supported.
+Open SQ cache: tests/reports/v6_cache/sq_open20_grok46.json.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DATASET = Path("tests/qa_open_20.json")
 DEFAULT_OUT_DIR = Path("tests/reports/v6")
-DEFAULT_SQ_CACHE = Path("tests/reports/v6_cache/sq_cache.json")
+DEFAULT_SQ_CACHE = Path("tests/reports/v6_cache/sq_open20_grok46.json")
 DEFAULT_GRAPH_CACHE = Path("tests/reports/v6_cache/graphs")
 VECTOR_BASELINE_K = 150
 
@@ -229,7 +230,23 @@ def load_sq_cache(path: Path) -> dict[str, Any]:
     except Exception as e:
         logger.warning("sq-cache load failed %s: %s", path, e)
         return {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    items = data.get("items")
+    if isinstance(items, list):
+        out: dict[str, Any] = {}
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            qid = str(it.get("id") or "").strip()
+            if not qid:
+                continue
+            out[qid] = {
+                "question": it.get("question") or "",
+                "subquestions": it.get("subquestions") or [],
+            }
+        return out
+    return data
 
 
 def save_sq_cache(path: Path, cache: dict[str, Any]) -> None:
@@ -373,7 +390,7 @@ def metrics_at_k(
     key_to_ev: dict[str, str] | None = None,
     ks: tuple[int, ...] = RECALL_AT_KS,
 ) -> dict[str, dict[str, float | int]]:
-    """Cumulative recall/precision on score-sorted prefixes (assistant order)."""
+    """Cumulative recall/precision on score-sorted prefixes (not carousel order)."""
     acc: set[str] = set()
     out: dict[str, dict[str, float | int]] = {}
     want = set(ks)
@@ -503,6 +520,15 @@ def _s3_evidence_recalls(
         out[src] = set_recall(pred, gold_ev)
     out["union"] = set_recall(_evidences_from_key_map(union_keys or [], key_to_ev), gold_ev)
     return out
+
+
+def _score_sorted_pool(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Copy of accepted units, best S4 score first (tie-break: longer unit)."""
+    return sorted(
+        rows,
+        key=lambda c: (float(c.get("score") or 0.0), len(_chain_all_edge_keys(c))),
+        reverse=True,
+    )
 
 
 def _chain_all_edge_keys(c: dict[str, Any]) -> list[str]:
@@ -643,7 +669,7 @@ def write_trace_md(
             cid = c.get("chain_id")
             lines.append(f"- **{cid}**: {_chain_brief(c)}")
         lines.append("")
-        lines.append("### Accepted (pre-emit)")
+        lines.append("### Accepted")
         for c in tr.get("accepted") or []:
             lines.append(f"- `{c.get('chain_id')}` ({c.get('source_graph')}): {_chain_brief(c)}")
         lines.append("")
@@ -685,20 +711,21 @@ def write_trace_md(
         f"{u.get('n_rerank', 0)} → gold {u.get('n_gold_rerank', 0)}/{n_tot}"
     )
     lines.append("")
-    pool = list(result.get("accepted_all") or [])
+    pool = list(result.get("accepted_all") or result.get("accepted") or [])
     emitted = list(result.get("accepted") or [])
-    lines.append("## Score-sorted pool vs emit")
+    score_sorted = _score_sorted_pool(pool)
+    lines.append("## Carousel pool vs score-sorted @k")
+    lines.append(f"- assistant (`accepted`): {len(emitted)}")
     lines.append(f"- pool (`accepted_all`): {len(pool)}")
-    lines.append(f"- emitted (`accepted`): {len(emitted)}")
-    if pool:
-        lines.append("- pool order (best S4 score first):")
-        for i, c in enumerate(pool, start=1):
+    if score_sorted:
+        lines.append("- score-sorted order (recall@k):")
+        for i, c in enumerate(score_sorted, start=1):
             lines.append(
                 f"  {i}. `{c.get('chain_id')}` score={float(c.get('score') or 0.0):.4f} "
                 f"({c.get('source_graph')})"
             )
     lines.append("")
-    lines.append("## Recall@k (score-sorted pool, before emit cut)")
+    lines.append("## Recall@k (score-sorted copy of accepted)")
     atk = metrics.get("recall_at_k") or {}
     for k in RECALL_AT_KS:
         row = atk.get(str(k)) or {}
@@ -710,7 +737,7 @@ def write_trace_md(
             f"n_paths={row.get('n_paths')} n_pred={row.get('n_pred')}"
         )
     lines.append("")
-    lines.append("## Final accepted (emitted to assistant)")
+    lines.append("## Final accepted (carousel order to assistant)")
     for c in emitted:
         lines.append(
             f"- `{c.get('chain_id')}` score={float(c.get('score') or 0.0):.4f} "
@@ -788,7 +815,9 @@ async def eval_one(
 
     pred_keys = _accepted_edge_keys(result)
     pred_ev = _accepted_evidences(result)
-    ranked_all = list(result.get("accepted_all") or result.get("accepted") or [])
+    ranked_all = _score_sorted_pool(
+        list(result.get("accepted_all") or result.get("accepted") or [])
+    )
 
     s3_keys = result.get("s3_keys") or {}
     union_keys = list(result.get("s3_keys_union") or [])
@@ -1197,7 +1226,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         choices=["auto", "low", "medium", "high"],
         help=(
-            "Path / emit budget. auto (default): easy→low, medium→medium, hard→high; "
+            "Path budget (max_paths_*). auto (default): easy→low, medium→medium, hard→high; "
             "low|medium|high forces the same effort for every item"
         ),
     )

@@ -1,4 +1,4 @@
-"""V6 orchestration: S1→S3 once → S4 fill path budget → S5 → emit cut."""
+"""V6 orchestration: S1→S3 once → S4 carousel → S5 spine dedup."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from server.algorithm.stage1_embed import embed_subquestions
 from server.algorithm.stage2_ann import AnnError, ann_for_subquestions
 from server.algorithm.stage2b_rerank import rerank_ann_by_sq
 from server.algorithm.stage3_graphs import build_all_graphs
-from server.algorithm.stage4_hop_dp import run_s4_fill_budget
+from server.algorithm.stage4_hop_dp import run_s4_carousel
 from server.algorithm.stage5_select import hydrate_chains, prepare_s5_batch
 
 logger = logging.getLogger(__name__)
@@ -63,44 +63,25 @@ def _graphs_for_sqs(
     graphs: dict[str, CandidateGraph],
     sqs: list[SubQuestion],
 ) -> dict[str, CandidateGraph]:
-    """Slice cached S3 graphs to sq ids + fixed global."""
+    """Slice cached S3 graphs to current subquestion ids (drop leftover global)."""
     out: dict[str, CandidateGraph] = {}
     for sq in sqs:
+        if sq.id == "global":
+            continue
         g = graphs.get(sq.id)
         if g is not None:
             out[sq.id] = g
-    global_g = graphs.get("global")
-    if global_g is not None:
-        out["global"] = global_g
     return out
 
 
-def rank_chains_for_emit(chains: list[Chain]) -> list[Chain]:
-    """Best S4 score first (assistant order). Tie-break: longer unit."""
-    return sorted(
-        chains,
-        key=lambda c: (float(c.score), len(c.all_edge_keys())),
-        reverse=True,
-    )
-
-
-def emit_cut_chains(ranked: list[Chain], params: Params) -> list[Chain]:
-    """Drop the low-score tail. Never emit an empty list if ranked is non-empty."""
-    if not ranked:
-        return []
-    out = list(ranked)
-    k = int(params.effort_emit_top_k())
-    if k > 0:
-        out = out[:k]
-    frac = float(params.emit_score_frac or 0.0)
-    if frac > 0.0 and out:
-        floor = float(out[0].score) * max(0.0, min(1.0, frac))
-        kept = [c for c in out if float(c.score) >= floor]
-        out = kept or out[:1]
-    for i, c in enumerate(out, start=1):
+def label_chains_for_assistant(chains: list[Chain]) -> list[Chain]:
+    """Assign a1.. ids and UNIT text; keep carousel order."""
+    out: list[Chain] = []
+    for i, c in enumerate(chains, start=1):
         c.chain_id = f"a{i}"
         if c.edges or c.fans:
             c.text = c.format_unit(c.chain_id)
+        out.append(c)
     return out
 
 
@@ -147,8 +128,8 @@ async def run(
     """
     Run the retrieval pipeline (wired by ask_subgraph).
 
-    S1–S3 once (embed → ANN → CE → N+1 graphs); S4 mines tours until the
-    path budget; S5 picks that many unique units; emit cuts by score.
+    S1–S3 once (embed → ANN → CE → per-sq graphs); S4 carousel until the
+    path budget; S5 drops duplicate spines and returns the pool.
 
     s3_bundle: optional cached S3 payload (graphs + ann/rerank keys); skips S1–S3.
     emit_s3_bundle: include serializable S3 bundle in result for graph-cache writes.
@@ -241,17 +222,12 @@ async def run(
     s3_keys_s4 = _s3_edge_keys(graphs_s4)
     budget = p.effort_max_paths()
 
-    s4_pool = run_s4_fill_budget(
+    s4_pool = run_s4_carousel(
         graphs_s4,
         params=p,
         budget=budget,
     )
-    batch = prepare_s5_batch(
-        s4_pool,
-        params=p,
-        graph_ids=list(graphs_s4.keys()),
-        k=budget,
-    )
+    batch = prepare_s5_batch(s4_pool, params=p)
     stop_reason = ""
 
     if not batch:
@@ -259,8 +235,12 @@ async def run(
         stop_reason = "empty_batch"
     else:
         await hydrate_chains(driver, batch)
-        state.accepted = list(batch)
-        logger.info("V6 accept %s chains (budget=%s)", len(batch), budget)
+        state.accepted = label_chains_for_assistant(list(batch))
+        logger.info(
+            "V6 accept %s chains (carousel order, budget=%s)",
+            len(state.accepted),
+            budget,
+        )
 
     trace: dict[str, Any] = {
         "s3_sizes": {k: len(v) for k, v in s3_keys_s4.items()},
@@ -282,20 +262,11 @@ async def run(
     for ks in rerank_keys.values():
         rerank_union.update(ks)
 
-    ranked = rank_chains_for_emit(state.accepted)
-    accepted_all = [c.to_dict() for c in ranked]
-    emitted = emit_cut_chains(ranked, p)
-    logger.info(
-        "V6 emit ranked=%s kept=%s score_frac=%s top_k=%s",
-        len(ranked),
-        len(emitted),
-        p.emit_score_frac,
-        p.effort_emit_top_k(),
-    )
+    accepted_dicts = [c.to_dict() for c in state.accepted]
 
     out: dict[str, Any] = {
-        "accepted": [c.to_dict() for c in emitted],
-        "accepted_all": accepted_all,
+        "accepted": accepted_dicts,
+        "accepted_all": accepted_dicts,
         "subquestions": [s.to_dict() for s in state.subquestions],
         "trace": trace,
         "s3_keys": {k: sorted(v) for k, v in s3_keys_sets.items()},

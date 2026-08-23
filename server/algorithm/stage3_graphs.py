@@ -1,4 +1,4 @@
-"""S3: N+1 graphs — L ANN/CE anchors + induced bridges ranked by cosine."""
+"""S3: per-sq graphs — L ANN/CE anchors + induced bridges ranked by cosine."""
 
 from __future__ import annotations
 
@@ -155,79 +155,6 @@ async def build_sq_graph(
     return _finalize_graph(sq.id, merged, params.branch_cap)
 
 
-async def build_global_graph(
-    driver: AsyncDriver,
-    per_sq: dict[str, CandidateGraph],
-    sq_embeddings: dict[str, list[float]],
-    params: Params,
-) -> CandidateGraph:
-    # Union with max(sim) already stored from per-sq ANN/bridges
-    union: dict[str, EdgeRecord] = {}
-    for g in per_sq.values():
-        for k, e in g.edges.items():
-            prev = union.get(k)
-            if prev is None or e.sim > prev.sim:
-                union[k] = EdgeRecord(
-                    edge_key=e.edge_key,
-                    element_id=e.element_id,
-                    rel_type=e.rel_type,
-                    start_id=e.start_id,
-                    end_id=e.end_id,
-                    start_name=e.start_name,
-                    end_name=e.end_name,
-                    start_label=e.start_label,
-                    end_label=e.end_label,
-                    sim=e.sim,
-                    rerank_score=e.rerank_score,
-                    chunk_id=e.chunk_id,
-                    evidence=e.evidence,
-                    source_file=e.source_file,
-                    source=e.source,
-                    confidence=e.confidence,
-                )
-            elif (
-                e.rerank_score is not None
-                and (
-                    prev.rerank_score is None
-                    or float(e.rerank_score) > float(prev.rerank_score)
-                )
-            ):
-                prev.rerank_score = float(e.rerank_score)
-
-    ranked = sorted(
-        union.values(),
-        key=_anchor_sort_key,
-        reverse=True,
-    )
-    anchors = {e.edge_key: e for e in ranked[: params.L]}
-
-    # Pooled sq vector for DB-side bridge ranking (no Python cosine)
-    sq_vecs = [v for v in sq_embeddings.values() if v]
-    if sq_vecs:
-        dim = len(sq_vecs[0])
-        pooled = [0.0] * dim
-        for v in sq_vecs:
-            for i, x in enumerate(v):
-                pooled[i] += x
-        n = len(sq_vecs)
-        pooled = [x / n for x in pooled]
-    else:
-        pooled = []
-
-    bridges = await _add_bridges(driver, anchors, pooled, params)
-    merged = dict(anchors)
-    for k, e in bridges.items():
-        if k not in merged:
-            merged[k] = e
-    logger.info(
-        "V6 S3 global anchors=%s bridges=%s total=%s",
-        len(anchors),
-        len(bridges),
-        len(merged),
-    )
-    return _finalize_graph("global", merged, params.branch_cap)
-
-
 async def build_all_graphs(
     driver: AsyncDriver,
     sqs: list[SubQuestion],
@@ -245,5 +172,4 @@ async def build_all_graphs(
             params,
         )
         graphs[sq.id] = g
-    graphs["global"] = await build_global_graph(driver, graphs, sq_embeddings, params)
     return graphs

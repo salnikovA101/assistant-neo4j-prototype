@@ -1,4 +1,4 @@
-"""Edge weight helpers: PCST-style rank prize/cost for S4 path DP."""
+"""Edge weight helpers: rank prize/cost for S4 path DP."""
 
 from __future__ import annotations
 
@@ -15,21 +15,6 @@ def ranking_relevance(edge: EdgeRecord) -> float:
     return float(edge.rerank_score)
 
 
-def anchor_prize(
-    sim: float,
-    edge_key: str,
-    *,
-    p_store: Mapping[str, float],
-    params: Params,
-) -> float:
-    """Ranking weight = sim · p, clipped to [s_floor, 1]."""
-    p = float(p_store.get(edge_key, 1.0))
-    prize = max(0.0, float(sim)) * p
-    if prize <= 0.0:
-        return float(params.s_floor)
-    return float(min(1.0, max(params.s_floor, prize)))
-
-
 def edge_prize_weight(
     edge: EdgeRecord,
     *,
@@ -37,7 +22,7 @@ def edge_prize_weight(
     params: Params,
 ) -> float:
     """Sort key: raw CE (or cosine if CE was not run) · p. Not clipped to [0, 1]."""
-    del params  # order uses raw logits; prize amounts still come from rank_contribs
+    del params
     p = float(p_store.get(edge.edge_key, 1.0))
     return ranking_relevance(edge) * p
 
@@ -49,66 +34,41 @@ def rank_contribs(
     params: Params,
 ) -> tuple[dict[str, float], set[str]]:
     """
-    Rank economics for a profitable tour (G-Retriever order, not a tree):
-    trust the ranker only on order.
+    One ranked list of every edge on the graph (anchors and bridges).
 
-    Non-bridge edges ranked by (rerank_score|sim)·p_rank, r=1 best.
-    p≤0 marks an arc already collected: it keeps its original rank (p_rank=1)
-    so leftover prize_top seats are *not* given to demoted ANN, and the arc
-    itself pays struct cost (TOARP: prize at most once, no promotion).
-    - r ≤ prize_top and not collected: prize = prize_rank_max·(K−r+1)/K · p;
-    - r > prize_top (demoted ANN): cost = c0·(1+γ·x²)·(2−p),
-      x = (r−K)/(N−K) — flat mid-range, steep garbage tail;
-    - source="bridge" (structural, no honest ANN rank): flat
-      bridge_struct_cost·(2−p).
-
-    Returns (contrib per edge, prize key set).
+    Sort by (CE|sim)·p from the shared overlay. p only moves order; prize
+    and cost amounts come from rank, not from p again.
+    - r ≤ prize_top: prize = prize_rank_max·(K−r+1)/K
+    - r > prize_top: cost = prize_rank_max·x^s4_cost_power,
+      x = (r−K)/(N−K); last rank pays prize_rank_max.
     """
-    ranked = [
-        e
-        for e in edges.values()
-        if (e.source or "").strip().lower() != "bridge"
-    ]
-    collected = {
-        e.edge_key
-        for e in edges.values()
-        if float(p_store.get(e.edge_key, 1.0)) <= 0.0
-    }
-    rank_p: dict[str, float] = dict(p_store)
-    for ek in collected:
-        rank_p[ek] = 1.0
+    ranked = list(edges.values())
     ranked.sort(
-        key=lambda e: edge_prize_weight(e, p_store=rank_p, params=params),
+        key=lambda e: edge_prize_weight(e, p_store=p_store, params=params),
         reverse=True,
     )
     k = max(0, int(params.prize_top))
     n = len(ranked)
     span = max(1, n - k)
     p_max = float(params.prize_rank_max)
-    c0 = float(params.bridge_cost_c0)
-    gamma = float(params.bridge_cost_gamma)
-    c_struct = float(params.bridge_struct_cost)
+    power = max(0.0, float(params.s4_cost_power))
+    floor = float(params.s_floor)
 
     contrib: dict[str, float] = {}
     prize_keys: set[str] = set()
+    if k <= 0:
+        for r, e in enumerate(ranked, start=1):
+            x = r / max(1, n)
+            contrib[e.edge_key] = -float(p_max * (x**power))
+        return contrib, prize_keys
+
     for r, e in enumerate(ranked, start=1):
-        if e.edge_key in collected:
-            contrib[e.edge_key] = -float(c_struct * 2.0)
-            continue
-        p = float(p_store.get(e.edge_key, 1.0))
-        p = max(0.0, min(1.0, p))
         if r <= k:
             prize_keys.add(e.edge_key)
             frac = (k - r + 1) / k
-            floor = max(0.0, min(1.0, float(params.prize_floor)))
-            prize = p_max * (floor + (1.0 - floor) * frac) * p
-            contrib[e.edge_key] = float(min(1.0, max(params.s_floor, prize)))
+            prize = p_max * frac
+            contrib[e.edge_key] = float(min(p_max, max(floor, prize)))
         else:
             x = (r - k) / span
-            contrib[e.edge_key] = -float(c0 * (1.0 + gamma * x * x) * (2.0 - p))
-    for e in edges.values():
-        if (e.source or "").strip().lower() == "bridge":
-            p = float(p_store.get(e.edge_key, 1.0))
-            p = max(0.0, min(1.0, p))
-            contrib[e.edge_key] = -float(c_struct * (2.0 - p))
+            contrib[e.edge_key] = -float(p_max * (x**power))
     return contrib, prize_keys
