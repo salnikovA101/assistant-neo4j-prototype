@@ -1,0 +1,116 @@
+:root {
+    --bg: #0d0d0d;
+    --bg-card: #161616;
+    --border: rgba(255, 255, 255, 0.08);
+    --text: #ececec;
+    --muted: #8a8a8a;
+    --accent: #4d9fff;
+    --danger: #f87171;
+    --radius: 12px;
+    --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html,
+body {
+    min-height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    color-scheme: dark;
+}
+
+body.login-page {
+    min-height: 100dvh;
+    min-height: 100svh;
+    display: grid;
+    place-items: center;
+    padding: max(24px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom));
+}
+
+.login-card {
+    width: min(100%, 380px);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 32px 28px 28px;
+}
+
+.welcome-logo {
+    display: grid;
+    place-items: center;
+    margin-bottom: 16px;
+}
+
+.login-card h1 {
+    font-size: 18px;
+    font-weight: 600;
+    text-align: center;
+    letter-spacing: -0.02em;
+}
+
+.login-lead {
+    margin: 8px 0 20px;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.45;
+    text-align: center;
+}
+
+.login-error {
+    margin: 0 0 16px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgba(248, 113, 113, 0.12);
+    color: var(--danger);
+    font-size: 13px;
+}
+
+.login-label {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.login-form input {
+    width: 100%;
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: #101010;
+    color: var(--text);
+    font: inherit;
+    font-size: 14px;
+}
+
+.login-form input:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+.login-submit {
+    width: 100%;
+    margin-top: 4px;
+    padding: 10px 12px;
+    border: 0;
+    border-radius: var(--radius);
+    background: #fff;
+    color: #111;
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.login-submit:hover {
+    background: #e8e8e8;
+}

@@ -206,6 +206,9 @@ class ServerPipeline:
                                 "final_content": final_content,
                                 "graph_run_id": graph_run_id,
                                 "graph_chain_count": graph_chain_count,
+                                "_raw_content": event.data.get("_raw_content", ""),
+                                "_history_tool_messages": event.data.get("_history_tool_messages", []),
+                                "_graph_chains": graph_chains,
                             },
                         )
                         logger.info(f"LLM (stream): {final_content}")
@@ -240,4 +243,3 @@ class ServerPipeline:
                 yield chunk
         except Exception as e:
             logger.warning(f"TTS стрим прерван из-за ошибки: {e}")
-

@@ -10,6 +10,7 @@ services:
     environment:
       # Used when rerank_enabled=true. Hostname exists only if profile `rerank` is up.
       - RERANK_URL=http://reranker:7997
+      - APP_DB_PATH=/app/data/assistant.db
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -17,6 +18,7 @@ services:
       - ./prompts:/app/prompts:ro
       - ./voices:/app/voices:ro
       - ./server/static:/app/server/static:ro
+      - assistant_data:/app/data
       - hf_cache:/root/.cache/huggingface
 
   # Not started by `docker compose up`. Enable with `--profile rerank`.
@@ -34,5 +36,6 @@ services:
       - reranker_hf_cache:/root/.cache/huggingface
 
 volumes:
+  assistant_data:
   hf_cache:
   reranker_hf_cache:

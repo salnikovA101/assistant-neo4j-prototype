@@ -1,5 +1,7 @@
 fastapi
 uvicorn[standard]
+aiosqlite
+argon2-cffi
 soundfile
 faster-whisper
 faster_qwen3_tts

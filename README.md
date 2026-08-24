@@ -182,23 +182,28 @@ ask_subgraph accepted chains
 | `POST` | `/process_text` | Текстовый аналог `/process`. Принимает JSON `{"text": "..."}`. Возвращает потоковый `audio/pcm` ответ (генерация аудио из текста ответа) с заголовками метаданных. |
 | `POST` | `/process_text_test`| Тестовая текстовая ручка. Принимает JSON `{"text": "..."}`, возвращает JSON `{"answer": "..."}`. **Не** генерирует аудио. Полезна для скриптов, E2E тестов и отладки промптов. |
 | `POST` | `/graph_viz` | Возвращает данные графа для модального визуализатора по `graph_run_id` из SSE `done`. Строится только из accepted chains последнего ответа; LLM не вызывается, embedding-поля не возвращаются. Формат: `views` (по цепям) и `all` (объединенный граф). |
+| `POST` | `/graph_explore` | Обзор корпуса для полноэкранного explorer: `{ "q": "...", "limit": 10 \| 100 \| 1000 }`. Тот же `run_id`, что у V6; поиск по имени/лейблу/цитате; ответ в форме `/graph_viz` без embedding. Пустой `q` — сэмпл узлов с рёбрами между ними. Cypher с клиента не принимается. |
 | `GET` | `/login` | Форма входа. После успеха — cookie `ui_session` (HttpOnly, SameSite=Lax) и редирект на `/ui/`. |
+| `GET/POST` | `/api/conversations` | Серверный список чатов аккаунта и создание нового чата. |
+| `GET/PATCH/DELETE` | `/api/conversations/{id}` | Открытие, переименование и удаление принадлежащего аккаунту чата. |
 | `GET` | `/health` | Проверка жизнеспособности. Без cookie или HTTP Basic — 401. |
-| `GET` | `/ui/` | Статика чата. Без сессии браузер уходит на `/login`. |
+| `GET` | `/ui/` | SPA (`web/dist`). Без сессии браузер уходит на `/login`. |
 *   **Lifespan Events:** Инициализация и прогрев моделей происходят при старте сервера.
 
 ---
 
 ## 8. Клиентская часть
 
-### 8.1 Web UI (`server/static/`)
-*   Использует `AudioContext` для записи с микрофона и **мгновенного потокового воспроизведения** PCM-ответа.
-*   **Barge-in:** Нажатие на микрофон прерывает ответ ассистента через отправку disconnect-события (сервер прерывает генерацию) и `AbortController`.
-*   **Два переключателя в композере:** «Глубина поиска» (`search_depth`, сколько
-    UNIT добывать и показывать) и «Глубина рассуждения» (`reasoning_effort`
-    модели). Список усилий берётся из `think_efforts` текущего LLM-профиля
-    (`/ui_config`) и рисуется как в yaml. Значения хранятся в `localStorage`.
-*   **Визуализация графа:** `vis-network` с физикой `ForceAtlas2Based` для плавного разлета узлов.
+### 8.1 Web UI (`web/`)
+Продакшен-шелл на Vite + React + TypeScript: сайдбар как у Cursor, чат по центру, граф ответа справа, полноэкранный обзор базы как полотно Neo4j Browser (без Cypher).
+
+*   Обычно Node на машине не нужен: `docker compose up --build` собирает SPA внутри образа и кладёт её в `/ui/`. Локально (без Docker): `cd web && npm install && npm run build`, либо `npm run dev` на порту 5173 с прокси на API `:8000`.
+*   Логин — серверная форма `/login` (без JS). После cookie открывается SPA.
+*   SSE `/process_text_stream`: цитаты, таблицы, reasoning, abort. После `done` с `graph_run_id` справа открывается граф (`POST /graph_viz`); панель можно скрыть.
+*   Сайдбар «Граф базы» — overlay на весь экран: текстовый поиск и limit 10 / 100 / 1000 (`POST /graph_explore`).
+*   Чаты и контекст модели хранятся в SQLite на сервере и изолированы по аккаунтам. В браузере остаются только настройки UI.
+*   Композер: глубина поиска, reasoning effort, модель. Микрофон (если `audio_enabled`) прерывает стрим (`AbortController`) и шлёт `/stt`.
+*   Граф: `vis-network`, физика `forceAtlas2Based`, инспектор evidence / source / confidence.
 
 ### 8.2 Desktop Client (`client/`)
 Альтернативный клиент на Python (без UI).
@@ -235,7 +240,10 @@ cp .env.example .env
 | :--- | :--- |
 | `NEO4J__URI` | Адрес графовой БД (например, `bolt://localhost:7687`) |
 | `NEO4J__USER` / `NEO4J__PASSWORD` | Логин и пароль от базы Neo4j |
-| `UI_BASIC_PASSWORD` | Логин-форма UI и HTTP Basic для curl. Пустой пароль — все запросы 503 |
+| `APP_DB_PATH` | SQLite-файл аккаунтов и истории; в Compose `/app/data/assistant.db` |
+| `AUTH_COOKIE_SECURE` | `true` при работе через HTTPS, локально `false` |
+| `AUTH_SESSION_DAYS` | Срок браузерной сессии, по умолчанию 30 дней |
+| `AUTH_TRUSTED_ORIGINS` | Дополнительные origin через запятую для reverse proxy |
 | `EMBED__BASE_URL` | Ollama embeddings, из Docker обычно `http://host.docker.internal:11434/v1` |
 | `EMBED__MODEL` | `embeddinggemma:300m-qat-q8_0` |
 | `LLM__PROFILES__GEMINI__API_KEY` | Ключ для работы с Gemini API напрямую |
@@ -268,11 +276,11 @@ cp .env.example .env
 
 
 ### 9.3 Запуск контейнеров
-Запустите сборку и старт сервиса (`restart: unless-stopped`):
+Один шаг: сборка фронта (Node в образе) + бэкенд + старт (`restart: unless-stopped`). Node.js на хосте не ставится.
 ```bash
 docker compose up --build -d
 ```
-Поднимается `app` на порту `8000`. Neo4j на хосте (не в compose). Реранкер в этот запуск не входит (`rerank_enabled: false` в `server/config.yaml`).
+`--build` нужен при первом запуске и после правок UI или сервера; иначе Compose поднимет уже собранный образ. Сервис `app` слушает порт `8000`. Neo4j на хосте (не в compose). Реранкер в этот запуск не входит (`rerank_enabled: false` в `server/config.yaml`).
 
 Чтобы поднять сервис `reranker` (CPU, порт 7997 внутри сети compose):
 ```bash
@@ -280,10 +288,23 @@ docker compose --profile rerank up -d
 ```
 App ходит на `http://reranker:7997`, когда `rerank_enabled` включён вручную.
 
-### 9.4 Доступ к интерфейсам
-*   **Web-интерфейс:** [http://localhost:8000/ui/](http://localhost:8000/ui/) перенаправляет на `/login` — форма логина и пароля (не системное окно браузера). Логин по умолчанию `demo`, пароль из `UI_BASIC_PASSWORD`. Та же проверка, что у `curl -u`. Сессия — HttpOnly cookie с HMAC (пароль в cookie не пишется; смена пароля в `.env` инвалидирует cookie).
-*   Скрипты: `/health` без авторизации — **401**. `curl -I -u demo:ПАРОЛЬ http://127.0.0.1:8000/health`.
+### 9.4 Аккаунты и доступ к интерфейсам
+
+После первого запуска создайте аккаунт интерактивной командой (пароль 12–128 символов):
+```bash
+docker compose exec app python -m server.manage_users create technologist
+```
+Доступны также `list`, `reset-password LOGIN`, `disable LOGIN`, `enable LOGIN` и `revoke-sessions LOGIN`. Сброс пароля и блокировка отзывают открытые сессии.
+
+*   **Web-интерфейс:** [http://localhost:8000/ui/](http://localhost:8000/ui/) перенаправляет на `/login`. Сессия хранится в отзывной HttpOnly cookie, а пароль — только как Argon2id-хэш в SQLite.
+*   Скрипты: `/health` без авторизации — **401**. `curl -I -u technologist:ПАРОЛЬ http://127.0.0.1:8000/health`.
 *   **Neo4j Browser (если установлен локально):** [http://localhost:7474](http://localhost:7474)
+
+SQLite лежит в volume `assistant_data` и переживает пересоздание контейнера. Консистентный backup:
+```bash
+docker compose exec app python -m server.manage_db backup /tmp/assistant-backup.db
+docker compose cp app:/tmp/assistant-backup.db ./assistant-backup.db
+```
 
 ---
 
@@ -298,8 +319,9 @@ python -m pytest tests -q
 Прогоняет кейсы `tests/prompt_regression/cases.json` через `/process_text_stream`
 и проверяет автоматом: бюджет вызовов, язык и уникальность subquestions,
 служебные утечки в ответе, наличие GAPS. Пункты рубрики выводятся для проверки
-глазами. Нужен запущенный сервер. Запросы к API должны нести HTTP Basic (`-u demo:ПАРОЛЬ`), иначе 401.
+глазами. Нужен запущенный сервер. Задайте аккаунт для HTTP Basic:
 ```bash
+export ASSISTANT_USER=technologist ASSISTANT_PASSWORD=ПАРОЛЬ
 python -m tests.prompt_regression.run
 python -m tests.prompt_regression.run --case catalog_freshness_indicators
 # отчёт → tests/reports/prompt_regression/report.md

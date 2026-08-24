@@ -46,6 +46,20 @@ class SourceRegistry:
     def known_files(self) -> list[str]:
         return list(self._file_to_id.keys())
 
+    def snapshot(self) -> list[tuple[int, str]]:
+        return sorted(self._id_to_file.items())
+
+    def restore(self, items: Iterable[tuple[int, str]]) -> None:
+        self.clear()
+        for raw_id, raw_file in items:
+            sid = int(raw_id)
+            source_file = str(raw_file).strip()
+            if sid < 1 or not source_file or sid in self._id_to_file:
+                continue
+            self._id_to_file[sid] = source_file
+            self._file_to_id[source_file] = sid
+            self._next_id = max(self._next_id, sid + 1)
+
 
 # (source:1), (source:1; source:3), (source 1), mixed whitespace
 _SOURCE_GROUP_RE = re.compile(

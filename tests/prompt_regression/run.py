@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -111,7 +111,9 @@ def run_case(
     base_url: str,
     case: dict[str, Any],
 ) -> tuple[CaseResult, Transcript]:
-    session_id = uuid.uuid4().hex
+    created = client.post(f"{base_url}/api/conversations")
+    created.raise_for_status()
+    session_id = str(created.json()["id"])
     depth = str(case.get("depth") or "medium")
     transcript = run_turn(
         client, base_url, session_id, str(case["question"]), depth
@@ -171,6 +173,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cases", default=str(CASES_PATH))
     parser.add_argument("--case", default="", help="run a single case id")
     parser.add_argument("--timeout", type=float, default=600.0)
+    parser.add_argument("--username", default=os.getenv("ASSISTANT_USER", ""))
+    parser.add_argument("--password", default=os.getenv("ASSISTANT_PASSWORD", ""))
     parser.add_argument("--list", action="store_true", help="print case ids and exit")
     args = parser.parse_args(argv)
 
@@ -182,9 +186,12 @@ def main(argv: list[str] | None = None) -> int:
         for case in cases:
             print(case["id"])
         return 0
+    if not args.username or not args.password:
+        print("Задайте ASSISTANT_USER и ASSISTANT_PASSWORD", file=sys.stderr)
+        return 2
 
     results: list[tuple[CaseResult, Transcript]] = []
-    with httpx.Client(timeout=args.timeout) as client:
+    with httpx.Client(timeout=args.timeout, auth=(args.username, args.password)) as client:
         for case in cases:
             print(f"→ {case['id']}", flush=True)
             result, transcript = run_case(client, args.base_url, case)

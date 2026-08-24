@@ -80,7 +80,7 @@ class GraphRunStore:
         if not snapshot:
             return ""
         self._prune()
-        run_id = f"gr_{uuid.uuid4().hex[:12]}"
+        run_id = f"gr_{uuid.uuid4().hex}"
         self._runs[run_id] = (time.monotonic(), copy.deepcopy(snapshot))
         return run_id
 

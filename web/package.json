@@ -1,0 +1,26 @@
+{
+  "name": "neo4j-assistant-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "dompurify": "^3.2.6",
+    "marked": "^15.0.12",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "vis-data": "^7.1.9",
+    "vis-network": "^9.1.9"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "^5.9.2",
+    "vite": "^6.3.5"
+  }
+}

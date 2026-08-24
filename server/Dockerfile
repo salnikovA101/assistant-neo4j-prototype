@@ -1,3 +1,10 @@
+FROM node:22-alpine AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
 FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
 
 RUN apt-get update && \
@@ -17,6 +24,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 COPY server/ ./server/
 COPY prompts/ ./prompts/
+COPY --from=web /web/dist ./web/dist
 
 EXPOSE 8000
 CMD ["python3", "-m", "uvicorn", "server.core.app:app", "--host", "0.0.0.0", "--port", "8000"]

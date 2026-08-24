@@ -120,6 +120,7 @@ class LLMManager:
                     api_key=api_key,
                 ):
                     if event.type == "done":
+                        history_tool_messages = event.data.get("history_tool_messages") or []
                         final_content = (
                             event.data.get("final_content") or final_content
                         )
@@ -128,8 +129,7 @@ class LLMManager:
                         history_manager.add_entry(
                             user_text,
                             final_content,
-                            tool_messages=event.data.get("history_tool_messages")
-                            or [],
+                            tool_messages=history_tool_messages,
                         )
                         cited = extract_cited_source_files(final_content, sources)
                         display = render_citations(final_content, sources)
@@ -139,6 +139,8 @@ class LLMManager:
                             {
                                 "final_content": display,
                                 "cited_source_files": cited,
+                                "_raw_content": final_content,
+                                "_history_tool_messages": history_tool_messages,
                             },
                         )
                     yield event

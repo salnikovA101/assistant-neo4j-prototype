@@ -7,13 +7,17 @@ import binascii
 import hashlib
 import hmac
 import secrets
-from typing import Any, Optional
+import time
+from dataclasses import dataclass
+from typing import Any, Literal, Optional
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 from server.core.db import get_driver
+from server.core.app_store import AccountUser, AppStore
 from server.core.sessions import SESSION_HEADER, resolve_session_id
 
 CORS_ORIGIN_RE = r"https?://(localhost|127\.0\.0\.1)(:\d+)?$"
@@ -24,6 +28,7 @@ _LLM_API_KEY_MAX_LEN = 512
 
 class TextProcessBody(BaseModel):
     text: str
+    turn_id: Optional[str] = None
     reasoning_effort: Optional[str] = None
     search_depth: Optional[str] = None
     profile: Optional[str] = None
@@ -31,6 +36,12 @@ class TextProcessBody(BaseModel):
 
 class GraphVizBody(BaseModel):
     graph_run_id: str = Field(default="")
+
+
+class GraphExploreBody(BaseModel):
+    q: str = ""
+    limit: Literal[10, 100, 1000] = 100
+    field: Literal["all", "name", "rel", "evidence"] = "all"
 
 
 def session_id_from_request(request: Request) -> str:
@@ -63,8 +74,8 @@ def llm_api_key_from_request(request: Request) -> str | None:
 
 UI_BASIC_REALM = "Neo4j Assistant"
 UI_SESSION_COOKIE = "ui_session"
-_PUBLIC_EXACT = frozenset({"/login", "/logout"})
-_PUBLIC_FILES = frozenset({"/ui/style.css", "/ui/icon.svg"})
+_PUBLIC_EXACT = frozenset({"/login"})
+_PUBLIC_FILES = frozenset({"/ui/login.css", "/ui/icon.svg"})
 
 
 def parse_basic_authorization(header: str | None) -> tuple[str, str] | None:
@@ -152,7 +163,9 @@ def is_public_auth_path(path: str) -> bool:
     normalized = path.rstrip("/") or "/"
     if normalized in _PUBLIC_EXACT or path in _PUBLIC_EXACT:
         return True
-    return path in _PUBLIC_FILES
+    if path in _PUBLIC_FILES:
+        return True
+    return path.startswith("/ui/assets/")
 
 
 def expected_ui_credentials(request: Request) -> tuple[str, str]:
@@ -200,6 +213,94 @@ def clear_ui_session_cookie(response: Response) -> None:
     response.headers["Cache-Control"] = "no-store"
 
 
+def set_account_session_cookie(
+    response: Response,
+    token: str,
+    *,
+    secure: bool = False,
+    max_age_days: int = 30,
+) -> None:
+    response.set_cookie(
+        UI_SESSION_COOKIE,
+        token,
+        httponly=True,
+        samesite="lax",
+        path="/",
+        secure=secure,
+        max_age=max(1, int(max_age_days)) * 86400,
+    )
+    response.headers["Cache-Control"] = "no-store"
+
+
+@dataclass
+class LoginAttemptLimiter:
+    max_attempts: int = 5
+    window_seconds: int = 900
+
+    def __post_init__(self) -> None:
+        self._attempts: dict[tuple[str, str], list[float]] = {}
+
+    def _key(self, ip: str, username: str) -> tuple[str, str]:
+        return (ip or "unknown", (username or "").strip().lower())
+
+    def allowed(self, ip: str, username: str) -> bool:
+        key = self._key(ip, username)
+        cutoff = time.monotonic() - self.window_seconds
+        recent = [stamp for stamp in self._attempts.get(key, []) if stamp >= cutoff]
+        self._attempts[key] = recent
+        return len(recent) < self.max_attempts
+
+    def failure(self, ip: str, username: str) -> None:
+        key = self._key(ip, username)
+        self._attempts.setdefault(key, []).append(time.monotonic())
+        if len(self._attempts) > 2048:
+            oldest = min(
+                self._attempts,
+                key=lambda item: self._attempts[item][-1] if self._attempts[item] else 0,
+            )
+            self._attempts.pop(oldest, None)
+
+    def success(self, ip: str, username: str) -> None:
+        self._attempts.pop(self._key(ip, username), None)
+
+
+login_attempt_limiter = LoginAttemptLimiter()
+
+
+async def account_user_from_request(request: Request) -> AccountUser | None:
+    cached = getattr(request.state, "account_user", None)
+    if isinstance(cached, AccountUser):
+        return cached
+    store: AppStore | None = getattr(request.app.state, "app_store", None)
+    if store is None:
+        return None
+    token = request.cookies.get(UI_SESSION_COOKIE)
+    user = await store.user_for_session(token)
+    auth_kind = "cookie" if user is not None else ""
+    if user is None:
+        parsed = parse_basic_authorization(request.headers.get("Authorization"))
+        if parsed is not None:
+            user = await store.authenticate(parsed[0], parsed[1])
+            auth_kind = "basic" if user is not None else ""
+    if user is not None:
+        request.state.account_user = user
+        request.state.account_auth_kind = auth_kind
+    return user
+
+
+def _same_origin_request(request: Request) -> bool:
+    origin = (request.headers.get("Origin") or "").strip()
+    if not origin:
+        return True
+    parsed = urlsplit(origin)
+    current = request.url
+    if parsed.scheme == current.scheme and parsed.netloc == current.netloc:
+        return True
+    configured = str(getattr(request.app.state, "auth_trusted_origins", "") or "")
+    allowed = {item.strip().rstrip("/") for item in configured.split(",") if item.strip()}
+    return origin.rstrip("/") in allowed
+
+
 def unauthenticated_response(request: Request) -> Response:
     """Browsers hitting /ui get the login page; API/curl get HTTP Basic 401."""
     path = request.url.path
@@ -213,6 +314,19 @@ async def ui_auth_middleware(request: Request, call_next):
     if request.method == "OPTIONS":
         return await call_next(request)
     if is_public_auth_path(request.url.path):
+        return await call_next(request)
+
+    store: AppStore | None = getattr(request.app.state, "app_store", None)
+    if store is not None:
+        user = await account_user_from_request(request)
+        if user is None:
+            return unauthenticated_response(request)
+        if (
+            request.method not in ("GET", "HEAD", "OPTIONS")
+            and getattr(request.state, "account_auth_kind", "") == "cookie"
+            and not _same_origin_request(request)
+        ):
+            return JSONResponse({"error": "Invalid request origin"}, status_code=403)
         return await call_next(request)
 
     expected_user, expected_password = expected_ui_credentials(request)

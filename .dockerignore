@@ -12,3 +12,5 @@ tests/
 db_dump.json
 test_results*.txt
 *.md
+web/node_modules
+web/dist
