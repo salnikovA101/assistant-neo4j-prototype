@@ -6,7 +6,7 @@ from typing import Any
 
 from neo4j import AsyncDriver
 
-from server.algorithm.cypher.explore import fetch_explore_rows
+from server.algorithm.cypher.explore import fetch_expand_rows, fetch_explore_rows
 from server.tools.graph_viz import DEFAULT_NODE_COLOR, NODE_COLORS
 
 
@@ -101,8 +101,24 @@ async def build_graph_explore_payload(
     limit: int,
     run_id: str,
     field: str = "all",
+    cursor: str = "",
 ) -> dict[str, Any]:
-    node_rows, edge_rows = await fetch_explore_rows(
-        driver, q=q, limit=limit, run_id=run_id, field=field
+    node_rows, edge_rows, next_cursor = await fetch_explore_rows(
+        driver, q=q, limit=limit, run_id=run_id, field=field, cursor=cursor
+    )
+    payload = rows_to_explore_payload(node_rows, edge_rows)
+    payload["page"] = {"nextCursor": next_cursor, "hasMore": bool(next_cursor)}
+    return payload
+
+
+async def build_graph_expand_payload(
+    driver: AsyncDriver,
+    *,
+    node_id: str,
+    limit: int,
+    run_id: str,
+) -> dict[str, Any]:
+    node_rows, edge_rows = await fetch_expand_rows(
+        driver, node_id=node_id, limit=limit, run_id=run_id
     )
     return rows_to_explore_payload(node_rows, edge_rows)

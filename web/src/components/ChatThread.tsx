@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import type { ChatMessage, ChatStep } from "../types";
+import { useEffect, useRef, useState } from "react";
+import type { ChatMessage, ChatStep, PendingApproval } from "../types";
 import { prettyJson, renderMarkdown } from "../format";
 import { IconGraph } from "./Icons";
 
@@ -83,14 +83,71 @@ function TraceBundle({
   );
 }
 
+function ApprovalCard({
+  approval,
+  busy,
+  onResolve,
+}: {
+  approval: PendingApproval;
+  busy: boolean;
+  onResolve: (action: "approve" | "revise", sqs: string[], feedback?: string) => void;
+}) {
+  const initial = approval.toolCall.arguments?.subquestions || [];
+  const [items, setItems] = useState(initial.map((text) => ({ text, enabled: true })));
+  const [feedback, setFeedback] = useState("");
+  useEffect(() => {
+    const revised = approval.toolCall.arguments?.subquestions || [];
+    setItems(revised.map((text) => ({ text, enabled: true })));
+    setFeedback("");
+  }, [approval.revision, approval.toolCall]);
+  return (
+    <section className="approval-card">
+      <header><strong>План поиска требует подтверждения</strong><span>revision {approval.revision}</span></header>
+      <p>Проверьте SQ. По подтверждённым open SQ будет получено не более одного нового UNIT.</p>
+      <div className="approval-sqs">
+        {items.map((item, index) => (
+          <label key={index}>
+            <input
+              type="checkbox"
+              checked={item.enabled}
+              onChange={(event) => setItems((prev) => prev.map((value, i) => i === index ? { ...value, enabled: event.target.checked } : value))}
+            />
+            <input
+              value={item.text}
+              onChange={(event) => setItems((prev) => prev.map((value, i) => i === index ? { ...value, text: event.target.value } : value))}
+            />
+          </label>
+        ))}
+      </div>
+      <textarea value={feedback} onChange={(event) => setFeedback(event.target.value)} placeholder="Что изменить, если план нужно отклонить" />
+      <footer>
+        <button type="button" className="primary-btn" disabled={busy || !items.some((item) => item.enabled && item.text.trim())} onClick={() => onResolve("approve", items.filter((item) => item.enabled).map((item) => item.text.trim()))}>Подтвердить</button>
+        <button type="button" className="ghost-btn danger-btn" disabled={busy} onClick={() => onResolve("revise", [], feedback)}>Отклонить</button>
+      </footer>
+    </section>
+  );
+}
+
 export function ChatThread({
   messages,
   onOpenGraph,
   openGraphId,
+  pendingApproval,
+  approvalBusy,
+  onResolveApproval,
+  onCheckpoint,
+  onFork,
+  onSaveCard,
 }: {
   messages: ChatMessage[];
   onOpenGraph: (runId: string, chains: number) => void;
   openGraphId?: string | null;
+  pendingApproval?: PendingApproval | null;
+  approvalBusy?: boolean;
+  onResolveApproval: (action: "approve" | "revise", sqs: string[], feedback?: string) => void;
+  onCheckpoint: (checkpointId: string) => void;
+  onFork: (checkpointId: string) => void;
+  onSaveCard: (draftId: string, title: string) => void;
 }) {
   const threadRef = useRef<HTMLDivElement>(null);
   const followTailRef = useRef(true);
@@ -152,6 +209,12 @@ export function ChatThread({
                 {msg.status === "error" && <span className="is-error">не удалось ответить</span>}
               </div>
             )}
+            {msg.checkpointId && (
+              <div className="checkpoint-actions">
+                <button type="button" onClick={() => onCheckpoint(msg.checkpointId!)}>checkpoint</button>
+                <button type="button" onClick={() => onFork(msg.checkpointId!)}>fork отсюда</button>
+              </div>
+            )}
             {msg.role === "assistant" && (
               <TraceBundle steps={steps} status={msg.status} hasAnswer={Boolean(msg.text)} />
             )}
@@ -169,6 +232,30 @@ export function ChatThread({
                 <p className="muted">Думает…</p>
               )
             )}
+            {msg.cardDraft && (
+              <section className="chat-card-draft">
+                <header>
+                  <div>
+                    <strong>{msg.cardTemplateName || "Карточка"}</strong>
+                    <span>{msg.cardDraft.status === "saved" ? "сохранено в библиотеку" : "DRAFT · проверьте перед сохранением"}</span>
+                  </div>
+                  {msg.cardDraft.status !== "saved" && (
+                    <button
+                      type="button"
+                      className="primary-btn"
+                      onClick={() => onSaveCard(
+                        msg.cardDraft!.id,
+                        String(msg.cardDraft!.data.title || msg.cardTemplateName || "Карточка")
+                      )}
+                    >
+                      Сохранить
+                    </button>
+                  )}
+                </header>
+                <pre>{prettyJson(msg.cardDraft.data)}</pre>
+                {msg.cardDraft.gaps.length > 0 && <p>GAPS: {msg.cardDraft.gaps.map(String).join(" · ")}</p>}
+              </section>
+            )}
             {msg.graphRunId && msg.status === "done" && openGraphId !== msg.graphRunId && (
               <button
                 type="button"
@@ -179,9 +266,25 @@ export function ChatThread({
                 {msg.graphChainCount && msg.graphChainCount > 1 ? ` (${msg.graphChainCount})` : ""}
               </button>
             )}
+            {pendingApproval?.assistantMessageId === msg.id && pendingApproval.status === "pending" && (
+              <ApprovalCard
+                approval={pendingApproval}
+                busy={Boolean(approvalBusy)}
+                onResolve={onResolveApproval}
+              />
+            )}
           </article>
         );
       })}
+      {pendingApproval?.status === "pending" && !messages.some((msg) => msg.id === pendingApproval.assistantMessageId) && (
+        <article className="bubble bubble-assistant">
+          <ApprovalCard
+            approval={pendingApproval}
+            busy={Boolean(approvalBusy)}
+            onResolve={onResolveApproval}
+          />
+        </article>
+      )}
     </div>
   );
 }

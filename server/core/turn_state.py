@@ -13,7 +13,7 @@ import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Iterable, Iterator
+from typing import Any, Iterable, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,14 @@ class TurnState:
     max_searches: int = DEFAULT_MAX_SEARCHES
     searches_used: int = 0
     seen_subquestions: set[str] = field(default_factory=set)
+    user_id: str = ""
+    conversation_id: str = ""
+    branch_id: str = ""
+    checkpoint_id: str = ""
+    mode: str = "auto"
+    store: Any = None
+    retrieval_state: dict[str, Any] = field(default_factory=dict)
+    approved_subquestions: list[str] = field(default_factory=list)
 
     def searches_left(self) -> int:
         return max(0, self.max_searches - self.searches_used)
@@ -101,11 +109,22 @@ def seen_subquestions() -> set[str]:
 def bind_turn(
     depth: str | None = None,
     max_searches: int = DEFAULT_MAX_SEARCHES,
+    *,
+    context: dict[str, Any] | None = None,
 ) -> Iterator[TurnState]:
     """Bind a fresh TurnState for one user turn."""
+    ctx = context or {}
     state = TurnState(
         search_depth=parse_search_depth(depth) or DEFAULT_SEARCH_DEPTH,
         max_searches=max(1, int(max_searches or DEFAULT_MAX_SEARCHES)),
+        user_id=str(ctx.get("user_id") or ""),
+        conversation_id=str(ctx.get("conversation_id") or ""),
+        branch_id=str(ctx.get("branch_id") or ""),
+        checkpoint_id=str(ctx.get("checkpoint_id") or ""),
+        mode="staged" if str(ctx.get("mode") or "auto") == "staged" else "auto",
+        store=ctx.get("store"),
+        retrieval_state=dict(ctx.get("retrieval_state") or {}),
+        approved_subquestions=[str(v) for v in (ctx.get("approved_subquestions") or [])],
     )
     token = _current_turn.set(state)
     try:

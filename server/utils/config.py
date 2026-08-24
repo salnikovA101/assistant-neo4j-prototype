@@ -29,6 +29,7 @@ class OpenAIProfile(BaseModel):
     presence_penalty: float | None = None
     repetition_penalty: float | None = None
     max_output_tokens: int = 4096
+    context_window: int = 32768
     max_turns: int = 2
     think: bool = False
     # Gemma/LM Studio: inject into system message so thinking stays on after tool results.
@@ -126,6 +127,8 @@ class AppConfig(BaseSettings):
     run_id: str = ""
     # S2b cross-encoder. false skips Ettin (ANN sim order).
     rerank_enabled: bool = True
+    staged_enabled: bool = True
+    cards_enabled: bool = True
     # Account database and browser-session policy.
     app_db_path: str = "data/assistant.db"
     auth_cookie_secure: bool = False

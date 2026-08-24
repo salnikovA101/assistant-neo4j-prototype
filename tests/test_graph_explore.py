@@ -15,7 +15,7 @@ from server.tools.graph_explore import rows_to_explore_payload
 
 def test_explore_limits_and_fields() -> None:
     assert EXPLORE_LIMITS == (10, 100, 1000)
-    assert EXPLORE_FIELDS == ("all", "name", "rel", "evidence")
+    assert EXPLORE_FIELDS == ("all", "name", "label", "rel", "evidence", "source")
     assert clamp_explore_limit(25) == 100
     assert clamp_explore_limit(1000) == 1000
     assert clamp_explore_field("EVIDENCE") == "evidence"
@@ -34,6 +34,10 @@ def test_explore_cypher_matches_triplets_not_bare_nodes() -> None:
     assert "$q" in blob
     assert "$limit" in blob
     assert "$field" in blob
+    assert "$cursor" in blob
+    assert "$q <> ''" in blob
+    assert "relevance" in blob
+    assert "ORDER BY relevance DESC" in blob
     assert "run_id" in blob
     assert "MATCH (a)-[r]->(b)" in blob
     assert "type(r)" in blob

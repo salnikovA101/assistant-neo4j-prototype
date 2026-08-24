@@ -1,5 +1,5 @@
 import type { ConversationSummary } from "../types";
-import { IconGraph, IconLogout, IconPlus, IconSidebar } from "./Icons";
+import { IconCards, IconGraph, IconLogout, IconPlus, IconSidebar } from "./Icons";
 
 export function Sidebar({
   collapsed,
@@ -10,6 +10,8 @@ export function Sidebar({
   onNewChat,
   onOpenSession,
   onExplorer,
+  onCards,
+  cardsEnabled,
   onLogout,
 }: {
   collapsed: boolean;
@@ -20,6 +22,8 @@ export function Sidebar({
   onNewChat: () => void;
   onOpenSession: (id: string) => void;
   onExplorer: () => void;
+  onCards: () => void;
+  cardsEnabled: boolean;
   onLogout: () => void;
 }) {
   return (
@@ -38,6 +42,10 @@ export function Sidebar({
         <IconGraph />
         {!collapsed && <span>Граф базы</span>}
       </button>
+      {cardsEnabled && <button type="button" className="sidebar-action" onClick={onCards} title="Карточки">
+        <IconCards />
+        {!collapsed && <span>Карточки</span>}
+      </button>}
       <div className="sidebar-list" aria-label="История чатов">
         {!collapsed && sessions.length > 0 && <p className="sidebar-section">Недавние</p>}
         {sessions.map((session) => (

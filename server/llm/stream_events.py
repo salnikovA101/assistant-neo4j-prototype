@@ -15,6 +15,11 @@ StreamEventType = Literal[
     "content",
     "content_rewind",
     "graph_highlight",
+    "approval_required",
+    "agenda_updated",
+    "unit_batch",
+    "checkpoint_committed",
+    "card_draft",
     "done",
     "error",
 ]

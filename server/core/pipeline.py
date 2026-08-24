@@ -15,6 +15,7 @@ from server.core.graph_runs import (
     reset_graph_collector,
 )
 from server.core.sessions import bind_conversation, session_store
+from server.core.turn_state import bind_turn
 from server.tools.source_registry import filter_chains_by_source_files
 
 logger = logging.getLogger(__name__)
@@ -157,6 +158,7 @@ class ServerPipeline:
         search_depth: Optional[str] = None,
         api_key: Optional[str] = None,
         profile_name: Optional[str] = None,
+        turn_context: Optional[dict] = None,
     ) -> AsyncGenerator[StreamEvent, None]:
         """
         Stream LLM events (thinking / tools / content / done) for text input.
@@ -180,6 +182,7 @@ class ServerPipeline:
                     search_depth=search_depth,
                     api_key=api_key,
                     profile_name=profile_name,
+                    turn_context=turn_context,
                 ):
                     if request and await request.is_disconnected():
                         logger.info("Клиент отключился — остановка LLM stream")
@@ -209,6 +212,7 @@ class ServerPipeline:
                                 "_raw_content": event.data.get("_raw_content", ""),
                                 "_history_tool_messages": event.data.get("_history_tool_messages", []),
                                 "_graph_chains": graph_chains,
+                                "_retrieval_state": event.data.get("_retrieval_state", {}),
                             },
                         )
                         logger.info(f"LLM (stream): {final_content}")
@@ -216,6 +220,78 @@ class ServerPipeline:
                     yield event
             except Exception as e:
                 yield StreamEvent("error", {"message": public_llm_error_message(e)})
+            finally:
+                reset_graph_collector(collector_token)
+
+    async def process_approved_stream(
+        self,
+        *,
+        user_text: str,
+        subquestions: list[str],
+        tool_call: dict,
+        session_id: str,
+        search_depth: str | None,
+        think_effort: str | None,
+        api_key: str | None,
+        profile_name: str | None,
+        turn_context: dict,
+        request: Optional[Request] = None,
+    ) -> AsyncGenerator[StreamEvent, None]:
+        """Execute the one approved search and finish the paused answer."""
+        async with bind_conversation(session_id, self.config.llm.history_len):
+            collector_token = new_graph_collector()
+            try:
+                call_id = str(tool_call.get("id") or "approved_search")
+                yield StreamEvent(
+                    "tool_call",
+                    {"id": call_id, "name": "ask_subgraph", "arguments": {"subquestions": subquestions}},
+                )
+                with bind_turn(
+                    search_depth,
+                    max_searches=1,
+                    context=turn_context,
+                ) as retrieval_turn:
+                    evidence = await self.llm.tools.ask_subgraph(subquestions=subquestions)
+                    retrieval_state = dict(retrieval_turn.retrieval_state)
+                yield StreamEvent(
+                    "tool_result",
+                    {"id": call_id, "name": "ask_subgraph", "ok": not evidence.startswith("TOOL_ERROR"), "result": evidence},
+                )
+                answer_context = dict(turn_context)
+                answer_context["retrieval_state"] = retrieval_state
+                async for event in self.llm.generate_approved_response_stream(
+                    user_text=user_text,
+                    evidence=evidence,
+                    tool_call={"id": call_id, "arguments": {"subquestions": subquestions}},
+                    think_effort=think_effort,
+                    search_depth=search_depth,
+                    api_key=api_key,
+                    profile_name=profile_name,
+                    turn_context=answer_context,
+                ):
+                    if request and await request.is_disconnected():
+                        break
+                    if event.type == "done":
+                        cited = event.data.get("cited_source_files") or []
+                        graph_chains = filter_chains_by_source_files(
+                            current_graph_collector() or [], cited
+                        )
+                        graph_run_id = graph_run_store.put(graph_chains) if graph_chains else ""
+                        event = StreamEvent(
+                            "done",
+                            {
+                                "final_content": event.data.get("final_content", ""),
+                                "graph_run_id": graph_run_id,
+                                "graph_chain_count": len(graph_chains),
+                                "_raw_content": event.data.get("_raw_content", ""),
+                                "_history_tool_messages": event.data.get("_history_tool_messages", []),
+                                "_graph_chains": graph_chains,
+                                "_retrieval_state": event.data.get("_retrieval_state", retrieval_state),
+                            },
+                        )
+                    yield event
+            except Exception as exc:
+                yield StreamEvent("error", {"message": public_llm_error_message(exc)})
             finally:
                 reset_graph_collector(collector_token)
 

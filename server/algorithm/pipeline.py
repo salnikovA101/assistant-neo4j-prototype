@@ -15,7 +15,7 @@ from server.algorithm.stage1_embed import embed_subquestions
 from server.algorithm.stage2_ann import AnnError, ann_for_subquestions
 from server.algorithm.stage2b_rerank import rerank_ann_by_sq
 from server.algorithm.stage3_graphs import build_all_graphs
-from server.algorithm.stage4_hop_dp import run_s4_carousel
+from server.algorithm.stage4_hop_dp import CarouselState, continue_s4_carousel
 from server.algorithm.stage5_select import hydrate_chains, prepare_s5_batch
 
 logger = logging.getLogger(__name__)
@@ -124,6 +124,10 @@ async def run(
     s3_bundle: dict[str, Any] | None = None,
     emit_s3_bundle: bool = False,
     cache_qid: str = "",
+    carousel_state: dict[str, Any] | CarouselState | None = None,
+    prior_signatures: list[str] | set[str] | None = None,
+    manual_round: bool = False,
+    budget_override: int | None = None,
 ) -> dict[str, Any]:
     """
     Run the retrieval pipeline (wired by ask_subgraph).
@@ -220,13 +224,21 @@ async def run(
 
     graphs_s4 = _graphs_for_sqs(graphs, state.subquestions)
     s3_keys_s4 = _s3_edge_keys(graphs_s4)
-    budget = p.effort_max_paths()
+    budget = (
+        max(0, int(budget_override))
+        if budget_override is not None
+        else (len(graphs_s4) if manual_round else p.effort_max_paths())
+    )
 
-    s4_pool = run_s4_carousel(
+    carousel = continue_s4_carousel(
         graphs_s4,
         params=p,
         budget=budget,
+        state=carousel_state,
+        one_per_graph=manual_round,
+        prior_signatures=set(prior_signatures or []),
     )
+    s4_pool = carousel.chains
     batch = prepare_s5_batch(s4_pool, params=p)
     stop_reason = ""
 
@@ -245,6 +257,8 @@ async def run(
     trace: dict[str, Any] = {
         "s3_sizes": {k: len(v) for k, v in s3_keys_s4.items()},
         "s4_pool": len(s4_pool),
+        "s4_mined": carousel.mined,
+        "s4_duplicate_mined": carousel.duplicate_mined,
         "batch": [c.to_dict() for c in batch],
         "accepted": [c.to_dict() for c in state.accepted],
         "s3_keys": {k: sorted(v) for k, v in s3_keys_s4.items()},
@@ -280,6 +294,8 @@ async def run(
         "effort": p.effort,
         "params": p.to_dict(),
         "from_graph_cache": from_graph_cache,
+        "carousel_state": carousel.state.to_dict(),
+        "manual_round": manual_round,
     }
     if s3_bundle_out is not None:
         out["s3_bundle"] = s3_bundle_out

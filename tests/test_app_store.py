@@ -92,20 +92,161 @@ async def test_duplicate_turn_and_backup(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_turns_keep_unique_order(tmp_path):
+async def test_concurrent_turns_allow_only_one_active_turn_per_branch(tmp_path):
     store = AppStore(str(tmp_path / "app.db"))
     await store.open()
     try:
         user = await store.create_user("parallel-user", "long parallel user password")
         conv = await store.create_conversation(user.id)
-        await asyncio.gather(
+        results = await asyncio.gather(
             store.begin_turn(user.id, conv["id"], "33333333-3333-4333-8333-333333333333", "one"),
             store.begin_turn(user.id, conv["id"], "44444444-4444-4444-8444-444444444444", "two"),
+            return_exceptions=True,
         )
+        assert sum(isinstance(result, RuntimeError) for result in results) == 1
         detail = await store.get_conversation(user.id, conv["id"])
         assert detail is not None
         user_texts = [item["text"] for item in detail["messages"] if item["role"] == "user"]
-        assert len(user_texts) == 2
-        assert set(user_texts) == {"one", "two"}
+        assert len(user_texts) == 1
+        assert user_texts[0] in {"one", "two"}
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_fork_agenda_and_cards_survive_conversation_delete(tmp_path):
+    store = AppStore(str(tmp_path / "state.db"))
+    await store.open()
+    try:
+        user = await store.create_user("state-user", "long state user password")
+        conv = await store.create_conversation(user.id)
+        branch_id = conv["activeBranchId"]
+        started = await store.begin_branch_turn(
+            user.id,
+            conv["id"],
+            branch_id,
+            "55555555-5555-4555-8555-555555555555",
+            "question",
+            mode="staged",
+        )
+        agenda = await store.upsert_turn_subquestions(
+            conv["id"], started["userCheckpointId"], ["Starter cultures acidify milk."], increment=True
+        )
+        sq_id = agenda[0]["id"]
+        chain = {
+            "chain_id": "c1",
+            "source_graph": sq_id,
+            "edge_keys": ["edge-1"],
+            "spine_evidence_seq": ["quote-1"],
+            "text": "UNIT c1\nCulture —ACIDIFIES→ Milk",
+            "walk": [{
+                "edge_key": "edge-1",
+                "evidence": "Exact evidence quote.",
+                "source_file": "paper.pdf",
+                "start": "Culture",
+                "end": "Milk",
+                "type": "ACIDIFIES",
+            }],
+        }
+        recorded = await store.record_units(conv["id"], started["userCheckpointId"], [chain])
+        await store.finish_turn(
+            conv["id"],
+            started["assistantMessageId"],
+            text="answer",
+            status="done",
+            payload={},
+            raw_text="answer",
+            graph_chains=recorded,
+            retrieval_state={
+                "algorithmVersion": "v6-checkpoint-1",
+                "s3Bundle": {"graphs": {sq_id: {"source_graph": sq_id, "edges": []}}},
+                "carousel": {"p_store": {"edge-1": 0.7}, "counts": {sq_id: 1}},
+                "priorSignatures": ["quote-1"],
+                "lastSubquestionIds": [sq_id],
+                "lastTrace": {"accepted": 1},
+            },
+        )
+        detail = await store.get_conversation(user.id, conv["id"], branch_id=branch_id)
+        assert detail is not None
+        answer_checkpoint = detail["headCheckpointId"]
+        assert detail["agenda"][0]["graphSnapshotId"]
+        assert (await store.load_retrieval_state(user.id, answer_checkpoint))["carousel"]["p_store"]["edge-1"] == 0.7
+
+        fork = await store.create_fork(user.id, conv["id"], answer_checkpoint)
+        changed = await store.apply_agenda_event(
+            user.id,
+            fork["id"],
+            base_checkpoint_id=answer_checkpoint,
+            action="close",
+            sq_id=sq_id,
+        )
+        sibling = await store.get_conversation(user.id, conv["id"], branch_id=branch_id)
+        assert changed["agenda"][0]["status"] == "closed"
+        assert sibling["agenda"][0]["status"] == "open"
+
+        template = (await store.list_card_templates(user.id))[0]
+        draft = await store.create_card_draft(
+            user.id,
+            checkpoint_id=answer_checkpoint,
+            template_version_id=template["latestVersion"]["id"],
+            data={"title": "Trial", "objective": "Test", "product_or_matrix": "Milk", "gaps": []},
+            provenance={
+                "/objective": {
+                    "unit_id": recorded[0]["unit_id"],
+                    "edge_key": "edge-1",
+                    "source_document": "paper.pdf",
+                    "quote": "Exact evidence quote.",
+                }
+            },
+        )
+        card = await store.save_card_draft(user.id, draft["id"], title="Trial")
+        attached = await store.attach_card_revision(
+            user.id,
+            fork["id"],
+            base_checkpoint_id=changed["checkpointId"],
+            card_revision_id=card["latestRevision"]["id"],
+            attached=True,
+        )
+        context = await store.checkpoint_card_context(user.id, attached["checkpointId"])
+        assert context and context[0]["title"] == "Trial"
+
+        assert await store.delete_conversation(user.id, conv["id"])
+        cards = await store.list_cards(user.id)
+        assert cards[0]["title"] == "Trial"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_pending_approval_revision_is_persistent_and_single_use(tmp_path):
+    store = AppStore(str(tmp_path / "approval.db"))
+    await store.open()
+    try:
+        user = await store.create_user("approval-user", "long approval user password")
+        conv = await store.create_conversation(user.id)
+        started = await store.begin_branch_turn(
+            user.id,
+            conv["id"],
+            conv["activeBranchId"],
+            "66666666-6666-4666-8666-666666666666",
+            "question",
+            mode="staged",
+        )
+        approval = await store.create_pending_approval(
+            user.id,
+            conversation_id=conv["id"],
+            branch_id=conv["activeBranchId"],
+            user_message_id=started["userMessageId"],
+            assistant_message_id=started["assistantMessageId"],
+            base_checkpoint_id=started["userCheckpointId"],
+            tool_call={"id": "call-1", "name": "ask_subgraph", "arguments": {"subquestions": ["A"]}},
+            resume={"text": "question"},
+            settings={"mode": "staged"},
+        )
+        await store.update_assistant_waiting(conv["id"], started["assistantMessageId"], payload={})
+        claimed = await store.claim_pending_approval(user.id, approval["id"], 1, "approve")
+        assert claimed and claimed["toolCall"]["id"] == "call-1"
+        with pytest.raises(RuntimeError):
+            await store.claim_pending_approval(user.id, approval["id"], 1, "approve")
     finally:
         await store.close()

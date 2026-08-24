@@ -365,6 +365,7 @@ def test_login_html_has_no_inline_script():
     assert 'value="demo"' not in html
     assert ' class="login-error" hidden' in html
     assert is_public_auth_path("/login") is True
+    assert is_public_auth_path("/healthz") is True
     assert is_public_auth_path("/logout") is False
     assert is_public_auth_path("/ui/login.css") is True
     assert is_public_auth_path("/ui/icon.svg") is True

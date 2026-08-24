@@ -385,6 +385,7 @@ class BaseLLMProvider(ABC):
         tool_map: Optional[Dict[str, Callable]] = None,
         think_effort: Optional[str] = None,
         api_key: Optional[str] = None,
+        tool_choice: Optional[str] = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Stream thinking / tool_call / tool_result / content events for one user turn.
@@ -419,7 +420,7 @@ class BaseLLMProvider(ABC):
             )
             if tools:
                 kwargs["tools"] = tools
-                kwargs["tool_choice"] = "auto"
+                kwargs["tool_choice"] = tool_choice or "auto"
 
             turns = 0
             max_turns = max(1, int(self.profile.max_turns))
@@ -542,6 +543,7 @@ class BaseLLMProvider(ABC):
                             "id": tc.id,
                             "name": tc.name,
                             "arguments": args if args else tc.arguments,
+                            "_assistant_replay": messages[-1],
                         },
                     )
 

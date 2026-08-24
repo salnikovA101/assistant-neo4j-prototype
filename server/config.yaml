@@ -3,6 +3,8 @@ audio_enabled: false
 # Corpus for V6 ANN/bridges (relationship.run_id). Empty = whole vector index + warning.
 run_id: "full_corpus_20260713"
 rerank_enabled: false
+staged_enabled: true
+cards_enabled: true
 
 server:
   host: "0.0.0.0"

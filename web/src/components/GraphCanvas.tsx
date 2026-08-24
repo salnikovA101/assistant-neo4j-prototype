@@ -72,11 +72,15 @@ export function GraphCanvas({
   viewId,
   emptyHint,
   hideSearch = false,
+  focusEdgeId = "",
+  onExpandNode,
 }: {
   payload: GraphPayload | null;
   viewId: string | "all";
   emptyHint: string;
   hideSearch?: boolean;
+  focusEdgeId?: string;
+  onExpandNode?: (nodeId: string) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const netRef = useRef<Network | null>(null);
@@ -95,6 +99,14 @@ export function GraphCanvas({
     setSelected(null);
     setQuery("");
   }, [payload, viewId]);
+
+  useEffect(() => {
+    if (!focusEdgeId) return;
+    const edge = graph.edges.find((item) => item.id === focusEdgeId);
+    if (!edge) return;
+    setSelected({ kind: "edge", edge });
+    setPinned([edge.id]);
+  }, [focusEdgeId, graph]);
 
   const q = query.trim().toLowerCase();
   const hits = useMemo(() => {
@@ -188,6 +200,7 @@ export function GraphCanvas({
       network.on("selectNode", (ev: { nodes: string[] }) => {
         const node = graph.nodes.find((item) => item.id === ev.nodes[0]);
         setSelected(node ? { kind: "node", node } : null);
+        if (node && onExpandNode) onExpandNode(node.id);
       });
       network.on("selectEdge", (ev: { edges: string[]; nodes: string[] }) => {
         if (ev.nodes.length) return;
@@ -221,13 +234,12 @@ export function GraphCanvas({
       network?.destroy();
       if (netRef.current === network) netRef.current = null;
     };
-  }, [filtered, graph]);
+  }, [filtered, graph, onExpandNode]);
 
   if (!payload) {
     return <div className="graph-empty">{emptyHint}</div>;
   }
 
-  const listed = (pinned.length ? filtered.edges : hits).slice(0, 80);
   const pickTriplet = (edge: GraphEdge) => {
     setSelected({ kind: "edge", edge });
     setPinned((prev) => (prev.includes(edge.id) ? prev : [...prev, edge.id]));
@@ -241,45 +253,27 @@ export function GraphCanvas({
   return (
     <div className="graph-stage">
       {!hideSearch && (
-        <input
-          className="graph-search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Триплет: имя, связь или цитата"
-        />
-      )}
-      <div className="triplet-bar">
-        <div className="triplet-bar-head">
-          <span>
-            Триплеты {listed.length}
-            {hits.length > listed.length ? ` из ${hits.length}` : ""}
-          </span>
-          {pinned.length > 0 && (
-            <button type="button" className="ghost-btn" onClick={() => setPinned([])}>
-              Сбросить выбор ({pinned.length})
-            </button>
+        <div className="graph-local-search">
+          <input
+            className="graph-search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Найти ребро в этом графе"
+          />
+          {q && hits.length > 0 && (
+            <div className="edge-suggestions" role="listbox" aria-label="Рёбра этого графа">
+              {hits.slice(0, 12).map((edge) => (
+                <button key={edge.id} type="button" onClick={() => { pickTriplet(edge); setQuery(""); }}>
+                  <strong>{tripletCaption(edge)}</strong>
+                  {Boolean(edge.properties?.evidence) && <span>{String(edge.properties.evidence)}</span>}
+                </button>
+              ))}
+            </div>
           )}
         </div>
-        <div className="triplet-list">
-          {listed.map((edge) => (
-            <button
-              key={edge.id}
-              type="button"
-              className={`triplet-item ${pinned.includes(edge.id) ? "is-on" : ""}`}
-              onClick={() => pickTriplet(edge)}
-              title={String(edge.properties?.evidence || "")}
-            >
-              <strong>{tripletCaption(edge)}</strong>
-              {edge.properties?.evidence ? (
-                <span>{String(edge.properties.evidence)}</span>
-              ) : null}
-            </button>
-          ))}
-          {!listed.length && <p className="muted">Нет триплетов по этому запросу</p>}
-        </div>
-      </div>
+      )}
       {!filtered.nodes.length ? (
-        <div className="graph-empty">Ничего не найдено</div>
+        <div className="graph-empty">{emptyHint || "Ничего не найдено"}</div>
       ) : (
         <div className="graph-body">
           <div className="graph-canvas-wrap">
@@ -294,7 +288,7 @@ export function GraphCanvas({
             </div>
           </div>
           <aside className="graph-inspector">
-            {!selected && <p className="muted">Выберите триплет в списке или на графе</p>}
+            {!selected && <p className="muted">Выберите ребро на графе или через поиск</p>}
             {selected?.kind === "node" && (
               <div>
                 <p className="inspector-kicker">{selected.node.group}</p>

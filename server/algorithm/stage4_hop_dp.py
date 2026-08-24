@@ -11,13 +11,58 @@ DP with path_so_far revisit ban is a practical optimum under no-revisit
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from dataclasses import replace
+from typing import Any
 
 from server.algorithm.evidence import edge_evidence_key
 from server.algorithm.models import CandidateGraph, Chain, EdgeRecord
 from server.algorithm.params import Params
 from server.algorithm.scoring import rank_contribs
 from server.algorithm.unit_reshape import reshape_star_walk
+
+
+@dataclass
+class CarouselState:
+    """Serializable continuation state for a deterministic S4 sequence."""
+
+    p_store: dict[str, float] = field(default_factory=dict)
+    counts: dict[str, int] = field(default_factory=dict)
+    accepted_signatures: list[str] = field(default_factory=list)
+    rounds: int = 0
+
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any] | None) -> CarouselState:
+        data = raw or {}
+        return cls(
+            p_store={str(k): float(v) for k, v in (data.get("p_store") or {}).items()},
+            counts={str(k): int(v) for k, v in (data.get("counts") or {}).items()},
+            accepted_signatures=[str(v) for v in (data.get("accepted_signatures") or [])],
+            rounds=int(data.get("rounds") or 0),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "p_store": dict(self.p_store),
+            "counts": dict(self.counts),
+            "accepted_signatures": list(self.accepted_signatures),
+            "rounds": self.rounds,
+        }
+
+
+@dataclass
+class CarouselResult:
+    chains: list[Chain]
+    state: CarouselState
+    mined: int = 0
+    duplicate_mined: int = 0
+
+
+def _chain_signature(chain: Chain) -> str:
+    seq = chain.spine_evidence_seq()
+    if seq:
+        return "\x1f".join(seq)
+    return "\x1f".join(chain.all_edge_keys())
 
 
 def _path_evidence_keys(graph: CandidateGraph, path: list[str]) -> set[str]:
@@ -169,44 +214,106 @@ def run_s4_carousel(
     Shared p starts at 1 on the UNION of all graph edge keys. After each
     accepted tour, walk keys are multiplied by ``s4_p_decay``.
     """
+    return continue_s4_carousel(
+        graphs,
+        params=params,
+        budget=budget,
+    ).chains
+
+
+def continue_s4_carousel(
+    graphs: dict[str, CandidateGraph],
+    *,
+    params: Params,
+    budget: int,
+    state: CarouselState | Mapping[str, Any] | None = None,
+    one_per_graph: bool = False,
+    prior_signatures: set[str] | None = None,
+) -> CarouselResult:
+    """Continue S4 without resetting diversity state.
+
+    Auto preserves the legacy first-round-full behavior. Manual mode mines at
+    most one *new* UNIT per SQ; duplicate tours are decayed and audited but not
+    returned.
+    """
     cap = max(0, int(budget))
+    persistent_call = bool(prior_signatures)
+    if isinstance(state, CarouselState):
+        persistent_call = persistent_call or bool(
+            state.p_store or state.counts or state.accepted_signatures or state.rounds
+        )
+    elif state is not None:
+        persistent_call = persistent_call or bool(state)
+    # A checkpoint snapshot is immutable: continuation always works on a copy.
+    current = (
+        CarouselState.from_dict(state.to_dict())
+        if isinstance(state, CarouselState)
+        else CarouselState.from_dict(state)
+    )
     if cap <= 0 or not graphs:
-        return []
+        return CarouselResult([], current)
 
-    p_store: dict[str, float] = {}
-    for g in graphs.values():
-        for ek in g.edges:
-            p_store.setdefault(ek, 1.0)
+    for src, graph in graphs.items():
+        current.counts.setdefault(src, 0)
+        for edge_key in graph.edges:
+            current.p_store.setdefault(edge_key, 1.0)
 
-    items = list(graphs.items())
+    known = set(current.accepted_signatures)
+    known.update(prior_signatures or set())
     pool: list[Chain] = []
-    counts: dict[str, int] = {src: 0 for src, _ in items}
+    mined = 0
+    duplicate_mined = 0
     decay = float(params.s4_p_decay)
+    items = list(graphs.items())
 
-    def one_round(*, stop_at_cap: bool) -> int:
-        added = 0
-        for src, g in items:
-            if stop_at_cap and len(pool) >= cap:
-                break
-            counts[src] += 1
+    def mine_for_graph(src: str, graph: CandidateGraph, *, seek_novel: bool) -> Chain | None:
+        nonlocal mined, duplicate_mined
+        max_attempts = min(64, max(1, len(graph.edges))) if seek_novel else 1
+        for _ in range(max_attempts):
+            current.counts[src] = current.counts.get(src, 0) + 1
             chain = best_path_for_graph(
-                g,
-                p_store=p_store,
+                graph,
+                p_store=current.p_store,
                 params=params,
                 id_prefix=f"{src}_",
-                path_index=counts[src],
+                path_index=current.counts[src],
             )
             if chain is None:
-                continue
-            pool.append(chain)
-            _decay_keys(p_store, chain.all_edge_keys(), decay)
-            added += 1
-        return added
+                return None
+            mined += 1
+            _decay_keys(current.p_store, chain.all_edge_keys(), decay)
+            signature = _chain_signature(chain)
+            if signature in known:
+                duplicate_mined += 1
+                if seek_novel:
+                    continue
+                return chain
+            known.add(signature)
+            current.accepted_signatures.append(signature)
+            return chain
+        return None
+
+    if one_per_graph:
+        for src, graph in items:
+            chain = mine_for_graph(src, graph, seek_novel=True)
+            if chain is not None:
+                pool.append(chain)
+        current.rounds += 1
+        return CarouselResult(pool, current, mined=mined, duplicate_mined=duplicate_mined)
+
+    def one_round(*, stop_at_cap: bool) -> int:
+        before = len(pool)
+        for src, graph in items:
+            if stop_at_cap and len(pool) >= cap:
+                break
+            chain = mine_for_graph(src, graph, seek_novel=persistent_call)
+            if chain is not None:
+                pool.append(chain)
+        current.rounds += 1
+        return len(pool) - before
 
     one_round(stop_at_cap=False)
     while len(pool) < cap:
-        n_before = len(pool)
-        one_round(stop_at_cap=True)
-        if len(pool) == n_before:
+        if one_round(stop_at_cap=True) == 0:
             break
-    return pool
+    return CarouselResult(pool, current, mined=mined, duplicate_mined=duplicate_mined)

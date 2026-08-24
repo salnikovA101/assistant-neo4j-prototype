@@ -177,8 +177,8 @@ def test_qwen_cloud_yaml_profile():
     assert qwen.model == "qwen3.8-27b"
     assert qwen.display_name == "Qwen 3.8 27B"
     assert "dashscope" in (qwen.base_url or "")
-    assert qwen.temperature == 1.0
-    assert qwen.top_p == 0.95
+    assert qwen.temperature == 0.7
+    assert qwen.top_p == 0.8
     assert qwen.top_k == 20
     assert qwen.think_effort == "xhigh"
     assert qwen.think_efforts == ["low", "medium", "xhigh"]

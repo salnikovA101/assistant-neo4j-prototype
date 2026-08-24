@@ -157,6 +157,209 @@ VALUES(1, CAST(strftime('%s','now') AS INTEGER) * 1000);
 """
 
 
+STATE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS branches (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    name TEXT NOT NULL DEFAULT 'main',
+    created_from_checkpoint_id TEXT,
+    head_checkpoint_id TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_branches_conversation
+    ON branches(conversation_id, created_at);
+
+CREATE TABLE IF NOT EXISTS checkpoints (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    parent_id TEXT REFERENCES checkpoints(id),
+    message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL,
+    state_json TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_checkpoints_branch
+    ON checkpoints(branch_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_checkpoints_parent ON checkpoints(parent_id);
+
+CREATE TABLE IF NOT EXISTS subquestions (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
+    canonical_text TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE(conversation_id, canonical_text)
+);
+
+CREATE TABLE IF NOT EXISTS graph_snapshots (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    sq_id TEXT NOT NULL REFERENCES subquestions(id) ON DELETE CASCADE,
+    fingerprint TEXT NOT NULL,
+    bundle_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE(conversation_id, sq_id, fingerprint)
+);
+
+CREATE TABLE IF NOT EXISTS retrieval_snapshots (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    parent_id TEXT REFERENCES retrieval_snapshots(id),
+    state_json TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS checkpoint_subquestions (
+    checkpoint_id TEXT NOT NULL REFERENCES checkpoints(id) ON DELETE CASCADE,
+    sq_id TEXT NOT NULL REFERENCES subquestions(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'open',
+    position INTEGER NOT NULL DEFAULT 0,
+    question_count INTEGER NOT NULL DEFAULT 0,
+    unit_count INTEGER NOT NULL DEFAULT 0,
+    graph_snapshot_id TEXT REFERENCES graph_snapshots(id),
+    PRIMARY KEY(checkpoint_id, sq_id)
+);
+
+CREATE TABLE IF NOT EXISTS evidence_units (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    created_checkpoint_id TEXT REFERENCES checkpoints(id) ON DELETE SET NULL,
+    unit_no INTEGER NOT NULL,
+    sq_id TEXT REFERENCES subquestions(id) ON DELETE SET NULL,
+    signature TEXT NOT NULL,
+    chain_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    UNIQUE(conversation_id, unit_no),
+    UNIQUE(conversation_id, signature)
+);
+CREATE INDEX IF NOT EXISTS idx_units_conversation
+    ON evidence_units(conversation_id, unit_no);
+
+CREATE TABLE IF NOT EXISTS checkpoint_units (
+    checkpoint_id TEXT NOT NULL REFERENCES checkpoints(id) ON DELETE CASCADE,
+    unit_id TEXT NOT NULL REFERENCES evidence_units(id) ON DELETE CASCADE,
+    PRIMARY KEY(checkpoint_id, unit_id)
+);
+
+CREATE TABLE IF NOT EXISTS pending_approvals (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+    user_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    assistant_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    base_checkpoint_id TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    revision INTEGER NOT NULL DEFAULT 1,
+    tool_call_json TEXT NOT NULL,
+    resume_json TEXT NOT NULL DEFAULT '{}',
+    settings_json TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pending_branch
+    ON pending_approvals(branch_id, status, updated_at);
+
+CREATE TABLE IF NOT EXISTS card_templates (
+    id TEXT PRIMARY KEY,
+    owner_user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    archived_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_card_templates_owner
+    ON card_templates(owner_user_id, archived_at, updated_at);
+
+CREATE TABLE IF NOT EXISTS card_template_versions (
+    id TEXT PRIMARY KEY,
+    template_id TEXT NOT NULL REFERENCES card_templates(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    schema_json TEXT NOT NULL,
+    ui_json TEXT NOT NULL DEFAULT '{}',
+    instructions TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    UNIQUE(template_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS card_drafts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    origin_checkpoint_id TEXT REFERENCES checkpoints(id) ON DELETE SET NULL,
+    template_version_id TEXT NOT NULL REFERENCES card_template_versions(id),
+    data_json TEXT NOT NULL DEFAULT '{}',
+    provenance_json TEXT NOT NULL DEFAULT '{}',
+    gaps_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'draft',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cards (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    template_version_id TEXT NOT NULL REFERENCES card_template_versions(id),
+    title TEXT NOT NULL,
+    archived_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cards_user
+    ON cards(user_id, archived_at, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS card_revisions (
+    id TEXT PRIMARY KEY,
+    card_id TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL,
+    data_json TEXT NOT NULL,
+    provenance_json TEXT NOT NULL DEFAULT '{}',
+    gaps_json TEXT NOT NULL DEFAULT '[]',
+    origin_snapshot_json TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    UNIQUE(card_id, revision)
+);
+
+CREATE TABLE IF NOT EXISTS checkpoint_card_attachments (
+    checkpoint_id TEXT NOT NULL REFERENCES checkpoints(id) ON DELETE CASCADE,
+    card_revision_id TEXT NOT NULL REFERENCES card_revisions(id) ON DELETE CASCADE,
+    PRIMARY KEY(checkpoint_id, card_revision_id)
+);
+
+CREATE TABLE IF NOT EXISTS retrieval_events (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    checkpoint_id TEXT REFERENCES checkpoints(id) ON DELETE SET NULL,
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_retrieval_events_conversation
+    ON retrieval_events(conversation_id, created_at);
+"""
+
+
+EXPERIMENT_TEMPLATE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "title": {"type": ["string", "null"], "title": "Название"},
+        "objective": {"type": ["string", "null"], "title": "Цель"},
+        "product_or_matrix": {"type": ["string", "null"], "title": "Продукт или матрица"},
+        "culture_or_material": {"type": ["string", "null"], "title": "Культура или материал"},
+        "conditions": {"type": ["string", "null"], "title": "Условия"},
+        "procedure": {"type": ["string", "null"], "title": "Процедура"},
+        "controls": {"type": ["string", "null"], "title": "Контроль"},
+        "measurements": {"type": ["string", "null"], "title": "Измерения"},
+        "expected_result": {"type": ["string", "null"], "title": "Ожидаемый результат"},
+        "gaps": {"type": "array", "items": {"type": "string"}, "title": "Пробелы"},
+    },
+    "required": ["title", "objective", "product_or_matrix", "gaps"],
+    "additionalProperties": False,
+}
+
+
 class AppStore:
     """Single-connection async repository. All ownership checks live here."""
 
@@ -171,7 +374,9 @@ class AppStore:
         self.db.row_factory = aiosqlite.Row
         await self.db.execute("PRAGMA foreign_keys=ON")
         await self.db.execute("PRAGMA busy_timeout=5000")
+        await self.db.execute("PRAGMA journal_mode=WAL")
         await self.db.executescript(SCHEMA)
+        await self._migrate_state_schema()
         await self.db.execute(
             "UPDATE messages SET status='aborted', updated_at=? WHERE status='streaming'",
             (now_ms(),),
@@ -191,6 +396,173 @@ class AppStore:
         if self.db is None:
             raise RuntimeError("AppStore is not open")
         return self.db
+
+    async def _table_columns(self, table: str) -> set[str]:
+        rows = await (await self._conn().execute(f"PRAGMA table_info({table})")).fetchall()
+        return {str(row["name"]) for row in rows}
+
+    async def _migrate_state_schema(self) -> None:
+        """Idempotent v2 migration and linear-history backfill."""
+        conn = self._conn()
+        await conn.executescript(STATE_SCHEMA)
+        columns = await self._table_columns("messages")
+        additions = {
+            "branch_id": "TEXT",
+            "parent_message_id": "TEXT",
+            "checkpoint_id": "TEXT",
+            "mode": "TEXT NOT NULL DEFAULT 'auto'",
+        }
+        for name, ddl in additions.items():
+            if name not in columns:
+                await conn.execute(f"ALTER TABLE messages ADD COLUMN {name} {ddl}")
+        await conn.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(2,?)",
+            (now_ms(),),
+        )
+        await self._seed_system_templates()
+        rows = await (await conn.execute("SELECT id FROM conversations ORDER BY created_at")).fetchall()
+        for row in rows:
+            await self._ensure_conversation_tree(str(row["id"]))
+        await conn.commit()
+
+    async def _seed_system_templates(self) -> None:
+        conn = self._conn()
+        template_id = "system-experiment"
+        version_id = "system-experiment-v1"
+        ts = now_ms()
+        await conn.execute(
+            """INSERT OR IGNORE INTO card_templates
+               (id,owner_user_id,name,description,created_at,updated_at)
+               VALUES(?,NULL,?,?,?,?)""",
+            (
+                template_id,
+                "Эксперимент",
+                "Структурированная карточка плана и условий эксперимента",
+                ts,
+                ts,
+            ),
+        )
+        await conn.execute(
+            """INSERT OR IGNORE INTO card_template_versions
+               (id,template_id,version,schema_json,ui_json,instructions,created_at)
+               VALUES(?,?,?,?,?,?,?)""",
+            (
+                version_id,
+                template_id,
+                1,
+                _json(EXPERIMENT_TEMPLATE_SCHEMA),
+                _json({"order": list(EXPERIMENT_TEMPLATE_SCHEMA["properties"].keys())}),
+                "Заполняй только по evidence UNIT текущего checkpoint. Неизвестное оставляй null и добавляй в gaps.",
+                ts,
+            ),
+        )
+
+    @staticmethod
+    def _empty_checkpoint_state() -> dict[str, Any]:
+        return {
+            "retrievalSnapshotId": None,
+            "unitIds": [],
+            "cardRevisionIds": [],
+            "turnConfig": {},
+        }
+
+    @staticmethod
+    def _chain_signature(chain: dict[str, Any]) -> str:
+        raw = chain.get("spine_evidence_seq") or chain.get("edge_keys") or []
+        if not raw:
+            raw = [
+                str(item.get("edge_key") or item.get("element_id") or "")
+                for item in (chain.get("walk") or chain.get("edges") or [])
+                if isinstance(item, dict)
+            ]
+        blob = json.dumps(raw, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+    async def _ensure_conversation_tree(self, conversation_id: str) -> str:
+        """Create main branch and checkpoint existing linear messages once."""
+        conn = self._conn()
+        existing = await (await conn.execute(
+            "SELECT id FROM branches WHERE conversation_id=? ORDER BY created_at LIMIT 1",
+            (conversation_id,),
+        )).fetchone()
+        if existing is not None:
+            return str(existing["id"])
+
+        branch_id = str(uuid.uuid4())
+        ts = now_ms()
+        await conn.execute(
+            "INSERT INTO branches(id,conversation_id,name,created_at,updated_at) VALUES(?,?,?,?,?)",
+            (branch_id, conversation_id, "main", ts, ts),
+        )
+        rows = await (await conn.execute(
+            "SELECT id,role,created_at FROM messages WHERE conversation_id=? ORDER BY ordinal",
+            (conversation_id,),
+        )).fetchall()
+        parent_checkpoint: str | None = None
+        parent_message: str | None = None
+        state = self._empty_checkpoint_state()
+        next_unit = 1
+        for row in rows:
+            message_id = str(row["id"])
+            checkpoint_id = str(uuid.uuid4())
+            graph_rows = await (await conn.execute(
+                "SELECT chains_json FROM graph_runs WHERE conversation_id=? AND message_id=? ORDER BY created_at",
+                (conversation_id, message_id),
+            )).fetchall()
+            if str(row["role"]) == "assistant":
+                for graph_row in graph_rows:
+                    for chain in _loads(graph_row["chains_json"], []):
+                        if not isinstance(chain, dict):
+                            continue
+                        signature = self._chain_signature(chain)
+                        prev = await (await conn.execute(
+                            "SELECT id,unit_no FROM evidence_units WHERE conversation_id=? AND signature=?",
+                            (conversation_id, signature),
+                        )).fetchone()
+                        if prev is None:
+                            unit_id = str(uuid.uuid4())
+                            await conn.execute(
+                                """INSERT INTO evidence_units
+                                   (id,conversation_id,created_checkpoint_id,unit_no,sq_id,signature,chain_json,created_at)
+                                   VALUES(?,?,?,?,NULL,?,?,?)""",
+                                (unit_id, conversation_id, None, next_unit, signature, _json(chain), int(row["created_at"])),
+                            )
+                            next_unit += 1
+                        else:
+                            unit_id = str(prev["id"])
+                        if unit_id not in state["unitIds"]:
+                            state["unitIds"].append(unit_id)
+            await conn.execute(
+                """INSERT INTO checkpoints
+                   (id,conversation_id,branch_id,parent_id,message_id,kind,state_json,created_at)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    checkpoint_id,
+                    conversation_id,
+                    branch_id,
+                    parent_checkpoint,
+                    message_id,
+                    str(row["role"]),
+                    _json(state),
+                    int(row["created_at"]),
+                ),
+            )
+            for unit_id in state["unitIds"]:
+                await conn.execute(
+                    "INSERT OR IGNORE INTO checkpoint_units(checkpoint_id,unit_id) VALUES(?,?)",
+                    (checkpoint_id, unit_id),
+                )
+            await conn.execute(
+                "UPDATE messages SET branch_id=?,parent_message_id=?,checkpoint_id=? WHERE id=?",
+                (branch_id, parent_message, checkpoint_id, message_id),
+            )
+            parent_checkpoint = checkpoint_id
+            parent_message = message_id
+        await conn.execute(
+            "UPDATE branches SET head_checkpoint_id=?,updated_at=? WHERE id=?",
+            (parent_checkpoint, ts, branch_id),
+        )
+        return branch_id
 
     async def active_user_count(self) -> int:
         row = await (await self._conn().execute(
@@ -334,14 +706,196 @@ class AppStore:
                 "INSERT INTO conversations(id,user_id,title,created_at,updated_at) VALUES(?,?,?,?,?)",
                 (cid, user_id, "Новый чат", ts, ts),
             )
+            branch_id = await self._ensure_conversation_tree(cid)
             await self._conn().commit()
-        return {"id": cid, "title": "Новый чат", "createdAt": ts, "updatedAt": ts}
+        return {
+            "id": cid,
+            "title": "Новый чат",
+            "createdAt": ts,
+            "updatedAt": ts,
+            "activeBranchId": branch_id,
+        }
 
     async def conversation_owned(self, user_id: str, conversation_id: str) -> bool:
         row = await (await self._conn().execute(
             "SELECT 1 FROM conversations WHERE id=? AND user_id=?", (conversation_id, user_id)
         )).fetchone()
         return row is not None
+
+    async def main_branch_id(self, conversation_id: str) -> str:
+        return await self._ensure_conversation_tree(conversation_id)
+
+    async def branch_owned(self, user_id: str, branch_id: str) -> bool:
+        row = await (await self._conn().execute(
+            """SELECT 1 FROM branches b JOIN conversations c ON c.id=b.conversation_id
+               WHERE b.id=? AND c.user_id=?""",
+            (branch_id, user_id),
+        )).fetchone()
+        return row is not None
+
+    async def list_branches(self, user_id: str, conversation_id: str) -> list[dict[str, Any]]:
+        if not await self.conversation_owned(user_id, conversation_id):
+            raise KeyError(conversation_id)
+        rows = await (await self._conn().execute(
+            """SELECT id,name,created_from_checkpoint_id,head_checkpoint_id,created_at,updated_at
+               FROM branches WHERE conversation_id=? ORDER BY created_at,id""",
+            (conversation_id,),
+        )).fetchall()
+        return [
+            {
+                "id": str(row["id"]),
+                "name": str(row["name"]),
+                "createdFromCheckpointId": row["created_from_checkpoint_id"],
+                "headCheckpointId": row["head_checkpoint_id"],
+                "createdAt": int(row["created_at"]),
+                "updatedAt": int(row["updated_at"]),
+            }
+            for row in rows
+        ]
+
+    async def branch_detail(self, user_id: str, branch_id: str) -> dict[str, Any] | None:
+        row = await (await self._conn().execute(
+            """SELECT b.id,b.conversation_id,b.name,b.created_from_checkpoint_id,
+                      b.head_checkpoint_id,b.created_at,b.updated_at
+               FROM branches b JOIN conversations c ON c.id=b.conversation_id
+               WHERE b.id=? AND c.user_id=?""",
+            (branch_id, user_id),
+        )).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": str(row["id"]),
+            "conversationId": str(row["conversation_id"]),
+            "name": str(row["name"]),
+            "createdFromCheckpointId": row["created_from_checkpoint_id"],
+            "headCheckpointId": row["head_checkpoint_id"],
+            "createdAt": int(row["created_at"]),
+            "updatedAt": int(row["updated_at"]),
+        }
+
+    async def checkpoint_owned(self, user_id: str, checkpoint_id: str) -> bool:
+        row = await (await self._conn().execute(
+            """SELECT 1 FROM checkpoints cp
+               JOIN conversations c ON c.id=cp.conversation_id
+               WHERE cp.id=? AND c.user_id=?""",
+            (checkpoint_id, user_id),
+        )).fetchone()
+        return row is not None
+
+    async def checkpoint_state(self, user_id: str, checkpoint_id: str) -> dict[str, Any] | None:
+        row = await (await self._conn().execute(
+            """SELECT cp.id,cp.conversation_id,cp.branch_id,cp.parent_id,cp.message_id,
+                      cp.kind,cp.state_json,cp.created_at
+               FROM checkpoints cp JOIN conversations c ON c.id=cp.conversation_id
+               WHERE cp.id=? AND c.user_id=?""",
+            (checkpoint_id, user_id),
+        )).fetchone()
+        if row is None:
+            return None
+        agenda = await self._agenda_for_checkpoint(checkpoint_id)
+        return {
+            "id": str(row["id"]),
+            "conversationId": str(row["conversation_id"]),
+            "branchId": str(row["branch_id"]),
+            "parentId": row["parent_id"],
+            "messageId": row["message_id"],
+            "kind": str(row["kind"]),
+            "state": _loads(row["state_json"], self._empty_checkpoint_state()),
+            "agenda": agenda,
+            "createdAt": int(row["created_at"]),
+        }
+
+    async def create_fork(
+        self,
+        user_id: str,
+        conversation_id: str,
+        checkpoint_id: str,
+        name: str = "",
+    ) -> dict[str, Any]:
+        if not await self.conversation_owned(user_id, conversation_id):
+            raise KeyError(conversation_id)
+        cp = await (await self._conn().execute(
+            "SELECT id FROM checkpoints WHERE id=? AND conversation_id=?",
+            (checkpoint_id, conversation_id),
+        )).fetchone()
+        if cp is None:
+            raise KeyError(checkpoint_id)
+        branch_id = str(uuid.uuid4())
+        ts = now_ms()
+        clean = " ".join((name or "").strip().split())[:64]
+        if not clean:
+            count = await (await self._conn().execute(
+                "SELECT COUNT(*) AS n FROM branches WHERE conversation_id=?",
+                (conversation_id,),
+            )).fetchone()
+            clean = f"Ветка {int(count['n']) + 1 if count else 2}"
+        async with self._write_lock:
+            await self._conn().execute(
+                """INSERT INTO branches
+                   (id,conversation_id,name,created_from_checkpoint_id,head_checkpoint_id,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (branch_id, conversation_id, clean, checkpoint_id, checkpoint_id, ts, ts),
+            )
+            await self._conn().commit()
+        return {
+            "id": branch_id,
+            "conversationId": conversation_id,
+            "name": clean,
+            "createdFromCheckpointId": checkpoint_id,
+            "headCheckpointId": checkpoint_id,
+            "createdAt": ts,
+            "updatedAt": ts,
+        }
+
+    async def _checkpoint_row(self, checkpoint_id: str | None) -> aiosqlite.Row | None:
+        if not checkpoint_id:
+            return None
+        return await (await self._conn().execute(
+            "SELECT * FROM checkpoints WHERE id=?", (checkpoint_id,)
+        )).fetchone()
+
+    async def _copy_checkpoint_links(self, source_id: str | None, target_id: str) -> None:
+        if not source_id:
+            return
+        await self._conn().execute(
+            """INSERT OR IGNORE INTO checkpoint_units(checkpoint_id,unit_id)
+               SELECT ?,unit_id FROM checkpoint_units WHERE checkpoint_id=?""",
+            (target_id, source_id),
+        )
+        await self._conn().execute(
+            """INSERT OR IGNORE INTO checkpoint_card_attachments(checkpoint_id,card_revision_id)
+               SELECT ?,card_revision_id FROM checkpoint_card_attachments WHERE checkpoint_id=?""",
+            (target_id, source_id),
+        )
+        await self._conn().execute(
+            """INSERT OR IGNORE INTO checkpoint_subquestions
+               (checkpoint_id,sq_id,status,position,question_count,unit_count,graph_snapshot_id)
+               SELECT ?,sq_id,status,position,question_count,unit_count,graph_snapshot_id
+               FROM checkpoint_subquestions WHERE checkpoint_id=?""",
+            (target_id, source_id),
+        )
+
+    async def _agenda_for_checkpoint(self, checkpoint_id: str) -> list[dict[str, Any]]:
+        rows = await (await self._conn().execute(
+            """SELECT s.id,s.text,cs.status,cs.position,cs.question_count,cs.unit_count,
+                      cs.graph_snapshot_id
+               FROM checkpoint_subquestions cs JOIN subquestions s ON s.id=cs.sq_id
+               WHERE cs.checkpoint_id=? ORDER BY cs.position,s.created_at""",
+            (checkpoint_id,),
+        )).fetchall()
+        return [
+            {
+                "id": str(row["id"]),
+                "text": str(row["text"]),
+                "status": str(row["status"]),
+                "position": int(row["position"]),
+                "questionCount": int(row["question_count"]),
+                "unitCount": int(row["unit_count"]),
+                "graphSnapshotId": row["graph_snapshot_id"],
+                "reviewRecommended": int(row["question_count"]) >= 2,
+            }
+            for row in rows
+        ]
 
     async def list_conversations(self, user_id: str, limit: int = 50, before: str | None = None) -> dict[str, Any]:
         limit = max(1, min(int(limit), 100))
@@ -366,6 +920,15 @@ class AppStore:
             {"id": str(r["id"]), "title": str(r["title"]), "createdAt": int(r["created_at"]), "updatedAt": int(r["updated_at"])}
             for r in rows
         ]
+        for item in items:
+            branch = await (await self._conn().execute(
+                """SELECT id,head_checkpoint_id FROM branches WHERE conversation_id=?
+                   ORDER BY updated_at DESC,created_at LIMIT 1""",
+                (item["id"],),
+            )).fetchone()
+            if branch is not None:
+                item["activeBranchId"] = str(branch["id"])
+                item["headCheckpointId"] = branch["head_checkpoint_id"]
         return {
             "items": items,
             "nextCursor": (
@@ -374,26 +937,77 @@ class AppStore:
             ),
         }
 
-    async def get_conversation(self, user_id: str, conversation_id: str) -> dict[str, Any] | None:
+    async def get_conversation(
+        self, user_id: str, conversation_id: str, branch_id: str | None = None
+    ) -> dict[str, Any] | None:
         conv = await (await self._conn().execute(
             "SELECT id,title,created_at,updated_at FROM conversations WHERE id=? AND user_id=?",
             (conversation_id, user_id),
         )).fetchone()
         if conv is None:
             return None
-        rows = await (await self._conn().execute(
-            "SELECT id,role,text,status,payload_json,created_at,updated_at FROM messages WHERE conversation_id=? ORDER BY ordinal",
-            (conversation_id,),
-        )).fetchall()
+        branches = await self.list_branches(user_id, conversation_id)
+        if not branches:
+            branch_id = await self._ensure_conversation_tree(conversation_id)
+            branches = await self.list_branches(user_id, conversation_id)
+        selected = next((item for item in branches if item["id"] == branch_id), None)
+        if selected is None:
+            selected = max(branches, key=lambda item: item["updatedAt"])
+        branch_id = str(selected["id"])
+        head = selected.get("headCheckpointId")
+        if head:
+            rows = await (await self._conn().execute(
+                """WITH RECURSIVE lineage(id,parent_id,message_id,depth) AS (
+                       SELECT id,parent_id,message_id,0 FROM checkpoints WHERE id=?
+                       UNION ALL
+                       SELECT cp.id,cp.parent_id,cp.message_id,lineage.depth+1
+                       FROM checkpoints cp JOIN lineage ON cp.id=lineage.parent_id
+                   )
+                   SELECT m.id,m.role,m.text,m.status,m.payload_json,m.created_at,m.updated_at,
+                          lineage.id AS checkpoint_id,lineage.depth
+                   FROM lineage JOIN messages m ON m.id=lineage.message_id
+                   ORDER BY lineage.depth DESC""",
+                (head,),
+            )).fetchall()
+        else:
+            rows = []
         messages: list[dict[str, Any]] = []
         for row in rows:
             payload = _loads(row["payload_json"], {})
-            payload.update({"id": str(row["id"]), "role": str(row["role"]), "text": str(row["text"]), "status": str(row["status"])})
+            payload.update({
+                "id": str(row["id"]),
+                "role": str(row["role"]),
+                "text": str(row["text"]),
+                "status": str(row["status"]),
+                "checkpointId": str(row["checkpoint_id"]),
+            })
             messages.append(payload)
+        agenda = await self._agenda_for_checkpoint(str(head)) if head else []
+        pending = await self.pending_for_branch(user_id, branch_id)
+        if pending and not any(item["id"] == pending["assistantMessageId"] for item in messages):
+            waiting_row = await (await self._conn().execute(
+                """SELECT id,role,text,status,payload_json FROM messages
+                   WHERE id=? AND conversation_id=? AND branch_id=?""",
+                (pending["assistantMessageId"], str(conv["id"]), branch_id),
+            )).fetchone()
+            if waiting_row is not None:
+                waiting_payload = _loads(waiting_row["payload_json"], {})
+                waiting_payload.update({
+                    "id": str(waiting_row["id"]),
+                    "role": str(waiting_row["role"]),
+                    "text": str(waiting_row["text"]),
+                    "status": str(waiting_row["status"]),
+                })
+                messages.append(waiting_payload)
         return {
             "id": str(conv["id"]), "title": str(conv["title"]),
             "createdAt": int(conv["created_at"]), "updatedAt": int(conv["updated_at"]),
             "messages": messages,
+            "branches": branches,
+            "activeBranchId": branch_id,
+            "headCheckpointId": head,
+            "agenda": agenda,
+            "pendingApproval": pending,
         }
 
     async def rename_conversation(self, user_id: str, conversation_id: str, title: str) -> bool:
@@ -420,10 +1034,22 @@ class AppStore:
         async with self._write_lock:
             await self._conn().execute("BEGIN IMMEDIATE")
             try:
+                await self._conn().execute("DELETE FROM branches WHERE conversation_id=?", (conversation_id,))
                 await self._conn().execute("DELETE FROM messages WHERE conversation_id=?", (conversation_id,))
+                await self._conn().execute("DELETE FROM evidence_units WHERE conversation_id=?", (conversation_id,))
+                await self._conn().execute("DELETE FROM subquestions WHERE conversation_id=?", (conversation_id,))
+                await self._conn().execute("DELETE FROM retrieval_snapshots WHERE conversation_id=?", (conversation_id,))
+                await self._conn().execute("DELETE FROM retrieval_events WHERE conversation_id=?", (conversation_id,))
+                await self._conn().execute("DELETE FROM graph_runs WHERE conversation_id=?", (conversation_id,))
                 await self._conn().execute("DELETE FROM conversation_sources WHERE conversation_id=?", (conversation_id,))
                 await self._conn().execute(
                     "UPDATE conversations SET title='Новый чат',updated_at=? WHERE id=?", (now_ms(), conversation_id)
+                )
+                ts = now_ms()
+                await self._conn().execute(
+                    """INSERT INTO branches(id,conversation_id,name,created_at,updated_at)
+                       VALUES(?,?, 'main', ?, ?)""",
+                    (str(uuid.uuid4()), conversation_id, ts, ts),
                 )
                 await self._conn().commit()
             except Exception:
@@ -432,44 +1058,117 @@ class AppStore:
         return True
 
     async def begin_turn(self, user_id: str, conversation_id: str, turn_id: str, text: str) -> tuple[str, str]:
+        branch_id = await self.main_branch_id(conversation_id)
+        result = await self.begin_branch_turn(
+            user_id,
+            conversation_id,
+            branch_id,
+            turn_id,
+            text,
+        )
+        return str(result["userMessageId"]), str(result["assistantMessageId"])
+
+    async def begin_branch_turn(
+        self,
+        user_id: str,
+        conversation_id: str,
+        branch_id: str,
+        turn_id: str,
+        text: str,
+        *,
+        base_checkpoint_id: str | None = None,
+        mode: str = "auto",
+        turn_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if not await self.conversation_owned(user_id, conversation_id):
             raise KeyError(conversation_id)
         async with self._write_lock:
             await self._conn().execute("BEGIN IMMEDIATE")
             try:
+                branch = await (await self._conn().execute(
+                    "SELECT head_checkpoint_id FROM branches WHERE id=? AND conversation_id=?",
+                    (branch_id, conversation_id),
+                )).fetchone()
+                if branch is None:
+                    raise KeyError(branch_id)
+                head = str(branch["head_checkpoint_id"]) if branch["head_checkpoint_id"] else None
+                if base_checkpoint_id is not None and base_checkpoint_id != head:
+                    raise RuntimeError("stale_checkpoint")
                 existing = await (await self._conn().execute(
                     "SELECT 1 FROM messages WHERE conversation_id=? AND turn_id=? LIMIT 1", (conversation_id, turn_id)
                 )).fetchone()
                 if existing is not None:
                     raise ValueError("duplicate turn_id")
+                active = await (await self._conn().execute(
+                    """SELECT 1 FROM messages
+                       WHERE conversation_id=? AND branch_id=? AND role='assistant'
+                         AND status IN ('streaming','waiting_approval') LIMIT 1""",
+                    (conversation_id, branch_id),
+                )).fetchone()
+                if active is not None:
+                    raise RuntimeError("active_turn")
                 row = await (await self._conn().execute(
                     "SELECT COALESCE(MAX(ordinal),-1)+1 AS n FROM messages WHERE conversation_id=?", (conversation_id,)
                 )).fetchone()
                 ordinal = int(row["n"])
                 user_mid, assistant_mid = str(uuid.uuid4()), str(uuid.uuid4())
+                user_checkpoint_id = str(uuid.uuid4())
                 ts = now_ms()
+                parent_cp = await self._checkpoint_row(head)
+                parent_message_id = str(parent_cp["message_id"]) if parent_cp and parent_cp["message_id"] else None
+                state = (
+                    _loads(parent_cp["state_json"], self._empty_checkpoint_state())
+                    if parent_cp is not None
+                    else self._empty_checkpoint_state()
+                )
+                state = dict(state)
+                state["turnConfig"] = dict(turn_config or {}) | {"mode": mode}
                 title_row = await (await self._conn().execute(
                     "SELECT title FROM conversations WHERE id=?", (conversation_id,)
                 )).fetchone()
                 title = str(title_row["title"]) if title_row else "Новый чат"
                 next_title = " ".join(text.strip().splitlines()[0].split())[:42] or "Новый чат"
                 await self._conn().execute(
-                    "INSERT INTO messages(id,conversation_id,turn_id,ordinal,role,text,status,payload_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                    (user_mid, conversation_id, turn_id, ordinal, "user", text, "done", "{}", ts, ts),
+                    """INSERT INTO messages
+                       (id,conversation_id,turn_id,ordinal,role,text,status,payload_json,created_at,updated_at,
+                        branch_id,parent_message_id,checkpoint_id,mode)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (user_mid, conversation_id, turn_id, ordinal, "user", text, "done", "{}", ts, ts,
+                     branch_id, parent_message_id, user_checkpoint_id, mode),
                 )
                 await self._conn().execute(
-                    "INSERT INTO messages(id,conversation_id,turn_id,ordinal,role,text,status,payload_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                    (assistant_mid, conversation_id, turn_id, ordinal + 1, "assistant", "", "streaming", "{}", ts, ts),
+                    """INSERT INTO messages
+                       (id,conversation_id,turn_id,ordinal,role,text,status,payload_json,created_at,updated_at,
+                        branch_id,parent_message_id,checkpoint_id,mode)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,NULL,?)""",
+                    (assistant_mid, conversation_id, turn_id, ordinal + 1, "assistant", "", "streaming", "{}", ts, ts,
+                     branch_id, user_mid, mode),
                 )
+                await self._conn().execute(
+                    """INSERT INTO checkpoints
+                       (id,conversation_id,branch_id,parent_id,message_id,kind,state_json,created_at)
+                       VALUES(?,?,?,?,?,?,?,?)""",
+                    (user_checkpoint_id, conversation_id, branch_id, head, user_mid, "user", _json(state), ts),
+                )
+                await self._copy_checkpoint_links(head, user_checkpoint_id)
                 await self._conn().execute(
                     "UPDATE conversations SET title=?,updated_at=? WHERE id=?",
                     (next_title if title == "Новый чат" else title, ts, conversation_id),
+                )
+                await self._conn().execute(
+                    "UPDATE branches SET head_checkpoint_id=?,updated_at=? WHERE id=?",
+                    (user_checkpoint_id, ts, branch_id),
                 )
                 await self._conn().commit()
             except Exception:
                 await self._conn().rollback()
                 raise
-        return user_mid, assistant_mid
+        return {
+            "userMessageId": user_mid,
+            "assistantMessageId": assistant_mid,
+            "userCheckpointId": user_checkpoint_id,
+            "branchId": branch_id,
+        }
 
     async def finish_turn(
         self, conversation_id: str, assistant_message_id: str, *, text: str,
@@ -477,6 +1176,7 @@ class AppStore:
         tool_messages: list[dict[str, Any]] | None = None,
         sources: Iterable[tuple[int, str]] = (), graph_run_id: str = "",
         graph_chains: list[dict[str, Any]] | None = None,
+        retrieval_state: dict[str, Any] | None = None,
     ) -> None:
         ts = now_ms()
         async with self._write_lock:
@@ -496,27 +1196,228 @@ class AppStore:
                         "INSERT OR REPLACE INTO graph_runs(id,conversation_id,message_id,chains_json,created_at) VALUES(?,?,?,?,?)",
                         (graph_run_id, conversation_id, assistant_message_id, _json(graph_chains), ts),
                     )
+                message_row = await (await self._conn().execute(
+                    """SELECT branch_id,parent_message_id,checkpoint_id FROM messages
+                       WHERE id=? AND conversation_id=?""",
+                    (assistant_message_id, conversation_id),
+                )).fetchone()
+                if message_row is not None and message_row["branch_id"]:
+                    branch_id = str(message_row["branch_id"])
+                    user_row = await (await self._conn().execute(
+                        "SELECT checkpoint_id FROM messages WHERE id=?",
+                        (message_row["parent_message_id"],),
+                    )).fetchone()
+                    parent_checkpoint_id = (
+                        str(user_row["checkpoint_id"])
+                        if user_row is not None and user_row["checkpoint_id"]
+                        else None
+                    )
+                    assistant_checkpoint_id = (
+                        str(message_row["checkpoint_id"])
+                        if message_row["checkpoint_id"]
+                        else str(uuid.uuid4())
+                    )
+                    parent_cp = await self._checkpoint_row(parent_checkpoint_id)
+                    state = (
+                        _loads(parent_cp["state_json"], self._empty_checkpoint_state())
+                        if parent_cp is not None
+                        else self._empty_checkpoint_state()
+                    )
+                    state = dict(state)
+                    if retrieval_state is not None:
+                        snapshot_id = str(uuid.uuid4())
+                        parent_snapshot = state.get("retrievalSnapshotId")
+                        await self._conn().execute(
+                            """INSERT INTO retrieval_snapshots(id,conversation_id,parent_id,state_json,created_at)
+                               VALUES(?,?,?,?,?)""",
+                            (snapshot_id, conversation_id, parent_snapshot, _json(retrieval_state), ts),
+                        )
+                        state["retrievalSnapshotId"] = snapshot_id
+                    await self._conn().execute(
+                        """INSERT OR IGNORE INTO checkpoints
+                           (id,conversation_id,branch_id,parent_id,message_id,kind,state_json,created_at)
+                           VALUES(?,?,?,?,?,?,?,?)""",
+                        (
+                            assistant_checkpoint_id,
+                            conversation_id,
+                            branch_id,
+                            parent_checkpoint_id,
+                            assistant_message_id,
+                            "assistant",
+                            _json(state),
+                            ts,
+                        ),
+                    )
+                    await self._copy_checkpoint_links(parent_checkpoint_id, assistant_checkpoint_id)
+                    if parent_checkpoint_id:
+                        await self._conn().execute(
+                            """UPDATE evidence_units SET created_checkpoint_id=?
+                               WHERE conversation_id=? AND created_checkpoint_id=?""",
+                            (assistant_checkpoint_id, conversation_id, parent_checkpoint_id),
+                        )
+                    if retrieval_state is not None:
+                        graphs = dict((retrieval_state.get("s3Bundle") or {}).get("graphs") or {})
+                        for sq_id, bundle in graphs.items():
+                            if not isinstance(bundle, dict):
+                                continue
+                            sq_row = await (await self._conn().execute(
+                                "SELECT 1 FROM subquestions WHERE id=? AND conversation_id=?",
+                                (str(sq_id), conversation_id),
+                            )).fetchone()
+                            if sq_row is None:
+                                continue
+                            bundle_json = _json(bundle)
+                            fingerprint = hashlib.sha256(bundle_json.encode("utf-8")).hexdigest()
+                            snapshot_row = await (await self._conn().execute(
+                                """SELECT id FROM graph_snapshots
+                                   WHERE conversation_id=? AND sq_id=? AND fingerprint=?""",
+                                (conversation_id, str(sq_id), fingerprint),
+                            )).fetchone()
+                            graph_snapshot_id = (
+                                str(snapshot_row["id"])
+                                if snapshot_row is not None
+                                else str(uuid.uuid4())
+                            )
+                            if snapshot_row is None:
+                                await self._conn().execute(
+                                    """INSERT INTO graph_snapshots
+                                       (id,conversation_id,sq_id,fingerprint,bundle_json,created_at)
+                                       VALUES(?,?,?,?,?,?)""",
+                                    (graph_snapshot_id, conversation_id, str(sq_id), fingerprint, bundle_json, ts),
+                                )
+                            await self._conn().execute(
+                                """UPDATE checkpoint_subquestions SET graph_snapshot_id=?
+                                   WHERE checkpoint_id=? AND sq_id=?""",
+                                (graph_snapshot_id, assistant_checkpoint_id, str(sq_id)),
+                            )
+                        await self._conn().execute(
+                            """INSERT INTO retrieval_events
+                               (id,conversation_id,checkpoint_id,event_type,payload_json,created_at)
+                               VALUES(?,?,?,?,?,?)""",
+                            (
+                                str(uuid.uuid4()),
+                                conversation_id,
+                                assistant_checkpoint_id,
+                                "retrieval_committed",
+                                _json({
+                                    "algorithmVersion": retrieval_state.get("algorithmVersion"),
+                                    "mode": retrieval_state.get("lastMode"),
+                                    "depth": retrieval_state.get("lastDepth"),
+                                    "subquestionIds": retrieval_state.get("lastSubquestionIds") or [],
+                                    "trace": retrieval_state.get("lastTrace") or {},
+                                    "pBefore": retrieval_state.get("pBefore") or {},
+                                    "pAfter": (retrieval_state.get("carousel") or {}).get("p_store") or {},
+                                }),
+                                ts,
+                            ),
+                        )
+                    unit_ids = list(state.get("unitIds") or [])
+                    next_no_row = await (await self._conn().execute(
+                        "SELECT COALESCE(MAX(unit_no),0)+1 AS n FROM evidence_units WHERE conversation_id=?",
+                        (conversation_id,),
+                    )).fetchone()
+                    next_no = int(next_no_row["n"] if next_no_row else 1)
+                    for chain in graph_chains or []:
+                        if not isinstance(chain, dict):
+                            continue
+                        signature = self._chain_signature(chain)
+                        existing_unit = await (await self._conn().execute(
+                            "SELECT id FROM evidence_units WHERE conversation_id=? AND signature=?",
+                            (conversation_id, signature),
+                        )).fetchone()
+                        if existing_unit is None:
+                            unit_id = str(uuid.uuid4())
+                            source_graph = str(chain.get("source_graph") or "")
+                            sq_row = await (await self._conn().execute(
+                                """SELECT s.id FROM checkpoint_subquestions cs
+                                   JOIN subquestions s ON s.id=cs.sq_id
+                                   WHERE cs.checkpoint_id=? AND (s.id=? OR s.canonical_text=?) LIMIT 1""",
+                                (parent_checkpoint_id, source_graph, source_graph.casefold()),
+                            )).fetchone() if parent_checkpoint_id else None
+                            sq_id = str(sq_row["id"]) if sq_row is not None else None
+                            await self._conn().execute(
+                                """INSERT INTO evidence_units
+                                   (id,conversation_id,created_checkpoint_id,unit_no,sq_id,signature,chain_json,created_at)
+                                   VALUES(?,?,?,?,?,?,?,?)""",
+                                (unit_id, conversation_id, assistant_checkpoint_id, next_no, sq_id, signature, _json(chain), ts),
+                            )
+                            next_no += 1
+                        else:
+                            unit_id = str(existing_unit["id"])
+                        await self._conn().execute(
+                            "INSERT OR IGNORE INTO checkpoint_units(checkpoint_id,unit_id) VALUES(?,?)",
+                            (assistant_checkpoint_id, unit_id),
+                        )
+                        if unit_id not in unit_ids:
+                            unit_ids.append(unit_id)
+                    state["unitIds"] = unit_ids
+                    await self._conn().execute(
+                        "UPDATE checkpoints SET state_json=? WHERE id=?",
+                        (_json(state), assistant_checkpoint_id),
+                    )
+                    await self._conn().execute(
+                        "UPDATE messages SET checkpoint_id=? WHERE id=?",
+                        (assistant_checkpoint_id, assistant_message_id),
+                    )
+                    await self._conn().execute(
+                        "UPDATE branches SET head_checkpoint_id=?,updated_at=? WHERE id=?",
+                        (assistant_checkpoint_id, ts, branch_id),
+                    )
                 await self._conn().execute("UPDATE conversations SET updated_at=? WHERE id=?", (ts, conversation_id))
                 await self._conn().commit()
             except Exception:
                 await self._conn().rollback()
                 raise
 
-    async def load_model_context(self, user_id: str, conversation_id: str, limit: int) -> tuple[list[dict[str, Any]], list[tuple[int, str]]]:
+    async def load_model_context(
+        self,
+        user_id: str,
+        conversation_id: str,
+        limit: int,
+        *,
+        branch_id: str | None = None,
+    ) -> tuple[list[dict[str, Any]], list[tuple[int, str]]]:
         if not await self.conversation_owned(user_id, conversation_id):
             raise KeyError(conversation_id)
-        rows = await (await self._conn().execute(
-            """SELECT u.text AS user_text,a.raw_text,a.tool_messages_json
-               FROM messages u JOIN messages a
-                 ON a.conversation_id=u.conversation_id AND a.turn_id=u.turn_id AND a.role='assistant'
-               WHERE u.conversation_id=? AND u.role='user' AND a.status='done' AND a.raw_text!=''
-               ORDER BY u.ordinal DESC LIMIT ?""",
-            (conversation_id, max(1, int(limit))),
-        )).fetchall()
-        turns = [
-            {"user": str(r["user_text"]), "assistant": str(r["raw_text"]), "tool_messages": _loads(r["tool_messages_json"], [])}
-            for r in reversed(rows)
-        ]
+        selected_branch = branch_id or await self.main_branch_id(conversation_id)
+        branch = await (await self._conn().execute(
+            "SELECT head_checkpoint_id FROM branches WHERE id=? AND conversation_id=?",
+            (selected_branch, conversation_id),
+        )).fetchone()
+        head = str(branch["head_checkpoint_id"] or "") if branch is not None else ""
+        if head:
+            rows = await (await self._conn().execute(
+                """WITH RECURSIVE lineage(id,parent_id,message_id,depth) AS (
+                       SELECT id,parent_id,message_id,0 FROM checkpoints WHERE id=?
+                       UNION ALL
+                       SELECT cp.id,cp.parent_id,cp.message_id,lineage.depth+1
+                       FROM checkpoints cp JOIN lineage ON cp.id=lineage.parent_id
+                   )
+                   SELECT m.role,m.text,m.raw_text,m.status,m.tool_messages_json,lineage.depth
+                   FROM lineage JOIN messages m ON m.id=lineage.message_id
+                   ORDER BY lineage.depth DESC""",
+                (head,),
+            )).fetchall()
+        else:
+            rows = []
+        turns: list[dict[str, Any]] = []
+        pending_user = ""
+        for row in rows:
+            if str(row["role"]) == "user":
+                pending_user = str(row["text"])
+            elif (
+                pending_user
+                and str(row["role"]) == "assistant"
+                and str(row["status"]) == "done"
+                and str(row["raw_text"] or "")
+            ):
+                turns.append({
+                    "user": pending_user,
+                    "assistant": str(row["raw_text"]),
+                    "tool_messages": _loads(row["tool_messages_json"], []),
+                })
+                pending_user = ""
+        turns = turns[-max(1, int(limit)):]
         source_rows = await (await self._conn().execute(
             "SELECT source_id,source_file FROM conversation_sources WHERE conversation_id=? ORDER BY source_id",
             (conversation_id,),
@@ -529,6 +1430,1031 @@ class AppStore:
                WHERE g.id=? AND c.user_id=?""", (run_id, user_id)
         )).fetchone()
         return _loads(row["chains_json"], []) if row is not None else None
+
+    @staticmethod
+    def canonical_subquestion(text: str) -> str:
+        return " ".join((text or "").strip().casefold().rstrip("?.!").split())
+
+    async def apply_agenda_event(
+        self,
+        user_id: str,
+        branch_id: str,
+        *,
+        base_checkpoint_id: str,
+        action: str,
+        sq_id: str = "",
+        text: str = "",
+        ordered_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        branch = await self.branch_detail(user_id, branch_id)
+        if branch is None:
+            raise KeyError(branch_id)
+        if branch["headCheckpointId"] != base_checkpoint_id:
+            raise RuntimeError("stale_checkpoint")
+        checkpoint_id = str(uuid.uuid4())
+        ts = now_ms()
+        parent = await self._checkpoint_row(base_checkpoint_id)
+        state = (
+            _loads(parent["state_json"], self._empty_checkpoint_state())
+            if parent is not None
+            else self._empty_checkpoint_state()
+        )
+        async with self._write_lock:
+            await self._conn().execute("BEGIN IMMEDIATE")
+            try:
+                await self._conn().execute(
+                    """INSERT INTO checkpoints
+                       (id,conversation_id,branch_id,parent_id,message_id,kind,state_json,created_at)
+                       VALUES(?,?,?,?,NULL,'agenda',?,?)""",
+                    (checkpoint_id, branch["conversationId"], branch_id, base_checkpoint_id, _json(state), ts),
+                )
+                await self._copy_checkpoint_links(base_checkpoint_id, checkpoint_id)
+                if action in {"add", "edit"}:
+                    clean = " ".join((text or "").strip().split())
+                    canonical = self.canonical_subquestion(clean)
+                    if not clean or not canonical:
+                        raise ValueError("SQ не может быть пустым")
+                    found = await (await self._conn().execute(
+                        "SELECT id FROM subquestions WHERE conversation_id=? AND canonical_text=?",
+                        (branch["conversationId"], canonical),
+                    )).fetchone()
+                    new_sq_id = str(found["id"]) if found is not None else str(uuid.uuid4())
+                    if found is None:
+                        await self._conn().execute(
+                            "INSERT INTO subquestions(id,conversation_id,text,canonical_text,created_at) VALUES(?,?,?,?,?)",
+                            (new_sq_id, branch["conversationId"], clean, canonical, ts),
+                        )
+                    if action == "edit":
+                        old = await (await self._conn().execute(
+                            """SELECT status,position,question_count,unit_count FROM checkpoint_subquestions
+                               WHERE checkpoint_id=? AND sq_id=?""",
+                            (checkpoint_id, sq_id),
+                        )).fetchone()
+                        if old is None:
+                            raise KeyError(sq_id)
+                        await self._conn().execute(
+                            "DELETE FROM checkpoint_subquestions WHERE checkpoint_id=? AND sq_id=?",
+                            (checkpoint_id, sq_id),
+                        )
+                        values = (
+                            str(old["status"]), int(old["position"]), int(old["question_count"]), int(old["unit_count"])
+                        )
+                    else:
+                        pos = await (await self._conn().execute(
+                            "SELECT COALESCE(MAX(position),-1)+1 AS n FROM checkpoint_subquestions WHERE checkpoint_id=?",
+                            (checkpoint_id,),
+                        )).fetchone()
+                        values = ("open", int(pos["n"] if pos else 0), 0, 0)
+                    await self._conn().execute(
+                        """INSERT OR REPLACE INTO checkpoint_subquestions
+                           (checkpoint_id,sq_id,status,position,question_count,unit_count)
+                           VALUES(?,?,?,?,?,?)""",
+                        (checkpoint_id, new_sq_id, *values),
+                    )
+                elif action in {"close", "reopen"}:
+                    cur = await self._conn().execute(
+                        "UPDATE checkpoint_subquestions SET status=? WHERE checkpoint_id=? AND sq_id=?",
+                        ("closed" if action == "close" else "open", checkpoint_id, sq_id),
+                    )
+                    if not cur.rowcount:
+                        raise KeyError(sq_id)
+                elif action == "reorder":
+                    for position, item_id in enumerate(ordered_ids or []):
+                        await self._conn().execute(
+                            "UPDATE checkpoint_subquestions SET position=? WHERE checkpoint_id=? AND sq_id=?",
+                            (position, checkpoint_id, item_id),
+                        )
+                else:
+                    raise ValueError("Unsupported agenda action")
+                await self._conn().execute(
+                    "UPDATE branches SET head_checkpoint_id=?,updated_at=? WHERE id=?",
+                    (checkpoint_id, ts, branch_id),
+                )
+                await self._conn().execute(
+                    "UPDATE conversations SET updated_at=? WHERE id=?",
+                    (ts, branch["conversationId"]),
+                )
+                await self._conn().commit()
+            except Exception:
+                await self._conn().rollback()
+                raise
+        return {
+            "checkpointId": checkpoint_id,
+            "agenda": await self._agenda_for_checkpoint(checkpoint_id),
+        }
+
+    async def upsert_turn_subquestions(
+        self,
+        conversation_id: str,
+        checkpoint_id: str,
+        texts: list[str],
+        *,
+        increment: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Attach approved/model SQs to a user checkpoint."""
+        ts = now_ms()
+        async with self._write_lock:
+            await self._conn().execute("BEGIN IMMEDIATE")
+            try:
+                pos_row = await (await self._conn().execute(
+                    "SELECT COALESCE(MAX(position),-1)+1 AS n FROM checkpoint_subquestions WHERE checkpoint_id=?",
+                    (checkpoint_id,),
+                )).fetchone()
+                next_pos = int(pos_row["n"] if pos_row else 0)
+                touched: list[str] = []
+                for raw in texts:
+                    clean = " ".join(str(raw).strip().split())
+                    canonical = self.canonical_subquestion(clean)
+                    if not canonical:
+                        continue
+                    row = await (await self._conn().execute(
+                        "SELECT id FROM subquestions WHERE conversation_id=? AND canonical_text=?",
+                        (conversation_id, canonical),
+                    )).fetchone()
+                    sq_id = str(row["id"]) if row is not None else str(uuid.uuid4())
+                    if row is None:
+                        await self._conn().execute(
+                            "INSERT INTO subquestions(id,conversation_id,text,canonical_text,created_at) VALUES(?,?,?,?,?)",
+                            (sq_id, conversation_id, clean, canonical, ts),
+                        )
+                    current = await (await self._conn().execute(
+                        "SELECT question_count,status FROM checkpoint_subquestions WHERE checkpoint_id=? AND sq_id=?",
+                        (checkpoint_id, sq_id),
+                    )).fetchone()
+                    if current is None:
+                        await self._conn().execute(
+                            """INSERT INTO checkpoint_subquestions
+                               (checkpoint_id,sq_id,status,position,question_count,unit_count)
+                               VALUES(?,?, 'open', ?, ?, 0)""",
+                            (checkpoint_id, sq_id, next_pos, 1 if increment else 0),
+                        )
+                        next_pos += 1
+                    elif increment and str(current["status"]) == "open":
+                        parent_count_row = await (await self._conn().execute(
+                            """SELECT COALESCE(pcs.question_count,0) AS n
+                               FROM checkpoints cp
+                               LEFT JOIN checkpoint_subquestions pcs
+                                 ON pcs.checkpoint_id=cp.parent_id AND pcs.sq_id=?
+                               WHERE cp.id=?""",
+                            (sq_id, checkpoint_id),
+                        )).fetchone()
+                        target_count = int(parent_count_row["n"] if parent_count_row else 0) + 1
+                        await self._conn().execute(
+                            """UPDATE checkpoint_subquestions
+                               SET question_count=MAX(question_count,?)
+                               WHERE checkpoint_id=? AND sq_id=?""",
+                            (target_count, checkpoint_id, sq_id),
+                        )
+                    touched.append(sq_id)
+                await self._conn().commit()
+            except Exception:
+                await self._conn().rollback()
+                raise
+        return await self._agenda_for_checkpoint(checkpoint_id)
+
+    async def checkpoint_chains(
+        self,
+        user_id: str,
+        checkpoint_id: str,
+        *,
+        scope: str = "context",
+        unit_id: str = "",
+    ) -> list[dict[str, Any]] | None:
+        state = await self.checkpoint_state(user_id, checkpoint_id)
+        if state is None:
+            return None
+        if scope == "all_branches":
+            rows = await (await self._conn().execute(
+                """SELECT id,unit_no,chain_json,created_checkpoint_id
+                   FROM evidence_units WHERE conversation_id=? ORDER BY unit_no""",
+                (state["conversationId"],),
+            )).fetchall()
+        else:
+            params: list[Any] = [checkpoint_id]
+            where = "cu.checkpoint_id=?"
+            if scope == "unit" and unit_id:
+                where += " AND u.id=?"
+                params.append(unit_id)
+            rows = await (await self._conn().execute(
+                f"""SELECT u.id,u.unit_no,u.chain_json,u.created_checkpoint_id
+                    FROM checkpoint_units cu JOIN evidence_units u ON u.id=cu.unit_id
+                    WHERE {where} ORDER BY u.unit_no""",
+                params,
+            )).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            if scope == "new_in_answer" and str(row["created_checkpoint_id"] or "") != checkpoint_id:
+                continue
+            chain = _loads(row["chain_json"], {})
+            if not isinstance(chain, dict):
+                continue
+            chain = dict(chain)
+            chain["unit_id"] = str(row["id"])
+            chain["unit_no"] = int(row["unit_no"])
+            chain["chain_id"] = f"u{int(row['unit_no'])}"
+            out.append(chain)
+        return out
+
+    async def load_retrieval_state(self, user_id: str, checkpoint_id: str) -> dict[str, Any]:
+        cp = await self.checkpoint_state(user_id, checkpoint_id)
+        if cp is None:
+            raise KeyError(checkpoint_id)
+        snapshot_id = cp["state"].get("retrievalSnapshotId")
+        if not snapshot_id:
+            return {
+                "algorithmVersion": "v6-checkpoint-1",
+                "carousel": {},
+                "s3Bundle": {},
+                "priorSignatures": [],
+            }
+        row = await (await self._conn().execute(
+            "SELECT state_json FROM retrieval_snapshots WHERE id=? AND conversation_id=?",
+            (snapshot_id, cp["conversationId"]),
+        )).fetchone()
+        state = _loads(row["state_json"], {}) if row is not None else {}
+        return state if isinstance(state, dict) else {}
+
+    async def record_units(
+        self,
+        conversation_id: str,
+        checkpoint_id: str,
+        chains: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Atomically allocate conversation-global UNIT numbers."""
+        cp = await self._checkpoint_row(checkpoint_id)
+        if cp is None or str(cp["conversation_id"]) != conversation_id:
+            raise KeyError(checkpoint_id)
+        state = _loads(cp["state_json"], self._empty_checkpoint_state())
+        unit_ids = list(state.get("unitIds") or [])
+        recorded: list[dict[str, Any]] = []
+        async with self._write_lock:
+            await self._conn().execute("BEGIN IMMEDIATE")
+            try:
+                next_row = await (await self._conn().execute(
+                    "SELECT COALESCE(MAX(unit_no),0)+1 AS n FROM evidence_units WHERE conversation_id=?",
+                    (conversation_id,),
+                )).fetchone()
+                next_no = int(next_row["n"] if next_row else 1)
+                for source in chains:
+                    chain = dict(source)
+                    signature = self._chain_signature(chain)
+                    existing = await (await self._conn().execute(
+                        "SELECT id,unit_no,sq_id,chain_json FROM evidence_units WHERE conversation_id=? AND signature=?",
+                        (conversation_id, signature),
+                    )).fetchone()
+                    if existing is None:
+                        unit_id, unit_no = str(uuid.uuid4()), next_no
+                        next_no += 1
+                        source_graph = str(chain.get("source_graph") or "")
+                        sq = await (await self._conn().execute(
+                            "SELECT sq_id FROM checkpoint_subquestions WHERE checkpoint_id=? AND sq_id=?",
+                            (checkpoint_id, source_graph),
+                        )).fetchone()
+                        sq_id = str(sq["sq_id"]) if sq is not None else None
+                        await self._conn().execute(
+                            """INSERT INTO evidence_units
+                               (id,conversation_id,created_checkpoint_id,unit_no,sq_id,signature,chain_json,created_at)
+                               VALUES(?,?,?,?,?,?,?,?)""",
+                            (unit_id, conversation_id, checkpoint_id, unit_no, sq_id, signature, _json(chain), now_ms()),
+                        )
+                        if sq_id:
+                            await self._conn().execute(
+                                """UPDATE checkpoint_subquestions SET unit_count=unit_count+1
+                                   WHERE checkpoint_id=? AND sq_id=?""",
+                                (checkpoint_id, sq_id),
+                            )
+                    else:
+                        unit_id, unit_no = str(existing["id"]), int(existing["unit_no"])
+                    await self._conn().execute(
+                        "INSERT OR IGNORE INTO checkpoint_units(checkpoint_id,unit_id) VALUES(?,?)",
+                        (checkpoint_id, unit_id),
+                    )
+                    if unit_id not in unit_ids:
+                        unit_ids.append(unit_id)
+                    chain["unit_id"] = unit_id
+                    chain["unit_no"] = unit_no
+                    chain["chain_id"] = f"u{unit_no}"
+                    recorded.append(chain)
+                state["unitIds"] = unit_ids
+                await self._conn().execute(
+                    "UPDATE checkpoints SET state_json=? WHERE id=?",
+                    (_json(state), checkpoint_id),
+                )
+                await self._conn().commit()
+            except Exception:
+                await self._conn().rollback()
+                raise
+        return recorded
+
+    async def audit_export(self, user_id: str, checkpoint_id: str) -> dict[str, Any] | None:
+        cp = await self.checkpoint_state(user_id, checkpoint_id)
+        if cp is None:
+            return None
+        snapshot_id = cp["state"].get("retrievalSnapshotId")
+        retrieval: dict[str, Any] | None = None
+        if snapshot_id:
+            row = await (await self._conn().execute(
+                "SELECT id,parent_id,state_json,created_at FROM retrieval_snapshots WHERE id=?",
+                (snapshot_id,),
+            )).fetchone()
+            if row is not None:
+                retrieval = {
+                    "id": str(row["id"]),
+                    "parentId": row["parent_id"],
+                    "state": _loads(row["state_json"], {}),
+                    "createdAt": int(row["created_at"]),
+                }
+        events = await (await self._conn().execute(
+            "SELECT event_type,payload_json,created_at FROM retrieval_events WHERE checkpoint_id=? ORDER BY created_at",
+            (checkpoint_id,),
+        )).fetchall()
+        return {
+            "checkpoint": cp,
+            "retrieval": retrieval,
+            "units": await self.checkpoint_chains(user_id, checkpoint_id) or [],
+            "events": [
+                {"type": str(row["event_type"]), "payload": _loads(row["payload_json"], {}), "createdAt": int(row["created_at"])}
+                for row in events
+            ],
+        }
+
+    async def list_card_templates(self, user_id: str, *, include_archived: bool = False) -> list[dict[str, Any]]:
+        archived = "" if include_archived else "AND t.archived_at IS NULL"
+        rows = await (await self._conn().execute(
+            f"""SELECT t.id,t.owner_user_id,t.name,t.description,t.archived_at,t.created_at,t.updated_at,
+                       v.id AS version_id,v.version,v.schema_json,v.ui_json,v.instructions
+                FROM card_templates t
+                JOIN card_template_versions v ON v.template_id=t.id
+                WHERE (t.owner_user_id IS NULL OR t.owner_user_id=?) {archived}
+                  AND v.version=(SELECT MAX(v2.version) FROM card_template_versions v2 WHERE v2.template_id=t.id)
+                ORDER BY t.owner_user_id IS NOT NULL,t.name""",
+            (user_id,),
+        )).fetchall()
+        return [
+            {
+                "id": str(row["id"]),
+                "name": str(row["name"]),
+                "description": str(row["description"]),
+                "system": row["owner_user_id"] is None,
+                "archived": row["archived_at"] is not None,
+                "createdAt": int(row["created_at"]),
+                "updatedAt": int(row["updated_at"]),
+                "latestVersion": {
+                    "id": str(row["version_id"]),
+                    "version": int(row["version"]),
+                    "schema": _loads(row["schema_json"], {}),
+                    "ui": _loads(row["ui_json"], {}),
+                    "instructions": str(row["instructions"]),
+                },
+            }
+            for row in rows
+        ]
+
+    async def create_card_template(
+        self,
+        user_id: str,
+        *,
+        name: str,
+        description: str,
+        schema: dict[str, Any],
+        ui: dict[str, Any] | None = None,
+        instructions: str = "",
+    ) -> dict[str, Any]:
+        clean = " ".join((name or "").strip().split())[:80]
+        if not clean:
+            raise ValueError("Название шаблона обязательно")
+        template_id, version_id = str(uuid.uuid4()), str(uuid.uuid4())
+        ts = now_ms()
+        async with self._write_lock:
+            await self._conn().execute("BEGIN IMMEDIATE")
+            try:
+                await self._conn().execute(
+                    """INSERT INTO card_templates
+                       (id,owner_user_id,name,description,created_at,updated_at)
+                       VALUES(?,?,?,?,?,?)""",
+                    (template_id, user_id, clean, (description or "").strip()[:400], ts, ts),
+                )
+                await self._conn().execute(
+                    """INSERT INTO card_template_versions
+                       (id,template_id,version,schema_json,ui_json,instructions,created_at)
+                       VALUES(?,?,?,?,?,?,?)""",
+                    (version_id, template_id, 1, _json(schema), _json(ui or {}), (instructions or "").strip()[:4000], ts),
+                )
+                await self._conn().commit()
+            except Exception:
+                await self._conn().rollback()
+                raise
+        return {
+            "id": template_id,
+            "name": clean,
+            "description": (description or "").strip()[:400],
+            "system": False,
+            "archived": False,
+            "createdAt": ts,
+            "updatedAt": ts,
+            "latestVersion": {"id": version_id, "version": 1, "schema": schema, "ui": ui or {}, "instructions": instructions},
+        }
+
+    async def add_card_template_version(
+        self,
+        user_id: str,
+        template_id: str,
+        *,
+        schema: dict[str, Any],
+        ui: dict[str, Any] | None = None,
+        instructions: str = "",
+        name: str | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        row = await (await self._conn().execute(
+            "SELECT owner_user_id,name,description FROM card_templates WHERE id=? AND archived_at IS NULL",
+            (template_id,),
+        )).fetchone()
+        if row is None or str(row["owner_user_id"] or "") != user_id:
+            raise KeyError(template_id)
+        version_row = await (await self._conn().execute(
+            "SELECT COALESCE(MAX(version),0)+1 AS n FROM card_template_versions WHERE template_id=?",
+            (template_id,),
+        )).fetchone()
+        version = int(version_row["n"] if version_row else 1)
+        version_id, ts = str(uuid.uuid4()), now_ms()
+        clean_name = " ".join((name if name is not None else str(row["name"])).strip().split())[:80]
+        clean_desc = (description if description is not None else str(row["description"])).strip()[:400]
+        async with self._write_lock:
+            await self._conn().execute(
+                """INSERT INTO card_template_versions
+                   (id,template_id,version,schema_json,ui_json,instructions,created_at)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (version_id, template_id, version, _json(schema), _json(ui or {}), (instructions or "").strip()[:4000], ts),
+            )
+            await self._conn().execute(
+                "UPDATE card_templates SET name=?,description=?,updated_at=? WHERE id=?",
+                (clean_name, clean_desc, ts, template_id),
+            )
+            await self._conn().commit()
+        return {
+            "id": version_id,
+            "templateId": template_id,
+            "version": version,
+            "schema": schema,
+            "ui": ui or {},
+            "instructions": instructions,
+        }
+
+    async def archive_card_template(self, user_id: str, template_id: str) -> bool:
+        async with self._write_lock:
+            cur = await self._conn().execute(
+                "UPDATE card_templates SET archived_at=?,updated_at=? WHERE id=? AND owner_user_id=?",
+                (now_ms(), now_ms(), template_id, user_id),
+            )
+            await self._conn().commit()
+        return bool(cur.rowcount)
+
+    async def template_version_for_user(self, user_id: str, version_id: str) -> dict[str, Any] | None:
+        row = await (await self._conn().execute(
+            """SELECT v.id,v.template_id,v.version,v.schema_json,v.ui_json,v.instructions,t.name,t.owner_user_id
+               FROM card_template_versions v JOIN card_templates t ON t.id=v.template_id
+               WHERE v.id=? AND t.archived_at IS NULL AND (t.owner_user_id IS NULL OR t.owner_user_id=?)""",
+            (version_id, user_id),
+        )).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": str(row["id"]),
+            "templateId": str(row["template_id"]),
+            "templateName": str(row["name"]),
+            "version": int(row["version"]),
+            "schema": _loads(row["schema_json"], {}),
+            "ui": _loads(row["ui_json"], {}),
+            "instructions": str(row["instructions"]),
+            "system": row["owner_user_id"] is None,
+        }
+
+    async def create_card_draft(
+        self,
+        user_id: str,
+        *,
+        checkpoint_id: str | None,
+        template_version_id: str,
+        data: dict[str, Any],
+        provenance: dict[str, Any] | None = None,
+        gaps: list[Any] | None = None,
+    ) -> dict[str, Any]:
+        if await self.template_version_for_user(user_id, template_version_id) is None:
+            raise KeyError(template_version_id)
+        if checkpoint_id and not await self.checkpoint_owned(user_id, checkpoint_id):
+            raise KeyError(checkpoint_id)
+        draft_id, ts = str(uuid.uuid4()), now_ms()
+        async with self._write_lock:
+            await self._conn().execute(
+                """INSERT INTO card_drafts
+                   (id,user_id,origin_checkpoint_id,template_version_id,data_json,provenance_json,gaps_json,status,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?,'draft',?,?)""",
+                (draft_id, user_id, checkpoint_id, template_version_id, _json(data), _json(provenance or {}), _json(gaps or []), ts, ts),
+            )
+            await self._conn().commit()
+        return {
+            "id": draft_id,
+            "originCheckpointId": checkpoint_id,
+            "templateVersionId": template_version_id,
+            "data": data,
+            "provenance": provenance or {},
+            "gaps": gaps or [],
+            "status": "draft",
+            "createdAt": ts,
+            "updatedAt": ts,
+        }
+
+    async def append_card_draft_message(
+        self,
+        user_id: str,
+        checkpoint_id: str,
+        draft: dict[str, Any],
+        *,
+        template_name: str,
+    ) -> dict[str, Any]:
+        """Persist a generated draft as an assistant message and immutable checkpoint."""
+        async with self._write_lock:
+            await self._conn().execute("BEGIN IMMEDIATE")
+            try:
+                checkpoint = await (await self._conn().execute(
+                    """SELECT cp.*,b.head_checkpoint_id,c.user_id
+                       FROM checkpoints cp
+                       JOIN branches b ON b.id=cp.branch_id
+                       JOIN conversations c ON c.id=cp.conversation_id
+                       WHERE cp.id=?""",
+                    (checkpoint_id,),
+                )).fetchone()
+                if checkpoint is None or str(checkpoint["user_id"]) != user_id:
+                    raise KeyError(checkpoint_id)
+                if str(checkpoint["head_checkpoint_id"] or "") != checkpoint_id:
+                    raise RuntimeError("stale_checkpoint")
+                conversation_id = str(checkpoint["conversation_id"])
+                branch_id = str(checkpoint["branch_id"])
+                row = await (await self._conn().execute(
+                    "SELECT COALESCE(MAX(ordinal),-1)+1 AS n FROM messages WHERE conversation_id=?",
+                    (conversation_id,),
+                )).fetchone()
+                message_id = str(uuid.uuid4())
+                next_checkpoint_id = str(uuid.uuid4())
+                ts = now_ms()
+                payload = {
+                    "cardDraft": draft,
+                    "cardTemplateName": template_name,
+                }
+                await self._conn().execute(
+                    """INSERT INTO messages
+                       (id,conversation_id,turn_id,ordinal,role,text,status,payload_json,created_at,updated_at,
+                        branch_id,parent_message_id,checkpoint_id,mode)
+                       VALUES(?,?,?,?,?,'','done',?,?,?,?,?,?,?)""",
+                    (
+                        message_id,
+                        conversation_id,
+                        f"card:{draft['id']}",
+                        int(row["n"] if row else 0),
+                        "assistant",
+                        _json(payload),
+                        ts,
+                        ts,
+                        branch_id,
+                        checkpoint["message_id"],
+                        next_checkpoint_id,
+                        "card",
+                    ),
+                )
+                await self._conn().execute(
+                    """INSERT INTO checkpoints
+                       (id,conversation_id,branch_id,parent_id,message_id,kind,state_json,created_at)
+                       VALUES(?,?,?,?,?,'card_draft',?,?)""",
+                    (
+                        next_checkpoint_id,
+                        conversation_id,
+                        branch_id,
+                        checkpoint_id,
+                        message_id,
+                        checkpoint["state_json"],
+                        ts,
+                    ),
+                )
+                await self._copy_checkpoint_links(checkpoint_id, next_checkpoint_id)
+                await self._conn().execute(
+                    "UPDATE branches SET head_checkpoint_id=?,updated_at=? WHERE id=?",
+                    (next_checkpoint_id, ts, branch_id),
+                )
+                await self._conn().execute(
+                    "UPDATE conversations SET updated_at=? WHERE id=?",
+                    (ts, conversation_id),
+                )
+                await self._conn().commit()
+            except Exception:
+                await self._conn().rollback()
+                raise
+        return {
+            **payload,
+            "id": message_id,
+            "role": "assistant",
+            "text": "",
+            "status": "done",
+            "checkpointId": next_checkpoint_id,
+        }
+
+    async def checkpoint_text_context(
+        self, user_id: str, checkpoint_id: str
+    ) -> list[dict[str, str]] | None:
+        if not await self.checkpoint_owned(user_id, checkpoint_id):
+            return None
+        rows = await (await self._conn().execute(
+            """WITH RECURSIVE lineage(id,parent_id,message_id,depth) AS (
+                   SELECT id,parent_id,message_id,0 FROM checkpoints WHERE id=?
+                   UNION ALL
+                   SELECT cp.id,cp.parent_id,cp.message_id,lineage.depth+1
+                   FROM checkpoints cp JOIN lineage ON cp.id=lineage.parent_id
+               )
+               SELECT m.role,m.text,lineage.depth
+               FROM lineage JOIN messages m ON m.id=lineage.message_id
+               WHERE m.text <> ''
+               ORDER BY lineage.depth DESC""",
+            (checkpoint_id,),
+        )).fetchall()
+        return [{"role": str(row["role"]), "text": str(row["text"])} for row in rows]
+
+    async def update_card_draft(
+        self, user_id: str, draft_id: str, *, data: dict[str, Any], provenance: dict[str, Any], gaps: list[Any]
+    ) -> bool:
+        async with self._write_lock:
+            cur = await self._conn().execute(
+                """UPDATE card_drafts SET data_json=?,provenance_json=?,gaps_json=?,updated_at=?
+                   WHERE id=? AND user_id=? AND status='draft'""",
+                (_json(data), _json(provenance), _json(gaps), now_ms(), draft_id, user_id),
+            )
+            await self._conn().commit()
+        return bool(cur.rowcount)
+
+    async def save_card_draft(self, user_id: str, draft_id: str, *, title: str = "") -> dict[str, Any]:
+        row = await (await self._conn().execute(
+            """SELECT * FROM card_drafts WHERE id=? AND user_id=? AND status='draft'""",
+            (draft_id, user_id),
+        )).fetchone()
+        if row is None:
+            raise KeyError(draft_id)
+        checkpoint_id = str(row["origin_checkpoint_id"] or "")
+        origin = await self.audit_export(user_id, checkpoint_id) if checkpoint_id else {"kind": "imported"}
+        data = _loads(row["data_json"], {})
+        clean_title = " ".join((title or str(data.get("title") or "Карточка")).strip().split())[:120] or "Карточка"
+        card_id, revision_id, ts = str(uuid.uuid4()), str(uuid.uuid4()), now_ms()
+        async with self._write_lock:
+            await self._conn().execute("BEGIN IMMEDIATE")
+            try:
+                await self._conn().execute(
+                    """INSERT INTO cards(id,user_id,template_version_id,title,created_at,updated_at)
+                       VALUES(?,?,?,?,?,?)""",
+                    (card_id, user_id, str(row["template_version_id"]), clean_title, ts, ts),
+                )
+                await self._conn().execute(
+                    """INSERT INTO card_revisions
+                       (id,card_id,revision,data_json,provenance_json,gaps_json,origin_snapshot_json,created_at)
+                       VALUES(?,?,1,?,?,?,?,?)""",
+                    (revision_id, card_id, row["data_json"], row["provenance_json"], row["gaps_json"], _json(origin or {}), ts),
+                )
+                await self._conn().execute(
+                    "UPDATE card_drafts SET status='saved',updated_at=? WHERE id=?",
+                    (ts, draft_id),
+                )
+                message_rows = await (await self._conn().execute(
+                    """SELECT m.id,m.payload_json FROM messages m
+                       JOIN conversations c ON c.id=m.conversation_id
+                       WHERE c.user_id=? AND m.payload_json LIKE ?""",
+                    (user_id, f'%"id":"{draft_id}"%'),
+                )).fetchall()
+                for message_row in message_rows:
+                    payload = _loads(message_row["payload_json"], {})
+                    card_draft = payload.get("cardDraft")
+                    if not isinstance(card_draft, dict) or str(card_draft.get("id") or "") != draft_id:
+                        continue
+                    payload["cardDraft"] = {
+                        **card_draft,
+                        "status": "saved",
+                        "savedCardId": card_id,
+                        "savedRevisionId": revision_id,
+                    }
+                    await self._conn().execute(
+                        "UPDATE messages SET payload_json=?,updated_at=? WHERE id=?",
+                        (_json(payload), ts, str(message_row["id"])),
+                    )
+                await self._conn().commit()
+            except Exception:
+                await self._conn().rollback()
+                raise
+        return {
+            "id": card_id,
+            "title": clean_title,
+            "templateVersionId": str(row["template_version_id"]),
+            "latestRevision": {
+                "id": revision_id,
+                "revision": 1,
+                "data": data,
+                "provenance": _loads(row["provenance_json"], {}),
+                "gaps": _loads(row["gaps_json"], []),
+            },
+            "createdAt": ts,
+            "updatedAt": ts,
+        }
+
+    async def list_cards(self, user_id: str) -> list[dict[str, Any]]:
+        rows = await (await self._conn().execute(
+            """SELECT c.id,c.title,c.template_version_id,c.created_at,c.updated_at,
+                      r.id AS revision_id,r.revision,r.data_json,r.provenance_json,r.gaps_json
+               FROM cards c JOIN card_revisions r ON r.card_id=c.id
+               WHERE c.user_id=? AND c.archived_at IS NULL
+                 AND r.revision=(SELECT MAX(r2.revision) FROM card_revisions r2 WHERE r2.card_id=c.id)
+               ORDER BY c.updated_at DESC,c.id""",
+            (user_id,),
+        )).fetchall()
+        return [
+            {
+                "id": str(row["id"]),
+                "title": str(row["title"]),
+                "templateVersionId": str(row["template_version_id"]),
+                "latestRevision": {
+                    "id": str(row["revision_id"]),
+                    "revision": int(row["revision"]),
+                    "data": _loads(row["data_json"], {}),
+                    "provenance": _loads(row["provenance_json"], {}),
+                    "gaps": _loads(row["gaps_json"], []),
+                },
+                "createdAt": int(row["created_at"]),
+                "updatedAt": int(row["updated_at"]),
+            }
+            for row in rows
+        ]
+
+    async def checkpoint_card_context(
+        self, user_id: str, checkpoint_id: str
+    ) -> list[dict[str, Any]] | None:
+        if not await self.checkpoint_owned(user_id, checkpoint_id):
+            return None
+        rows = await (await self._conn().execute(
+            """SELECT c.id AS card_id,c.title,r.id AS revision_id,r.revision,
+                      r.data_json,r.provenance_json,r.gaps_json
+               FROM checkpoint_card_attachments a
+               JOIN card_revisions r ON r.id=a.card_revision_id
+               JOIN cards c ON c.id=r.card_id
+               WHERE a.checkpoint_id=? AND c.user_id=? AND c.archived_at IS NULL
+               ORDER BY c.title,c.id""",
+            (checkpoint_id, user_id),
+        )).fetchall()
+        return [
+            {
+                "id": str(row["card_id"]),
+                "title": str(row["title"]),
+                "revisionId": str(row["revision_id"]),
+                "revision": int(row["revision"]),
+                "data": _loads(row["data_json"], {}),
+                "provenance": _loads(row["provenance_json"], {}),
+                "gaps": _loads(row["gaps_json"], []),
+            }
+            for row in rows
+        ]
+
+    async def draft_for_user(self, user_id: str, draft_id: str) -> dict[str, Any] | None:
+        row = await (await self._conn().execute(
+            "SELECT * FROM card_drafts WHERE id=? AND user_id=?",
+            (draft_id, user_id),
+        )).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": str(row["id"]),
+            "originCheckpointId": row["origin_checkpoint_id"],
+            "templateVersionId": str(row["template_version_id"]),
+            "data": _loads(row["data_json"], {}),
+            "provenance": _loads(row["provenance_json"], {}),
+            "gaps": _loads(row["gaps_json"], []),
+            "status": str(row["status"]),
+            "createdAt": int(row["created_at"]),
+            "updatedAt": int(row["updated_at"]),
+        }
+
+    async def archive_card(self, user_id: str, card_id: str) -> bool:
+        ts = now_ms()
+        async with self._write_lock:
+            cur = await self._conn().execute(
+                "UPDATE cards SET archived_at=?,updated_at=? WHERE id=? AND user_id=?",
+                (ts, ts, card_id, user_id),
+            )
+            await self._conn().commit()
+        return bool(cur.rowcount)
+
+    async def attach_card_revision(
+        self,
+        user_id: str,
+        branch_id: str,
+        *,
+        base_checkpoint_id: str,
+        card_revision_id: str,
+        attached: bool,
+    ) -> dict[str, Any]:
+        branch = await self.branch_detail(user_id, branch_id)
+        if branch is None:
+            raise KeyError(branch_id)
+        if branch["headCheckpointId"] != base_checkpoint_id:
+            raise RuntimeError("stale_checkpoint")
+        owned = await (await self._conn().execute(
+            """SELECT 1 FROM card_revisions r JOIN cards c ON c.id=r.card_id
+               WHERE r.id=? AND c.user_id=? AND c.archived_at IS NULL""",
+            (card_revision_id, user_id),
+        )).fetchone()
+        if owned is None:
+            raise KeyError(card_revision_id)
+        parent = await self._checkpoint_row(base_checkpoint_id)
+        state = _loads(parent["state_json"], self._empty_checkpoint_state()) if parent else self._empty_checkpoint_state()
+        checkpoint_id, ts = str(uuid.uuid4()), now_ms()
+        async with self._write_lock:
+            await self._conn().execute("BEGIN IMMEDIATE")
+            try:
+                await self._conn().execute(
+                    """INSERT INTO checkpoints
+                       (id,conversation_id,branch_id,parent_id,message_id,kind,state_json,created_at)
+                       VALUES(?,?,?,?,NULL,'card_attachment',?,?)""",
+                    (checkpoint_id, branch["conversationId"], branch_id, base_checkpoint_id, _json(state), ts),
+                )
+                await self._copy_checkpoint_links(base_checkpoint_id, checkpoint_id)
+                if attached:
+                    await self._conn().execute(
+                        "INSERT OR IGNORE INTO checkpoint_card_attachments(checkpoint_id,card_revision_id) VALUES(?,?)",
+                        (checkpoint_id, card_revision_id),
+                    )
+                else:
+                    await self._conn().execute(
+                        "DELETE FROM checkpoint_card_attachments WHERE checkpoint_id=? AND card_revision_id=?",
+                        (checkpoint_id, card_revision_id),
+                    )
+                revision_rows = await (await self._conn().execute(
+                    "SELECT card_revision_id FROM checkpoint_card_attachments WHERE checkpoint_id=? ORDER BY card_revision_id",
+                    (checkpoint_id,),
+                )).fetchall()
+                state["cardRevisionIds"] = [str(item["card_revision_id"]) for item in revision_rows]
+                await self._conn().execute(
+                    "UPDATE checkpoints SET state_json=? WHERE id=?",
+                    (_json(state), checkpoint_id),
+                )
+                await self._conn().execute(
+                    "UPDATE branches SET head_checkpoint_id=?,updated_at=? WHERE id=?",
+                    (checkpoint_id, ts, branch_id),
+                )
+                await self._conn().commit()
+            except Exception:
+                await self._conn().rollback()
+                raise
+        return {"checkpointId": checkpoint_id, "attached": attached}
+
+    async def create_pending_approval(
+        self,
+        user_id: str,
+        *,
+        conversation_id: str,
+        branch_id: str,
+        user_message_id: str,
+        assistant_message_id: str,
+        base_checkpoint_id: str,
+        tool_call: dict[str, Any],
+        resume: dict[str, Any],
+        settings: dict[str, Any],
+        approval_id: str | None = None,
+        revision: int = 1,
+    ) -> dict[str, Any]:
+        if not await self.branch_owned(user_id, branch_id):
+            raise KeyError(branch_id)
+        aid, ts = approval_id or str(uuid.uuid4()), now_ms()
+        async with self._write_lock:
+            await self._conn().execute(
+                """INSERT INTO pending_approvals
+                   (id,user_id,conversation_id,branch_id,user_message_id,assistant_message_id,
+                    base_checkpoint_id,status,revision,tool_call_json,resume_json,settings_json,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?,?,'pending',?,?,?,?,?,?)
+                   ON CONFLICT(id) DO UPDATE SET status='pending',revision=excluded.revision,
+                       tool_call_json=excluded.tool_call_json,resume_json=excluded.resume_json,
+                       settings_json=excluded.settings_json,updated_at=excluded.updated_at""",
+                (
+                    aid,
+                    user_id,
+                    conversation_id,
+                    branch_id,
+                    user_message_id,
+                    assistant_message_id,
+                    base_checkpoint_id,
+                    revision,
+                    _json(tool_call),
+                    _json(resume),
+                    _json(settings),
+                    ts,
+                    ts,
+                ),
+            )
+            await self._conn().execute(
+                """INSERT INTO retrieval_events
+                   (id,conversation_id,checkpoint_id,event_type,payload_json,created_at)
+                   VALUES(?,?,?,?,?,?)""",
+                (
+                    str(uuid.uuid4()),
+                    conversation_id,
+                    base_checkpoint_id or None,
+                    "approval_required",
+                    _json({"approvalId": aid, "revision": revision, "toolCall": tool_call}),
+                    ts,
+                ),
+            )
+            await self._conn().commit()
+        return await self.pending_approval(user_id, aid) or {}
+
+    async def pending_approval(self, user_id: str, approval_id: str) -> dict[str, Any] | None:
+        row = await (await self._conn().execute(
+            "SELECT * FROM pending_approvals WHERE id=? AND user_id=?",
+            (approval_id, user_id),
+        )).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": str(row["id"]),
+            "conversationId": str(row["conversation_id"]),
+            "branchId": str(row["branch_id"]),
+            "userMessageId": str(row["user_message_id"]),
+            "assistantMessageId": str(row["assistant_message_id"]),
+            "baseCheckpointId": str(row["base_checkpoint_id"] or ""),
+            "status": str(row["status"]),
+            "revision": int(row["revision"]),
+            "toolCall": _loads(row["tool_call_json"], {}),
+            "resume": _loads(row["resume_json"], {}),
+            "settings": _loads(row["settings_json"], {}),
+            "createdAt": int(row["created_at"]),
+            "updatedAt": int(row["updated_at"]),
+        }
+
+    async def pending_for_branch(self, user_id: str, branch_id: str) -> dict[str, Any] | None:
+        row = await (await self._conn().execute(
+            """SELECT id FROM pending_approvals WHERE user_id=? AND branch_id=? AND status='pending'
+               ORDER BY updated_at DESC LIMIT 1""",
+            (user_id, branch_id),
+        )).fetchone()
+        return await self.pending_approval(user_id, str(row["id"])) if row is not None else None
+
+    async def claim_pending_approval(
+        self,
+        user_id: str,
+        approval_id: str,
+        revision: int,
+        action: str,
+    ) -> dict[str, Any] | None:
+        if action not in {"approve", "revise", "cancel"}:
+            raise ValueError("Unsupported approval action")
+        next_status = {"approve": "approved", "revise": "revising", "cancel": "cancelled"}[action]
+        async with self._write_lock:
+            await self._conn().execute("BEGIN IMMEDIATE")
+            try:
+                current = await self.pending_approval(user_id, approval_id)
+                if current is None:
+                    await self._conn().rollback()
+                    return None
+                if current["status"] != "pending" or current["revision"] != revision:
+                    raise RuntimeError("stale_approval")
+                await self._conn().execute(
+                    "UPDATE pending_approvals SET status=?,updated_at=? WHERE id=? AND user_id=?",
+                    (next_status, now_ms(), approval_id, user_id),
+                )
+                await self._conn().execute(
+                    """INSERT INTO retrieval_events
+                       (id,conversation_id,checkpoint_id,event_type,payload_json,created_at)
+                       VALUES(?,?,?,?,?,?)""",
+                    (
+                        str(uuid.uuid4()),
+                        current["conversationId"],
+                        current["baseCheckpointId"] or None,
+                        f"approval_{action}",
+                        _json({"approvalId": approval_id, "revision": revision}),
+                        now_ms(),
+                    ),
+                )
+                await self._conn().commit()
+                current["status"] = next_status
+                return current
+            except Exception:
+                await self._conn().rollback()
+                raise
+
+    async def update_assistant_waiting(
+        self,
+        conversation_id: str,
+        assistant_message_id: str,
+        *,
+        payload: dict[str, Any],
+    ) -> None:
+        async with self._write_lock:
+            await self._conn().execute(
+                """UPDATE messages SET status='waiting_approval',payload_json=?,updated_at=?
+                   WHERE id=? AND conversation_id=?""",
+                (_json(payload), now_ms(), assistant_message_id, conversation_id),
+            )
+            await self._conn().commit()
 
     async def backup(self, destination: str) -> None:
         dest = str(Path(destination).expanduser())

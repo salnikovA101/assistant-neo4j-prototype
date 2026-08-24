@@ -306,6 +306,16 @@ docker compose exec app python -m server.manage_db backup /tmp/assistant-backup.
 docker compose cp app:/tmp/assistant-backup.db ./assistant-backup.db
 ```
 
+Restore (stop the app first; a safety copy is created automatically):
+```bash
+docker compose stop app
+docker compose run --rm -v "$PWD:/restore:ro" app \
+  python -m server.manage_db restore /restore/assistant-backup.db --force
+docker compose up -d app
+```
+
+The checkpoint/retrieval contracts and paired scientific evaluation protocol are documented in [`STATEFUL_GRAPHRAG.md`](STATEFUL_GRAPHRAG.md).
+
 ---
 
 ## 10. Тестирование

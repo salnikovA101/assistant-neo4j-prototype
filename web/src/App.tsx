@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useEffect,
   useRef,
   useState,
@@ -8,37 +10,58 @@ import {
 } from "react";
 import {
   adoptSessionId,
+  agendaEvent,
   bindAccount,
   clearHistory,
   createConversation,
   deleteConversation,
   fetchConversation,
   fetchConversations,
+  fetchCardTemplates,
   fetchHealth,
   fetchMe,
   fetchUiConfig,
+  forkConversation,
+  generateCardDraft,
   getLlmKey,
   getSessionId,
   logout,
+  resolveApproval,
+  saveCardDraft,
   setLlmKey,
   streamBody,
   withHeaders,
 } from "./api";
 import { ChatThread } from "./components/ChatThread";
 import { Composer } from "./components/Composer";
-import { Explorer } from "./components/Explorer";
-import { GraphPane } from "./components/GraphPane";
+import { AgendaDrawer } from "./components/AgendaDrawer";
 import { IconSettings } from "./components/Icons";
 import { Sidebar } from "./components/Sidebar";
 import { parseSseBlock } from "./format";
 import { clearLegacySessions } from "./sessions";
-import type { ChatMessage, ChatStep, ConversationSummary, SearchDepth, UiConfig } from "./types";
+import type {
+  AgendaItem,
+  Branch,
+  CardTemplate,
+  ChatMessage,
+  ChatStep,
+  ConversationDetail,
+  ConversationSummary,
+  PendingApproval,
+  SearchDepth,
+  UiConfig,
+} from "./types";
+
+const Explorer = lazy(() => import("./components/Explorer").then((module) => ({ default: module.Explorer })));
+const GraphPane = lazy(() => import("./components/GraphPane").then((module) => ({ default: module.GraphPane })));
+const CardsWorkspace = lazy(() => import("./components/CardsWorkspace").then((module) => ({ default: module.CardsWorkspace })));
 
 function uid(): string {
   return crypto.randomUUID();
 }
 
 type PanelSide = "sidebar" | "graph";
+type Workspace = "chat" | "graph" | "cards";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -120,13 +143,26 @@ export function App() {
   const [sessions, setSessions] = useState<ConversationSummary[]>([]);
   const [currentId, setCurrentId] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchId, setBranchId] = useState("");
+  const [headCheckpointId, setHeadCheckpointId] = useState("");
+  const [agenda, setAgenda] = useState<AgendaItem[]>([]);
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  const [approvalBusy, setApprovalBusy] = useState(false);
+  const [cardBusy, setCardBusy] = useState(false);
+  const [cardTemplates, setCardTemplates] = useState<CardTemplate[]>([]);
+  const [agendaOpen, setAgendaOpen] = useState(false);
+  const [checkpointGraphId, setCheckpointGraphId] = useState("");
+  const [workspace, setWorkspace] = useState<Workspace>("chat");
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [depth, setDepth] = useState<SearchDepth>("medium");
   const [effort, setEffort] = useState("");
   const [profile, setProfile] = useState("");
+  const [mode, setMode] = useState<"auto" | "staged">(
+    () => localStorage.getItem("retrieval_mode") === "staged" ? "staged" : "auto"
+  );
   const [graphRunId, setGraphRunId] = useState<string | null>(null);
-  const [explorerOpen, setExplorerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [keyDraft, setKeyDraft] = useState("");
   const [recording, setRecording] = useState(false);
@@ -144,10 +180,23 @@ export function App() {
     window.innerWidth - (collapsed ? 64 : sidebarWidth) - 320
   );
 
+  function applyDetail(detail: ConversationDetail) {
+    setMessages(detail.messages);
+    setBranches(detail.branches || []);
+    setBranchId(detail.activeBranchId || "");
+    setHeadCheckpointId(detail.headCheckpointId || "");
+    setAgenda(detail.agenda || []);
+    setPendingApproval(detail.pendingApproval || null);
+  }
+
   useEffect(() => {
     Promise.all([fetchUiConfig(), fetchMe(), fetchConversations()])
       .then(([cfg, account, history]) => {
         setConfig(cfg);
+        if (cfg.cards_enabled) {
+          void fetchCardTemplates().then(setCardTemplates).catch(() => setCardTemplates([]));
+        }
+        if (!cfg.staged_enabled) setMode("auto");
         bindAccount(account.id);
         clearLegacySessions();
         setSessions(history);
@@ -197,9 +246,9 @@ export function App() {
       return;
     }
     let cancelled = false;
-    fetchConversation(currentId)
+    fetchConversation(currentId, branchId)
       .then((detail) => {
-        if (!cancelled) setMessages(detail.messages);
+        if (!cancelled) applyDetail(detail);
       })
       .catch((err) => {
         if (!cancelled) setNotice(err instanceof Error ? err.message : "Не удалось открыть чат");
@@ -207,15 +256,12 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [currentId]);
+  }, [currentId, branchId]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (explorerOpen) {
-        setExplorerOpen(false);
-        return;
-      }
+      if (workspace !== "chat") return;
       if (settingsOpen) {
         setSettingsOpen(false);
         return;
@@ -224,7 +270,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [explorerOpen, graphRunId, settingsOpen]);
+  }, [workspace, graphRunId, settingsOpen]);
 
   useEffect(() => {
     const syncSidebar = () => {
@@ -262,9 +308,15 @@ export function App() {
       adoptSessionId(created.id);
       setSessions((prev) => [created, ...prev]);
       setCurrentId(created.id);
+      setBranchId(created.activeBranchId || "");
+      setHeadCheckpointId(created.headCheckpointId || "");
+      setBranches([]);
+      setAgenda([]);
+      setPendingApproval(null);
       setMessages([]);
       setGraphRunId(null);
       setDraft("");
+      setWorkspace("chat");
     } catch (err) {
       setNotice(err instanceof Error ? err.message : "Не удалось создать чат");
     }
@@ -274,7 +326,10 @@ export function App() {
     abortRef.current?.abort();
     adoptSessionId(id);
     setCurrentId(id);
+    setBranchId("");
     setGraphRunId(null);
+    setCheckpointGraphId("");
+    setWorkspace("chat");
   }
 
   function patchAssistant(id: string, patch: Partial<ChatMessage>) {
@@ -287,6 +342,8 @@ export function App() {
     const value = text.trim();
     if (!value || busy) return;
     let conversationId = currentId;
+    let activeBranchId = branchId;
+    let baseCheckpointId = headCheckpointId;
     if (!conversationId) {
       try {
         const created = await createConversation();
@@ -294,6 +351,9 @@ export function App() {
         adoptSessionId(created.id);
         setCurrentId(created.id);
         setSessions((prev) => [created, ...prev]);
+        activeBranchId = created.activeBranchId || "";
+        baseCheckpointId = created.headCheckpointId || "";
+        setBranchId(activeBranchId);
       } catch (err) {
         setNotice(err instanceof Error ? err.message : "Не удалось создать чат");
         return;
@@ -325,7 +385,10 @@ export function App() {
     const ac = new AbortController();
     abortRef.current = ac;
     try {
-      const res = await fetch("/process_text_stream", {
+      const endpoint = activeBranchId
+        ? `/api/conversations/${encodeURIComponent(conversationId)}/branches/${encodeURIComponent(activeBranchId)}/turns`
+        : "/process_text_stream";
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: (() => {
           adoptSessionId(conversationId);
@@ -339,6 +402,9 @@ export function App() {
           reasoning_effort: effort || undefined,
           profile: profile || undefined,
           turn_id: uid(),
+          mode,
+          branch_id: activeBranchId || undefined,
+          base_checkpoint_id: baseCheckpointId || undefined,
         }),
         signal: ac.signal,
       });
@@ -427,6 +493,11 @@ export function App() {
           });
           if (runId && chains > 0) setGraphRunId(runId);
           return true;
+        } else if (event === "approval_required") {
+          const approval = data.approval as PendingApproval;
+          setPendingApproval(approval);
+          flush("waiting_approval");
+          return true;
         } else if (event === "error") {
           flush("error", { text: String(data.message || "Ошибка стрима") });
           return true;
@@ -472,6 +543,9 @@ export function App() {
       setBusy(false);
       abortRef.current = null;
       void refreshSessions();
+      if (conversationId) {
+        void fetchConversation(conversationId, activeBranchId).then(applyDetail).catch(() => undefined);
+      }
     }
   }
 
@@ -517,6 +591,131 @@ export function App() {
     setRecording(true);
   }
 
+  async function handleApproval(
+    action: "approve" | "revise",
+    subquestions: string[],
+    feedback = ""
+  ) {
+    if (!pendingApproval || approvalBusy) return;
+    setApprovalBusy(true);
+    try {
+      const res = await resolveApproval(pendingApproval, action, subquestions, feedback);
+      // The server has claimed the approval synchronously. Hide the form before
+      // consuming the long-running retrieval/LLM SSE stream so it cannot remain
+      // in the thread while the same assistant message continues streaming.
+      if (action === "approve") setPendingApproval(null);
+      if (res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        const assistantId = pendingApproval.assistantMessageId;
+        const existing = messages.find((message) => message.id === assistantId);
+        let answer = existing?.text || "";
+        let thinking = existing?.thinking || "";
+        let steps = [...(existing?.steps || [])];
+        while (true) {
+          const { done, value } = await reader.read();
+          buffer += decoder.decode(value || new Uint8Array(), { stream: !done }).replace(/\r\n/g, "\n");
+          let separator = buffer.indexOf("\n\n");
+          while (separator !== -1) {
+            const parsed = parseSseBlock(buffer.slice(0, separator));
+            buffer = buffer.slice(separator + 2);
+            if (parsed?.event === "thinking") {
+              const delta = String(parsed.data.delta || "");
+              thinking += delta;
+              const last = steps[steps.length - 1];
+              if (last?.kind === "think") steps = [...steps.slice(0, -1), { kind: "think", text: last.text + delta }];
+              else steps = [...steps, { kind: "think", text: delta }];
+            }
+            if (parsed?.event === "content") answer += String(parsed.data.delta || "");
+            if (parsed?.event === "done") answer = String(parsed.data.final_content || answer);
+            if (parsed?.event === "approval_required") {
+              setPendingApproval(parsed.data.approval as PendingApproval);
+            }
+            if (parsed?.event === "error") setNotice(String(parsed.data.message || "Ошибка продолжения"));
+            patchAssistant(assistantId, { text: answer, thinking, steps, status: parsed?.event === "approval_required" ? "waiting_approval" : "streaming" });
+            separator = buffer.indexOf("\n\n");
+          }
+          if (done) break;
+        }
+      }
+      const detail = await fetchConversation(currentId, branchId);
+      applyDetail(detail);
+      if (action === "approve") {
+        setPendingApproval(null);
+        if (detail.headCheckpointId) setCheckpointGraphId(detail.headCheckpointId);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Не удалось продолжить ответ");
+    } finally {
+      setApprovalBusy(false);
+    }
+  }
+
+  async function mutateAgenda(
+    action: "add" | "close" | "reopen",
+    input: { sq_id?: string; text?: string }
+  ) {
+    if (!branchId || !headCheckpointId) return;
+    if (pendingApproval) {
+      setNotice("Сначала подтвердите или отклоните текущий план поиска.");
+      return;
+    }
+    try {
+      const result = await agendaEvent(branchId, headCheckpointId, action, input);
+      setAgenda(result.agenda);
+      setHeadCheckpointId(result.checkpointId);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Не удалось изменить SQ");
+      const detail = await fetchConversation(currentId, branchId);
+      applyDetail(detail);
+    }
+  }
+
+  async function handleGenerateCard(templateVersionId: string) {
+    if (!headCheckpointId || !currentId || cardBusy || busy) return;
+    setCardBusy(true);
+    try {
+      const result = await generateCardDraft(
+        headCheckpointId,
+        templateVersionId,
+        profile,
+        effort
+      );
+      setHeadCheckpointId(result.checkpointId);
+      applyDetail(await fetchConversation(currentId, branchId));
+      setNotice("Карточка сформирована как draft в текущей ветке.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Не удалось сформировать карточку");
+    } finally {
+      setCardBusy(false);
+    }
+  }
+
+  async function handleSaveCard(draftId: string, title: string) {
+    try {
+      await saveCardDraft(draftId, title);
+      applyDetail(await fetchConversation(currentId, branchId));
+      setNotice("Карточка сохранена в библиотеку.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Не удалось сохранить карточку");
+    }
+  }
+
+  async function forkFrom(checkpointId: string) {
+    if (!currentId || !checkpointId) return;
+    try {
+      const branch = await forkConversation(currentId, checkpointId);
+      setBranches((items) => [...items, branch]);
+      setBranchId(branch.id);
+      setHeadCheckpointId(checkpointId);
+      setWorkspace("chat");
+      setNotice(`Создана ветка «${branch.name}».`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Не удалось создать ветку");
+    }
+  }
+
   const empty = messages.length === 0;
 
   return (
@@ -533,11 +732,13 @@ export function App() {
         collapsed={collapsed}
         onToggle={() => setCollapsed((v) => !v)}
         sessions={sessions}
-        currentId={currentId}
+        currentId={workspace === "chat" ? currentId : ""}
         username={config?.username || "demo"}
         onNewChat={() => void newChat()}
         onOpenSession={openSession}
-        onExplorer={() => setExplorerOpen(true)}
+        onExplorer={() => setWorkspace("graph")}
+        onCards={() => setWorkspace("cards")}
+        cardsEnabled={config?.cards_enabled !== false}
         onLogout={() => void logout()}
       />
       {!collapsed && (
@@ -551,8 +752,20 @@ export function App() {
       )}
       <div className="main-col">
         <header className="topbar">
-          <div className="topbar-title">{current?.title || "Новый чат"}</div>
+          <div className="topbar-title">
+            <span>{workspace === "graph" ? "Граф базы" : workspace === "cards" ? "Карточки" : current?.title || "Новый чат"}</span>
+            {workspace === "chat" && branches.length > 0 && (
+              <select value={branchId} onChange={(event) => setBranchId(event.target.value)} aria-label="Ветка чата">
+                {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+              </select>
+            )}
+          </div>
           <div className="topbar-right">
+            {workspace === "chat" && (
+              <button type="button" className="sq-button" onClick={() => setAgendaOpen((value) => !value)}>
+                SQ {agenda.filter((item) => item.status === "open").length}
+              </button>
+            )}
             <span className={`health ${health === "онлайн" ? "is-ok" : ""}`}><i />{health}</span>
             <div className="settings-wrap" ref={settingsRef}>
               <button
@@ -630,11 +843,20 @@ export function App() {
             </div>
           </div>
         </header>
-        <div className={`chat-col ${empty ? "is-empty" : ""} ${graphRunId ? "with-graph" : ""}`}>
+        {workspace === "chat" ? <div className={`chat-col ${empty ? "is-empty" : ""} ${graphRunId || checkpointGraphId ? "with-graph" : ""}`}>
           <ChatThread
             messages={messages}
             openGraphId={graphRunId}
             onOpenGraph={(runId) => setGraphRunId(runId)}
+            pendingApproval={pendingApproval}
+            approvalBusy={approvalBusy}
+            onResolveApproval={(action, sqs, feedback) => void handleApproval(action, sqs, feedback)}
+            onCheckpoint={(checkpointId) => {
+              setCheckpointGraphId(checkpointId);
+              setGraphRunId(null);
+            }}
+            onFork={(checkpointId) => void forkFrom(checkpointId)}
+            onSaveCard={(draftId, title) => void handleSaveCard(draftId, title)}
           />
           <Composer
             text={draft}
@@ -666,10 +888,33 @@ export function App() {
               setKeyDraft(getLlmKey(id));
             }}
             centered={empty}
+            mode={mode}
+            onMode={(value) => {
+              setMode(value);
+              localStorage.setItem("retrieval_mode", value);
+            }}
+            stagedEnabled={config?.staged_enabled !== false}
+            cardTemplates={cardTemplates}
+            cardBusy={cardBusy}
+            cardEnabled={Boolean(headCheckpointId && currentId && !pendingApproval && !busy)}
+            onGenerateCard={(templateVersionId) => void handleGenerateCard(templateVersionId)}
           />
-        </div>
+        </div> : workspace === "graph" ? (
+          <Suspense fallback={<p className="explorer-status">Загрузка Graph Workspace…</p>}>
+            <Explorer />
+          </Suspense>
+        ) : (
+          <Suspense fallback={<p className="explorer-status">Загрузка карточек…</p>}>
+            <CardsWorkspace
+              checkpointId={headCheckpointId}
+              branchId={branchId}
+              onCheckpoint={setHeadCheckpointId}
+              onNotice={setNotice}
+            />
+          </Suspense>
+        )}
       </div>
-      {graphRunId && (
+      {workspace === "chat" && (graphRunId || checkpointGraphId) && (
         <PanelResizer
           side="graph"
           value={graphWidth}
@@ -678,11 +923,22 @@ export function App() {
           onChange={setGraphWidth}
         />
       )}
-      {graphRunId && <GraphPane runId={graphRunId} onClose={() => setGraphRunId(null)} />}
-      {explorerOpen && (
-        <div className="explorer-overlay">
-          <Explorer onClose={() => setExplorerOpen(false)} />
-        </div>
+      {workspace === "chat" && (graphRunId || checkpointGraphId) && (
+        <Suspense fallback={<aside className="graph-pane"><p className="explorer-status">Загрузка графа…</p></aside>}>
+          <GraphPane
+            runId={graphRunId || undefined}
+            checkpointId={checkpointGraphId || undefined}
+            onClose={() => { setGraphRunId(null); setCheckpointGraphId(""); }}
+          />
+        </Suspense>
+      )}
+      {agendaOpen && workspace === "chat" && (
+        <AgendaDrawer
+          agenda={agenda}
+          onClose={() => setAgendaOpen(false)}
+          onAdd={(text) => mutateAgenda("add", { text })}
+          onToggle={(item) => mutateAgenda(item.status === "open" ? "close" : "reopen", { sq_id: item.id })}
+        />
       )}
       {notice && <div className="toast" role="status">{notice}</div>}
     </div>

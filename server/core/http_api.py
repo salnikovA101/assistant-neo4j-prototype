@@ -32,6 +32,9 @@ class TextProcessBody(BaseModel):
     reasoning_effort: Optional[str] = None
     search_depth: Optional[str] = None
     profile: Optional[str] = None
+    mode: Literal["auto", "staged"] = "auto"
+    branch_id: Optional[str] = None
+    base_checkpoint_id: Optional[str] = None
 
 
 class GraphVizBody(BaseModel):
@@ -41,7 +44,13 @@ class GraphVizBody(BaseModel):
 class GraphExploreBody(BaseModel):
     q: str = ""
     limit: Literal[10, 100, 1000] = 100
-    field: Literal["all", "name", "rel", "evidence"] = "all"
+    field: Literal["all", "name", "label", "rel", "evidence", "source"] = "all"
+    cursor: str = Field(default="", max_length=256)
+
+
+class GraphExpandBody(BaseModel):
+    node_id: str
+    limit: Literal[10, 100, 1000] = 100
 
 
 def session_id_from_request(request: Request) -> str:
@@ -74,7 +83,7 @@ def llm_api_key_from_request(request: Request) -> str | None:
 
 UI_BASIC_REALM = "Neo4j Assistant"
 UI_SESSION_COOKIE = "ui_session"
-_PUBLIC_EXACT = frozenset({"/login"})
+_PUBLIC_EXACT = frozenset({"/login", "/healthz"})
 _PUBLIC_FILES = frozenset({"/ui/login.css", "/ui/icon.svg"})
 
 

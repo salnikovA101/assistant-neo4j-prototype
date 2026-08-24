@@ -1,25 +1,33 @@
 import { useEffect, useState } from "react";
 import type { GraphPayload } from "../types";
-import { fetchGraphViz } from "../api";
+import { fetchCheckpointGraph, fetchGraphViz } from "../api";
 import { GraphCanvas } from "./GraphCanvas";
 import { IconClose } from "./Icons";
 
 export function GraphPane({
   runId,
+  checkpointId,
   onClose,
 }: {
-  runId: string;
+  runId?: string;
+  checkpointId?: string;
   onClose: () => void;
 }) {
   const [payload, setPayload] = useState<GraphPayload | null>(null);
   const [viewId, setViewId] = useState<string | "all">("all");
   const [error, setError] = useState("");
+  const [scope, setScope] = useState<"context" | "new_in_answer" | "all_branches">("context");
 
   useEffect(() => {
     let alive = true;
     setPayload(null);
     setError("");
-    fetchGraphViz(runId)
+    const load = checkpointId
+      ? fetchCheckpointGraph(checkpointId, scope)
+      : runId
+        ? fetchGraphViz(runId)
+        : Promise.reject(new Error("Checkpoint не выбран"));
+    load
       .then((data) => {
         if (!alive) return;
         setPayload(data);
@@ -31,7 +39,7 @@ export function GraphPane({
     return () => {
       alive = false;
     };
-  }, [runId]);
+  }, [checkpointId, runId, scope]);
 
   const views = payload?.views || [];
 
@@ -39,10 +47,17 @@ export function GraphPane({
     <section className="graph-pane">
       <header className="graph-pane-bar">
         <div className="panel-title">
-          <strong>Граф ответа</strong>
-          <span>{views.length ? `${views.length} цепей` : "связи из ответа"}</span>
+          <strong>{checkpointId ? "Graph Workspace" : "Граф ответа"}</strong>
+          <span>{views.length ? `${views.length} UNIT` : "связи checkpoint"}</span>
         </div>
         <div className="chain-nav">
+          {checkpointId && (
+            <>
+              <button type="button" className={scope === "context" ? "is-on" : ""} onClick={() => setScope("context")}>Все</button>
+              <button type="button" className={scope === "new_in_answer" ? "is-on" : ""} onClick={() => setScope("new_in_answer")}>Новые</button>
+              <button type="button" className={scope === "all_branches" ? "is-on" : ""} onClick={() => setScope("all_branches")}>Все ветки</button>
+            </>
+          )}
           <button
             type="button"
             className={viewId === "all" ? "is-on" : ""}

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
-import type { SearchDepth, UiModel } from "../types";
+import type { CardTemplate, SearchDepth, UiModel } from "../types";
 import { DEPTH_LABELS, effortLabel } from "../format";
-import { IconMic, IconSend, IconStop } from "./Icons";
+import { IconCards, IconMic, IconSend, IconStop } from "./Icons";
 
 export function Composer({
   text,
@@ -21,6 +21,13 @@ export function Composer({
   models,
   onProfile,
   centered,
+  mode,
+  onMode,
+  stagedEnabled,
+  cardTemplates,
+  cardBusy,
+  cardEnabled,
+  onGenerateCard,
   disabled = false,
 }: {
   text: string;
@@ -40,6 +47,13 @@ export function Composer({
   models: UiModel[];
   onProfile: (id: string) => void;
   centered: boolean;
+  mode: "auto" | "staged";
+  onMode: (value: "auto" | "staged") => void;
+  stagedEnabled: boolean;
+  cardTemplates: CardTemplate[];
+  cardBusy: boolean;
+  cardEnabled: boolean;
+  onGenerateCard: (templateVersionId: string) => void;
   disabled?: boolean;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -77,6 +91,27 @@ export function Composer({
         }}
       />
       <div className="composer-actions">
+        {cardTemplates.length > 0 && (
+          <label className="chip card-chip" title={cardEnabled ? "Заполнить карточку из контекста ветки" : "Сначала начните диалог"}>
+            <IconCards />
+            <select
+              value=""
+              disabled={!cardEnabled || cardBusy || busy}
+              aria-label="Создать карточку"
+              onChange={(event) => {
+                const value = event.target.value;
+                if (value) onGenerateCard(value);
+              }}
+            >
+              <option value="">{cardBusy ? "Карточка…" : "Карточка"}</option>
+              {cardTemplates.map((template) => (
+                <option key={template.latestVersion.id} value={template.latestVersion.id}>
+                  {template.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {audioEnabled && (
           <button
             type="button"
@@ -89,16 +124,25 @@ export function Composer({
             <IconMic />
           </button>
         )}
-        <label className="chip" title="Глубина поиска в графе">
-          <span className="sr-only">Глубина поиска</span>
-          <select value={depth} onChange={(e) => onDepth(e.target.value as SearchDepth)}>
-            {(["low", "medium", "high"] as const).map((id) => (
-              <option key={id} value={id}>
-                {DEPTH_LABELS[id]}
-              </option>
-            ))}
+        <label className="chip" title="Режим retrieval">
+          <span className="sr-only">Режим</span>
+          <select value={mode} onChange={(e) => onMode(e.target.value as "auto" | "staged")}>
+            <option value="auto">Auto</option>
+            {stagedEnabled && <option value="staged">По этапам</option>}
           </select>
         </label>
+        {mode === "auto" ? (
+          <label className="chip" title="Бюджет UNIT">
+            <span className="sr-only">Бюджет UNIT</span>
+            <select value={depth} onChange={(e) => onDepth(e.target.value as SearchDepth)}>
+              {(["low", "medium", "high"] as const).map((id) => (
+                <option key={id} value={id}>
+                  {{ low: "5 UNIT", medium: "10 UNIT", high: "15 UNIT" }[id] || DEPTH_LABELS[id]}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : <span className="manual-budget">1 UNIT / open SQ</span>}
         {effortOptions.length > 0 && (
           <label className="chip" title="Глубина рассуждения">
             <span className="sr-only">Глубина рассуждения</span>
