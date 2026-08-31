@@ -1,4 +1,4 @@
-"""Typed models for Algorithm V6."""
+"""Typed models for retrieval (subquestions, edges, units)."""
 
 from __future__ import annotations
 
@@ -12,6 +12,13 @@ PRIMARY_NODE_LABELS: tuple[str, ...] = (
     "StarterCulture",
     "EnvironmentCondition",
 )
+
+
+def parse_confidence(value: Any) -> float | None:
+    """Preserve 0.0; return None when the property is missing."""
+    if value is None or value == "":
+        return None
+    return float(value)
 
 
 def pick_primary_label(labels: list[str] | tuple[str, ...] | None) -> str:
@@ -95,7 +102,7 @@ class EdgeRecord:
     evidence: str = ""
     source_file: str = ""
     source: str = "ann"  # graph: ann|bridge; after S4 on chains: prize|bridge
-    confidence: float | None = 1.0
+    confidence: float | None = None
 
     def start_ref(self) -> str:
         return format_node_ref(self.start_label, self.start_name, self.start_id)
@@ -191,9 +198,7 @@ class Chain:
         lines = [f"UNIT {label}"]
         walk = list(self.walk) if self.walk else reconstruct_walk(self.edges, self.fans)
         if not walk:
-            for k in self.edge_keys:
-                lines.append(str(k))
-            return "\n".join(lines)
+            return f"UNIT {label}"
         tags = linger_hubs(walk)
         for e, hub_id in zip(walk, tags, strict=True):
             display = (

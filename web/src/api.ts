@@ -7,8 +7,11 @@ import type {
   ChatMessage,
   ConversationDetail,
   ConversationSummary,
+  GraphFacets,
+  GraphFilters,
   GraphPayload,
   PendingApproval,
+  ResearchMap,
   SavedCard,
   SearchDepth,
   UiConfig,
@@ -37,29 +40,21 @@ export function bindAccount(id: string): void {
   sessionStorage.setItem(ACCOUNT_KEY, id);
 }
 
-function keyFamily(profile: string): "qwen" | "ollama" {
-  const name = profile.trim().toLowerCase();
-  if (name === "qwen_cloud" || name.startsWith("qwen_")) return "qwen";
-  return "ollama";
+export function getLlmKey(_profile = ""): string {
+  return (sessionStorage.getItem(LLM_KEY_QWEN) || "").trim();
 }
 
-export function getLlmKey(profile: string): string {
-  const storage = keyFamily(profile) === "qwen" ? LLM_KEY_QWEN : LLM_KEY;
-  return (sessionStorage.getItem(storage) || "").trim();
-}
-
-export function setLlmKey(profile: string, value: string): void {
-  const storage = keyFamily(profile) === "qwen" ? LLM_KEY_QWEN : LLM_KEY;
+export function setLlmKey(_profile: string, value: string): void {
   const key = value.trim();
-  if (key) sessionStorage.setItem(storage, key);
-  else sessionStorage.removeItem(storage);
+  if (key) sessionStorage.setItem(LLM_KEY_QWEN, key);
+  else sessionStorage.removeItem(LLM_KEY_QWEN);
 }
 
-export function withHeaders(profile: string, extra?: HeadersInit): Headers {
+export function withHeaders(_profile: string, extra?: HeadersInit): Headers {
   const headers = new Headers(extra);
   const sessionId = getSessionId();
   if (sessionId) headers.set("X-Session-Id", sessionId);
-  const key = getLlmKey(profile);
+  const key = getLlmKey();
   if (key) headers.set("X-LLM-Api-Key", key);
   return headers;
 }
@@ -69,9 +64,15 @@ async function json<T>(res: Response, fallback: string): Promise<T> {
     window.location.assign("/login");
     throw new Error("Сессия истекла");
   }
-  const payload = await res.json().catch(() => ({}));
+  let payload: unknown;
+  try {
+    payload = await res.json();
+  } catch {
+    throw new Error(res.ok ? "Некорректный JSON ответа" : fallback);
+  }
   if (!res.ok) {
-    const detail = payload.error || payload.detail;
+    const record = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+    const detail = record.error || record.detail;
     throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail || fallback));
   }
   return payload as T;
@@ -79,6 +80,16 @@ async function json<T>(res: Response, fallback: string): Promise<T> {
 
 export async function fetchMe(): Promise<Account> {
   return json(await fetch("/api/me"), "Не удалось загрузить аккаунт");
+}
+
+export async function fetchServiceGuide(): Promise<string> {
+  const payload = await json<{ markdown: string }>(
+    await fetch("/api/service-guide"),
+    "Не удалось загрузить справку"
+  );
+  const guide = String(payload.markdown || "").trim();
+  if (!guide) throw new Error("Справка пуста");
+  return guide;
 }
 
 export async function fetchConversations(): Promise<ConversationSummary[]> {
@@ -89,26 +100,65 @@ export async function fetchConversations(): Promise<ConversationSummary[]> {
   return body.items;
 }
 
-export async function createConversation(): Promise<ConversationSummary> {
+export async function createConversation(mode: "auto" | "staged" = "staged"): Promise<ConversationSummary> {
   return json(
-    await fetch("/api/conversations", { method: "POST" }),
+    await fetch("/api/conversations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    }),
     "Не удалось создать чат"
   );
 }
 
-export async function fetchConversation(id: string, branchId = ""): Promise<ConversationDetail> {
-  const query = branchId ? `?branch_id=${encodeURIComponent(branchId)}` : "";
+export async function fetchConversation(
+  id: string,
+  branchId = "",
+  checkpointId = ""
+): Promise<ConversationDetail> {
+  const params = new URLSearchParams();
+  if (branchId) params.set("branch_id", branchId);
+  if (checkpointId) params.set("checkpoint_id", checkpointId);
+  const query = params.size ? `?${params.toString()}` : "";
   return json(await fetch(`/api/conversations/${encodeURIComponent(id)}${query}`), "Не удалось открыть чат");
 }
 
-export async function forkConversation(id: string, checkpointId: string): Promise<Branch> {
+export async function fetchResearchMap(id: string, branchId = ""): Promise<ResearchMap> {
+  const query = branchId ? `?branch_id=${encodeURIComponent(branchId)}` : "";
+  return json(
+    await fetch(`/api/conversations/${encodeURIComponent(id)}/research-map${query}`),
+    "Не удалось загрузить карту хода"
+  );
+}
+
+export async function forkConversation(
+  id: string,
+  checkpointId: string,
+  mode?: "auto" | "staged",
+  sourceBranchId?: string
+): Promise<Branch> {
   return json(
     await fetch(`/api/conversations/${encodeURIComponent(id)}/forks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ checkpoint_id: checkpointId }),
+      body: JSON.stringify({
+        checkpoint_id: checkpointId,
+        mode,
+        source_branch_id: sourceBranchId,
+      }),
     }),
-    "Не удалось создать ветку"
+    "Не удалось создать вариант"
+  );
+}
+
+export async function renameBranch(branchId: string, name: string): Promise<Branch> {
+  return json(
+    await fetch(`/api/branches/${encodeURIComponent(branchId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    }),
+    "Не удалось переименовать вариант"
   );
 }
 
@@ -116,7 +166,7 @@ export async function agendaEvent(
   branchId: string,
   baseCheckpointId: string,
   action: "add" | "edit" | "close" | "reopen" | "reorder",
-  input: { sq_id?: string; text?: string; ordered_ids?: string[] } = {}
+  input: { sq_ref?: string; text?: string; ordered_refs?: string[] } = {}
 ): Promise<{ checkpointId: string; agenda: AgendaItem[] }> {
   return json(
     await fetch(`/api/branches/${encodeURIComponent(branchId)}/agenda-events`, {
@@ -124,7 +174,7 @@ export async function agendaEvent(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ base_checkpoint_id: baseCheckpointId, action, ...input }),
     }),
-    "Не удалось изменить SQ"
+    "Не удалось изменить план"
   );
 }
 
@@ -157,75 +207,116 @@ export async function fetchHealth(): Promise<{ status: string }> {
   return res.json();
 }
 
-export async function clearHistory(): Promise<void> {
-  const res = await fetch("/clear_history", {
-    method: "POST",
-    headers: withHeaders(""),
-  });
-  if (!res.ok) throw new Error("Не удалось очистить историю на сервере");
-}
-
 export async function fetchGraphViz(runId: string): Promise<GraphPayload> {
-  const res = await fetch("/graph_viz", {
-    method: "POST",
-    headers: withHeaders("", { "Content-Type": "application/json" }),
-    body: JSON.stringify({ graph_run_id: runId }),
-  });
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(payload.error || "Не удалось загрузить граф");
-  return payload as GraphPayload;
+  return json(
+    await fetch("/graph_viz", {
+      method: "POST",
+      headers: withHeaders("", { "Content-Type": "application/json" }),
+      body: JSON.stringify({ graph_run_id: runId }),
+    }),
+    "Не удалось загрузить факты"
+  );
 }
 
 export async function fetchGraphExplore(
   q: string,
-  limit: 10 | 100 | 1000,
+  limit: number,
   field: "all" | "name" | "label" | "rel" | "evidence" | "source" = "all",
-  cursor = ""
+  cursor = "",
+  filters?: GraphFilters
 ): Promise<GraphPayload> {
-  const res = await fetch("/graph_explore", {
-    method: "POST",
-    headers: withHeaders("", { "Content-Type": "application/json" }),
-    body: JSON.stringify({ q, limit, field, cursor }),
-  });
-  const payload = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(payload.error || "Не удалось загрузить граф");
-  return payload as GraphPayload;
+  return json(
+    await fetch("/graph_explore", {
+      method: "POST",
+      headers: withHeaders("", { "Content-Type": "application/json" }),
+      body: JSON.stringify({ q, limit, field, cursor, filters }),
+    }),
+    "Не удалось загрузить базу"
+  );
 }
 
 export async function fetchCheckpointGraph(
   checkpointId: string,
-  scope: "context" | "new_in_answer" | "unit" | "all_branches" = "context",
+  scope: "mode_default" | "context" | "new_in_answer" | "unit" | "all_branches" = "mode_default",
   unitId = ""
 ): Promise<GraphPayload> {
   const params = new URLSearchParams({ scope });
   if (unitId) params.set("unit_id", unitId);
   return json(
     await fetch(`/api/checkpoints/${encodeURIComponent(checkpointId)}/graph?${params}`),
-    "Не удалось загрузить checkpoint-граф"
+    "Не удалось загрузить факты"
   );
 }
 
-export async function fetchGraphExpand(nodeId: string, limit: 10 | 100 | 1000 = 100): Promise<GraphPayload> {
+export async function fetchGraphExpand(
+  nodeId: string,
+  limit: number = 100,
+  excludeEdgeIds: string[] = [],
+  direction: "all" | "incoming" | "outgoing" = "all",
+  filters?: GraphFilters
+): Promise<GraphPayload> {
   return json(
     await fetch("/api/graph/expand", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ node_id: nodeId, limit }),
+      headers: withHeaders("", { "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        node_id: nodeId,
+        limit,
+        exclude_edge_ids: excludeEdgeIds,
+        direction,
+        filters,
+      }),
     }),
     "Не удалось раскрыть соседей"
   );
 }
 
+export async function fetchGraphFacets(
+  q: string,
+  filters: GraphFilters,
+  sourceQuery = "",
+  sourceCursor = "",
+  sourceLimit = 50
+): Promise<GraphFacets> {
+  return json(
+    await fetch("/api/graph/facets", {
+      method: "POST",
+      headers: withHeaders("", { "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        q,
+        field: "all",
+        filters,
+        source_query: sourceQuery,
+        source_cursor: sourceCursor,
+        source_limit: sourceLimit,
+      }),
+    }),
+    "Не удалось загрузить фильтры базы"
+  );
+}
+
+export async function fetchGraphSchema(): Promise<{ nodeLabels: string[]; relationshipTypes: string[]; runId: string }> {
+  return json(await fetch("/api/graph/schema", { headers: withHeaders("") }), "Не удалось загрузить схему базы");
+}
+
 export async function resolveApproval(
   approval: PendingApproval,
   action: "approve" | "revise" | "cancel",
-  subquestions: string[],
-  feedback = ""
+  selection: { openSqRefs?: string[]; newSubquestions?: string[] },
+  feedback = "",
+  signal?: AbortSignal,
 ): Promise<Response> {
   const res = await fetch(`/api/tool-approvals/${encodeURIComponent(approval.id)}/resolve`, {
     method: "POST",
     headers: withHeaders("", { "Content-Type": "application/json", Accept: "text/event-stream" }),
-    body: JSON.stringify({ action, revision: approval.revision, subquestions, feedback }),
+    body: JSON.stringify({
+      action,
+      revision: approval.revision,
+      open_sq_refs: selection.openSqRefs || [],
+      new_subquestions: selection.newSubquestions || [],
+      feedback,
+    }),
+    signal,
   });
   if (!res.ok) await json(res, "Не удалось обработать план поиска");
   return res;
@@ -256,10 +347,30 @@ export async function createCardTemplate(input: {
   );
 }
 
+export async function createCardTemplateVersion(
+  templateId: string,
+  input: {
+    name: string;
+    description?: string;
+    schema: Record<string, unknown>;
+    ui?: Record<string, unknown>;
+    instructions?: string;
+  }
+): Promise<{ id: string; templateId: string; version: number }> {
+  return json(
+    await fetch(`/api/card-templates/${encodeURIComponent(templateId)}/versions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+    "Не удалось создать новую версию шаблона"
+  );
+}
+
 export async function archiveCardTemplate(templateId: string): Promise<void> {
   await json(
     await fetch(`/api/card-templates/${encodeURIComponent(templateId)}`, { method: "DELETE" }),
-    "Не удалось архивировать шаблон"
+    "Не удалось удалить шаблон"
   );
 }
 
@@ -296,15 +407,38 @@ export async function saveCardDraft(draftId: string, title = ""): Promise<SavedC
   );
 }
 
+export async function updateCardDraft(
+  draftId: string,
+  input: {
+    data: Record<string, unknown>;
+    provenance: Record<string, unknown>;
+    gaps?: unknown[];
+  }
+): Promise<CardDraft> {
+  return json(
+    await fetch(`/api/card-drafts/${encodeURIComponent(draftId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...input, gaps: input.gaps || [] }),
+    }),
+    "Не удалось обновить черновик"
+  );
+}
+
 export async function importCardDraft(
   templateVersionId: string,
-  data: Record<string, unknown> | Record<string, unknown>[]
+  data: Record<string, unknown> | Record<string, unknown>[],
+  checkpointId?: string
 ): Promise<CardDraft[]> {
   const payload = await json<CardDraft | { items: CardDraft[] }>(
     await fetch("/api/cards/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ template_version_id: templateVersionId, data }),
+      body: JSON.stringify({
+        checkpoint_id: checkpointId || null,
+        template_version_id: templateVersionId,
+        data,
+      }),
     }),
     "Импорт не прошёл validation"
   );
@@ -315,6 +449,24 @@ export async function archiveCard(cardId: string): Promise<void> {
   await json(
     await fetch(`/api/cards/${encodeURIComponent(cardId)}`, { method: "DELETE" }),
     "Не удалось удалить карточку"
+  );
+}
+
+export async function reviseCard(
+  cardId: string,
+  input: { title: string; data: Record<string, unknown>; editedFields: string[] }
+): Promise<SavedCard> {
+  return json(
+    await fetch(`/api/cards/${encodeURIComponent(cardId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: input.title,
+        data: input.data,
+        edited_fields: input.editedFields,
+      }),
+    }),
+    "Не удалось сохранить новую правку карточки"
   );
 }
 
@@ -338,6 +490,24 @@ export async function attachCard(
   );
 }
 
+export async function insertCardMessage(
+  branchId: string,
+  baseCheckpointId: string,
+  cardRevisionId: string
+): Promise<{ checkpointId: string; message: ChatMessage }> {
+  return json(
+    await fetch(`/api/branches/${encodeURIComponent(branchId)}/card-messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        base_checkpoint_id: baseCheckpointId,
+        card_revision_id: cardRevisionId,
+      }),
+    }),
+    "Не удалось вставить карточку в диалог"
+  );
+}
+
 export function streamBody(
   text: string,
   opts: {
@@ -348,17 +518,23 @@ export function streamBody(
     mode?: "auto" | "staged";
     branch_id?: string;
     base_checkpoint_id?: string;
+    fork_if_needed?: boolean;
+    intent?: "chat" | "generate_card";
+    template_version_id?: string;
   }
 ): string {
-  const payload: Record<string, string> = {
+  const payload: Record<string, string | boolean> = {
     text,
     search_depth: opts.search_depth,
   };
   if (opts.profile) payload.profile = opts.profile;
-  if (opts.reasoning_effort) payload.reasoning_effort = opts.reasoning_effort;
+  if (opts.profile !== "auto" && opts.reasoning_effort) payload.reasoning_effort = opts.reasoning_effort;
   if (opts.turn_id) payload.turn_id = opts.turn_id;
   if (opts.mode) payload.mode = opts.mode;
   if (opts.branch_id) payload.branch_id = opts.branch_id;
   if (opts.base_checkpoint_id) payload.base_checkpoint_id = opts.base_checkpoint_id;
+  if (opts.fork_if_needed) payload.fork_if_needed = true;
+  if (opts.intent) payload.intent = opts.intent;
+  if (opts.template_version_id) payload.template_version_id = opts.template_version_id;
   return JSON.stringify(payload);
 }

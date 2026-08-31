@@ -8,16 +8,17 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from server.algorithm.models import CandidateGraph, EdgeRecord, SubQuestion
+from server.algorithm.models import CandidateGraph, EdgeRecord, SubQuestion, parse_confidence
 from server.algorithm.params import Params
 from server.algorithm.stage3_graphs import _finalize_graph
 
 logger = logging.getLogger(__name__)
 
-# Bump when cache edge schema or framing id meaning changes.
+# Disk schema for cached S3 graphs. Increment when EdgeRecord JSON or the
+# rerank query template below changes (mismatched files are rebuilt).
 GRAPH_CACHE_VERSION = 2
 
-# Hardcoded S2b query template id (framing is not a Params field yet).
+# Cross-encoder query template id stored in the cache fingerprint.
 RERANK_FRAMING_ID = "claim_v1"
 
 # Params that change the S3 edge pool / transition topology.
@@ -51,7 +52,9 @@ def edge_to_cache_dict(e: EdgeRecord) -> dict[str, Any]:
         "evidence": e.evidence or "",
         "source_file": e.source_file or "",
         "source": e.source or "ann",
-        "confidence": float(e.confidence) if e.confidence is not None else 1.0,
+        "confidence": (
+            None if e.confidence is None else float(e.confidence)
+        ),
     }
 
 
@@ -76,7 +79,7 @@ def edge_from_cache_dict(d: dict[str, Any]) -> EdgeRecord:
         evidence=str(d.get("evidence") or ""),
         source_file=str(d.get("source_file") or ""),
         source=str(d.get("source") or "ann"),
-        confidence=float(d.get("confidence") or 1.0),
+        confidence=parse_confidence(d.get("confidence")),
     )
 
 

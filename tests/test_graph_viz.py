@@ -103,6 +103,41 @@ def test_build_chain_views_uniquifies_duplicate_chain_ids() -> None:
     assert views[1]["edges"][0]["chain_ids"] == ["a2"]
 
 
+def test_checkpoint_unit_views_use_stable_labels_and_new_marker() -> None:
+    views = build_chain_views([
+        {"chain_id": "u1", "unit_no": 1, "is_new": False, "edges": [_edge("5:1")], "fans": {}},
+        {"chain_id": "u2", "unit_no": 2, "is_new": True, "edges": [_edge("5:2")], "fans": {}},
+    ])
+
+    assert [(view["id"], view["label"], view["unit_no"], view["is_new"]) for view in views] == [
+        ("u1", "UNIT 1", 1, False),
+        ("u2", "UNIT 2", 2, True),
+    ]
+    assert views[1]["edges"][0]["chain_ids"] == ["u2"]
+
+
+def test_checkpoint_unit_view_preserves_question_origin() -> None:
+    origin = {
+        "step_id": "turn-1",
+        "step_no": 1,
+        "question": "Какая культура подходит?",
+        "branch_id": "branch-1",
+        "branch_name": "Основная версия",
+        "answer_checkpoint_id": "checkpoint-1",
+    }
+    view = build_chain_views([
+        {
+            "chain_id": "u1",
+            "unit_no": 1,
+            "origin": origin,
+            "edges": [_edge("5:1")],
+            "fans": {},
+        }
+    ])[0]
+
+    assert view["origin"] == origin
+
+
 def test_record_accepted_chains_renumbers_across_tool_calls() -> None:
     token = new_graph_collector()
     try:

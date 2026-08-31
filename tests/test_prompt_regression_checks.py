@@ -44,6 +44,7 @@ def test_cases_file_is_valid_and_unique():
     for case in cases:
         assert case["question"].strip()
         assert case.get("depth", "medium") in {"low", "medium", "high"}
+        assert case.get("mode", "auto") in {"auto", "staged"}
 
 
 def test_answer_body_strips_server_bibliography():
@@ -156,3 +157,35 @@ def test_must_contain_and_rubric_are_honoured():
 def test_empty_answer_fails_fast():
     result = check_case(_case(), Transcript(answer="   "))
     assert result.failures == ["пустой ответ"]
+
+
+def test_staged_advance_research_counts_as_search():
+    transcript = Transcript(
+        answer="",
+        tool_calls=[
+            ToolCall(
+                "advance_research",
+                new_subquestions=["Lactic acid bacteria acidify milk."],
+            )
+        ],
+        approval_required=True,
+    )
+    result = check_case(
+        _case(
+            mode="staged",
+            expect_new_subquestions=True,
+            expect_approval_required=True,
+            require_citations=False,
+            require_gaps=False,
+        ),
+        transcript,
+    )
+    assert result.ok, result.failures
+
+
+def test_staged_missing_tool_still_fails():
+    result = check_case(
+        _case(mode="staged", expect_new_subquestions=True),
+        Transcript(answer="Закваска для творога обычно мезофильная."),
+    )
+    assert any("инструмент не вызван" in f for f in result.failures)

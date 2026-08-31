@@ -12,7 +12,6 @@ import {
   adoptSessionId,
   agendaEvent,
   bindAccount,
-  clearHistory,
   createConversation,
   deleteConversation,
   fetchConversation,
@@ -20,22 +19,26 @@ import {
   fetchCardTemplates,
   fetchHealth,
   fetchMe,
+  fetchResearchMap,
   fetchUiConfig,
   forkConversation,
-  generateCardDraft,
   getLlmKey,
   getSessionId,
   logout,
+  insertCardMessage,
+  renameBranch,
   resolveApproval,
   saveCardDraft,
   setLlmKey,
   streamBody,
+  updateCardDraft,
   withHeaders,
 } from "./api";
 import { ChatThread } from "./components/ChatThread";
 import { Composer } from "./components/Composer";
 import { AgendaDrawer } from "./components/AgendaDrawer";
-import { IconSettings } from "./components/Icons";
+import { BranchMenu } from "./components/BranchMenu";
+import { ResearchPanelShell, type ResearchTab } from "./components/ResearchPanelShell";
 import { Sidebar } from "./components/Sidebar";
 import { parseSseBlock } from "./format";
 import { clearLegacySessions } from "./sessions";
@@ -48,20 +51,32 @@ import type {
   ConversationDetail,
   ConversationSummary,
   PendingApproval,
+  ResearchStep,
   SearchDepth,
+  SavedCard,
+  TurnFailure,
   UiConfig,
 } from "./types";
 
 const Explorer = lazy(() => import("./components/Explorer").then((module) => ({ default: module.Explorer })));
 const GraphPane = lazy(() => import("./components/GraphPane").then((module) => ({ default: module.GraphPane })));
+const ResearchMapPane = lazy(() => import("./components/ResearchMapPane").then((module) => ({ default: module.ResearchMapPane })));
 const CardsWorkspace = lazy(() => import("./components/CardsWorkspace").then((module) => ({ default: module.CardsWorkspace })));
+const LibraryWorkspace = lazy(() => import("./components/LibraryWorkspace").then((module) => ({ default: module.LibraryWorkspace })));
+const HelpWorkspace = lazy(() => import("./components/HelpWorkspace").then((module) => ({ default: module.HelpWorkspace })));
 
 function uid(): string {
   return crypto.randomUUID();
 }
 
+const QWEN_CLOUD_KEY_HEADING = "Как подключить ключ QwenCloud";
+
 type PanelSide = "sidebar" | "graph";
-type Workspace = "chat" | "graph" | "cards";
+type Workspace = "chat" | "graph" | "library" | "help" | "cards";
+type RightPanelState =
+  | { kind: "closed" }
+  | { kind: "research"; tab: ResearchTab; checkpointId?: string }
+  | { kind: "cards"; tab: "templates" | "library" };
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -81,7 +96,7 @@ function PanelResizer({
   onChange: (value: number) => void;
 }) {
   const dragRef = useRef<{ x: number; width: number } | null>(null);
-  const label = side === "sidebar" ? "Ширина боковой панели" : "Ширина графовой панели";
+  const label = side === "sidebar" ? "Ширина боковой панели" : "Ширина панели хода работы";
 
   const update = (clientX: number) => {
     const drag = dragRef.current;
@@ -144,34 +159,63 @@ export function App() {
   const [currentId, setCurrentId] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
+  // Keep a successful rename visible while any in-flight conversation/map
+  // request catches up. Some responses can still contain the previous branch
+  // name, which used to make the map and top bar disagree.
+  const [branchNameOverrides, setBranchNameOverrides] = useState<Record<string, string>>({});
+  const branchNameOverridesRef = useRef<Record<string, string>>({});
   const [branchId, setBranchId] = useState("");
   const [headCheckpointId, setHeadCheckpointId] = useState("");
+  const [viewCheckpointId, setViewCheckpointId] = useState("");
+  const [requestedCheckpointId, setRequestedCheckpointId] = useState("");
+  const [selectedResearchStep, setSelectedResearchStep] = useState<ResearchStep | null>(null);
+  const [rightPanel, setRightPanel] = useState<RightPanelState>({ kind: "closed" });
+  const [lastResearchTabs, setLastResearchTabs] = useState<Record<string, ResearchTab>>({});
+  const [researchMapRefresh, setResearchMapRefresh] = useState(0);
+  const [composerFocusKey, setComposerFocusKey] = useState(0);
   const [agenda, setAgenda] = useState<AgendaItem[]>([]);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  const [turnFailures, setTurnFailures] = useState<TurnFailure[]>([]);
+  const [dismissedFailures, setDismissedFailures] = useState<Set<number>>(new Set());
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [cardBusy, setCardBusy] = useState(false);
   const [cardTemplates, setCardTemplates] = useState<CardTemplate[]>([]);
-  const [agendaOpen, setAgendaOpen] = useState(false);
-  const [checkpointGraphId, setCheckpointGraphId] = useState("");
+  const [lastGraphCheckpointId, setLastGraphCheckpointId] = useState("");
   const [workspace, setWorkspace] = useState<Workspace>("chat");
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [forkingCheckpointId, setForkingCheckpointId] = useState("");
   const [depth, setDepth] = useState<SearchDepth>("medium");
   const [effort, setEffort] = useState("");
   const [profile, setProfile] = useState("");
-  const [mode, setMode] = useState<"auto" | "staged">(
-    () => localStorage.getItem("retrieval_mode") === "staged" ? "staged" : "auto"
-  );
-  const [graphRunId, setGraphRunId] = useState<string | null>(null);
+  const [mode, setMode] = useState<"auto" | "staged">("staged");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [keyDraft, setKeyDraft] = useState("");
+  const [qwenKeyDraft, setQwenKeyDraft] = useState("");
+  const [helpSection, setHelpSection] = useState("");
+  const [hasUserKey, setHasUserKey] = useState(() => Boolean(getLlmKey()));
   const [recording, setRecording] = useState(false);
   const [notice, setNotice] = useState("");
   const abortRef = useRef<AbortController | null>(null);
+  // A history request may complete after a turn has already put its local
+  // placeholder on screen. Until the stream is terminal, that server snapshot
+  // is necessarily incomplete and must not erase the in-progress assistant.
+  const liveTurnRef = useRef(false);
   const mediaRef = useRef<MediaRecorder | null>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
 
   const current = sessions.find((item) => item.id === currentId);
+  const currentBranch = branches.find((item) => item.id === branchId);
+  const currentBranchIndex = Math.max(0, branches.findIndex((item) => item.id === branchId));
+  const activeBranchLabel = currentBranchIndex === 0 && currentBranch?.name.trim().toLowerCase() === "main"
+    ? "Основной вариант"
+    : (currentBranch ? branchNameOverrides[currentBranch.id] || currentBranch.name : "Основной вариант");
+  const activeBranchMode = currentBranch?.mode || current?.mode;
+  const stagedAgendaActive = mode === "staged" && (!currentId || activeBranchMode === "staged");
+  const openDirectionCount = agenda.filter((item) => item.status === "open").length;
+  const checkpointGraphId = rightPanel.kind === "research" && rightPanel.tab === "data"
+    ? rightPanel.checkpointId || lastGraphCheckpointId
+    : "";
+  const rightPanelOpen = rightPanel.kind !== "closed";
   const model = config?.models.find((item) => item.id === profile);
   const effortOptions =
     model?.reasoning_effort_options || config?.reasoning_effort_options || [];
@@ -181,23 +225,45 @@ export function App() {
   );
 
   function applyDetail(detail: ConversationDetail) {
-    setMessages(detail.messages);
-    setBranches(detail.branches || []);
+    if (!liveTurnRef.current) setMessages(detail.messages);
+    setBranches((detail.branches || []).map((branch) => ({
+      ...branch,
+      name: branchNameOverridesRef.current[branch.id] || branch.name,
+    })));
     setBranchId(detail.activeBranchId || "");
-    setHeadCheckpointId(detail.headCheckpointId || "");
+    setHeadCheckpointId(detail.branchHeadCheckpointId || detail.headCheckpointId || "");
+    setViewCheckpointId(detail.viewCheckpointId || detail.headCheckpointId || "");
     setAgenda(detail.agenda || []);
     setPendingApproval(detail.pendingApproval || null);
+    setTurnFailures(detail.turnFailures || []);
+    const selected = (detail.branches || []).find((item) => item.id === detail.activeBranchId);
+    if (selected?.mode) {
+      setMode(selected.mode);
+      localStorage.setItem("retrieval_mode", selected.mode);
+    }
   }
+
+  useEffect(() => {
+    if (!stagedAgendaActive && rightPanel.kind === "research" && rightPanel.tab === "directions") {
+      setRightPanel({ kind: "research", tab: "map" });
+    }
+  }, [stagedAgendaActive, rightPanel]);
+
+  useEffect(() => {
+    if (checkpointGraphId) setLastGraphCheckpointId(checkpointGraphId);
+  }, [checkpointGraphId]);
 
   useEffect(() => {
     Promise.all([fetchUiConfig(), fetchMe(), fetchConversations()])
       .then(([cfg, account, history]) => {
         setConfig(cfg);
         if (cfg.cards_enabled) {
-          void fetchCardTemplates().then(setCardTemplates).catch(() => setCardTemplates([]));
+          void fetchCardTemplates().then(setCardTemplates);
         }
         if (!cfg.staged_enabled) setMode("auto");
         bindAccount(account.id);
+        setQwenKeyDraft(getLlmKey());
+        setHasUserKey(Boolean(getLlmKey()));
         clearLegacySessions();
         setSessions(history);
         const storedId = getSessionId();
@@ -224,14 +290,13 @@ export function App() {
               ? storedEffort
               : found.reasoning_effort || cfg.reasoning_effort;
           setEffort(next);
-          setKeyDraft(getLlmKey(found.id));
         }
       })
       .catch(() => setHealth("нет связи"));
     fetchHealth()
       .then((body) => {
         const ok = body.status === "ready" || body.status === "ok";
-        setHealth(ok ? "онлайн" : "деградация");
+        setHealth(ok ? "онлайн" : "есть сбои");
       })
       .catch(() => setHealth("нет связи"));
   }, []);
@@ -246,7 +311,7 @@ export function App() {
       return;
     }
     let cancelled = false;
-    fetchConversation(currentId, branchId)
+    fetchConversation(currentId, branchId, requestedCheckpointId)
       .then((detail) => {
         if (!cancelled) applyDetail(detail);
       })
@@ -256,7 +321,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [currentId, branchId]);
+  }, [currentId, branchId, requestedCheckpointId]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -266,11 +331,11 @@ export function App() {
         setSettingsOpen(false);
         return;
       }
-      if (graphRunId) setGraphRunId(null);
+      if (rightPanelOpen) setRightPanel({ kind: "closed" });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [workspace, graphRunId, settingsOpen]);
+  }, [workspace, rightPanelOpen, settingsOpen]);
 
   useEffect(() => {
     const syncSidebar = () => {
@@ -282,7 +347,9 @@ export function App() {
 
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
-      if (settingsRef.current && !settingsRef.current.contains(event.target as Node)) {
+      const target = event.target as HTMLElement;
+      if (target.closest("[data-settings-trigger]")) return;
+      if (settingsRef.current && !settingsRef.current.contains(target)) {
         setSettingsOpen(false);
       }
     };
@@ -296,6 +363,13 @@ export function App() {
     return () => window.clearTimeout(timeout);
   }, [notice]);
 
+  function openHelp(section = "") {
+    setSettingsOpen(false);
+    setRightPanel({ kind: "closed" });
+    setHelpSection(section);
+    setWorkspace("help");
+  }
+
   async function refreshSessions() {
     const history = await fetchConversations();
     setSessions(history);
@@ -303,23 +377,24 @@ export function App() {
 
   async function newChat() {
     abortRef.current?.abort();
-    try {
-      const created = await createConversation();
-      adoptSessionId(created.id);
-      setSessions((prev) => [created, ...prev]);
-      setCurrentId(created.id);
-      setBranchId(created.activeBranchId || "");
-      setHeadCheckpointId(created.headCheckpointId || "");
-      setBranches([]);
-      setAgenda([]);
-      setPendingApproval(null);
-      setMessages([]);
-      setGraphRunId(null);
-      setDraft("");
-      setWorkspace("chat");
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Не удалось создать чат");
-    }
+    setCurrentId("");
+    setBranchId("");
+    setHeadCheckpointId("");
+    setViewCheckpointId("");
+    setRequestedCheckpointId("");
+    setSelectedResearchStep(null);
+    setRightPanel({ kind: "closed" });
+    setBranches([]);
+    setAgenda([]);
+    setPendingApproval(null);
+    setTurnFailures([]);
+    setDismissedFailures(new Set());
+    setMessages([]);
+    setDraft("");
+    const nextMode = config?.staged_enabled === false ? "auto" : "staged";
+    setMode(nextMode);
+    localStorage.setItem("retrieval_mode", nextMode);
+    setWorkspace("chat");
   }
 
   function openSession(id: string) {
@@ -327,26 +402,56 @@ export function App() {
     adoptSessionId(id);
     setCurrentId(id);
     setBranchId("");
-    setGraphRunId(null);
-    setCheckpointGraphId("");
+    setRequestedCheckpointId("");
+    setSelectedResearchStep(null);
+    setRightPanel({ kind: "closed" });
+    setTurnFailures([]);
+    setDismissedFailures(new Set());
     setWorkspace("chat");
   }
 
-  function patchAssistant(id: string, patch: Partial<ChatMessage>) {
+  function restoreComposer(text: string, ...dropIds: string[]) {
+    const remove = new Set(dropIds.filter(Boolean));
+    if (remove.size) {
+      setMessages((prev) => prev.filter((msg) => !remove.has(msg.id)));
+    }
+    setPendingApproval(null);
+    if (text) setDraft(text);
+    setComposerFocusKey((key) => key + 1);
+  }
+
+  function responseErrorMessage(body: unknown, fallback: string): string {
+    if (!body || typeof body !== "object") return fallback;
+    const payload = body as { error?: unknown; detail?: unknown };
+    const value = payload.error ?? payload.detail;
+    if (typeof value === "string" && value.trim()) return value;
+    if (value && typeof value === "object" && "message" in value) {
+      const message = (value as { message?: unknown }).message;
+      if (typeof message === "string" && message.trim()) return message;
+    }
+    return fallback;
+  }
+
+  function patchAssistant(id: string, patch: Partial<ChatMessage>, fallback?: ChatMessage) {
     setMessages((prev) => {
-      return prev.map((msg) => (msg.id === id ? { ...msg, ...patch } : msg));
+      const exists = prev.some((msg) => msg.id === id);
+      if (exists) return prev.map((msg) => (msg.id === id ? { ...msg, ...patch } : msg));
+      return fallback ? [...prev, { ...fallback, ...patch }] : prev;
     });
   }
 
-  async function send(text = draft) {
+  async function send(
+    text = draft,
+    card?: { templateVersionId: string; templateName: string; version: number; schema: Record<string, unknown>; ui?: Record<string, unknown> }
+  ) {
     const value = text.trim();
     if (!value || busy) return;
     let conversationId = currentId;
     let activeBranchId = branchId;
-    let baseCheckpointId = headCheckpointId;
+    let baseCheckpointId = viewCheckpointId || headCheckpointId;
     if (!conversationId) {
       try {
-        const created = await createConversation();
+        const created = await createConversation(mode);
         conversationId = created.id;
         adoptSessionId(created.id);
         setCurrentId(created.id);
@@ -354,13 +459,49 @@ export function App() {
         activeBranchId = created.activeBranchId || "";
         baseCheckpointId = created.headCheckpointId || "";
         setBranchId(activeBranchId);
+        setRequestedCheckpointId("");
       } catch (err) {
         setNotice(err instanceof Error ? err.message : "Не удалось создать чат");
         return;
       }
     }
+    const sourceBranch = branches.find((item) => item.id === activeBranchId);
+    if (sourceBranch?.mode === "auto" && mode === "staged") {
+      setNotice("Режим с планом начинается в новом чате. Этот вариант остаётся консультацией.");
+      return;
+    }
+    if (sourceBranch?.mode === "staged" && mode === "auto") {
+      if (!baseCheckpointId) return;
+      try {
+        const autoBranch = await forkConversation(
+          conversationId,
+          baseCheckpointId,
+          "auto",
+          sourceBranch.id
+        );
+        activeBranchId = autoBranch.id;
+        setBranches((items) => [...items, autoBranch]);
+        setBranchId(autoBranch.id);
+        setHeadCheckpointId(baseCheckpointId);
+        setRightPanel({ kind: "closed" });
+      } catch (err) {
+        setNotice(err instanceof Error ? err.message : "Не удалось открыть вариант «Ответ сразу»");
+        return;
+      }
+    }
     setDraft("");
-    const user: ChatMessage = { id: uid(), role: "user", text: value };
+    const user: ChatMessage = {
+      id: uid(),
+      role: "user",
+      text: value,
+      cardRequest: card ? {
+        templateVersionId: card.templateVersionId,
+        templateName: card.templateName,
+        version: card.version,
+        schema: card.schema,
+        ui: card.ui,
+      } : undefined,
+    };
     const assistantId = uid();
     const assistant: ChatMessage = {
       id: assistantId,
@@ -373,6 +514,7 @@ export function App() {
     };
     const started = Date.now();
     const next = [...messages, user, assistant];
+    liveTurnRef.current = true;
     setMessages(next);
     setSessions((prev) =>
       prev.map((item) =>
@@ -405,10 +547,15 @@ export function App() {
           mode,
           branch_id: activeBranchId || undefined,
           base_checkpoint_id: baseCheckpointId || undefined,
+          fork_if_needed: Boolean(
+            activeBranchId && baseCheckpointId && headCheckpointId && baseCheckpointId !== headCheckpointId
+          ),
+          intent: card ? "generate_card" : "chat",
+          template_version_id: card?.templateVersionId,
         }),
         signal: ac.signal,
       });
-      if (!res.ok || !res.body) {
+        if (!res.ok || !res.body) {
         if (res.status === 401) {
           window.location.assign("/login");
           return;
@@ -416,11 +563,12 @@ export function App() {
         let err = "Ошибка сервера";
         try {
           const body = await res.json();
-          err = body.error || err;
+          err = responseErrorMessage(body, err);
         } catch {
-          /* keep */
+          err = res.statusText || err;
         }
-        patchAssistant(assistantId, { text: err, status: "error" });
+        restoreComposer(value, user.id, assistantId);
+        setNotice(err);
         return;
       }
       const reader = res.body.getReader();
@@ -430,6 +578,8 @@ export function App() {
       let thinking = "";
       let tools = [...(assistant.tools || [])];
       let steps: ChatStep[] = [...(assistant.steps || [])];
+      let modelId = "";
+      let modelLabel = "";
       const elapsed = () => Math.max(1, Math.round((Date.now() - started) / 1000));
       const appendThink = (delta: string) => {
         thinking += delta;
@@ -451,15 +601,32 @@ export function App() {
           steps,
           status,
           elapsedSec: elapsed(),
+          ...(modelId ? { modelId, modelLabel } : {}),
           ...extra,
-        });
+        }, assistant);
       };
+      let terminal = false;
       const consume = (raw: string) => {
         const parsed = parseSseBlock(raw);
         if (!parsed) return false;
         const { event, data } = parsed;
-        if (event === "thinking") appendThink(String(data.delta || ""));
-        else if (event === "content") answer += String(data.delta || "");
+        if (event === "branch_context") {
+          const resolved = data.branch as Branch | undefined;
+          if (resolved?.id) {
+            activeBranchId = resolved.id;
+            setBranches((items) => {
+              const exists = items.some((item) => item.id === resolved.id);
+              return exists
+                ? items.map((item) => item.id === resolved.id ? resolved : item)
+                : [...items, resolved];
+            });
+            if (data.created) setNotice(`Создан вариант «${resolved.name}».`);
+          }
+        } else if (event === "thinking") appendThink(String(data.delta || ""));
+        else if (event === "model") {
+          modelId = String(data.id || "");
+          modelLabel = String(data.label || "");
+        } else if (event === "content") answer += String(data.delta || "");
         else if (event === "content_rewind") {
           const rewind = String(data.text || "");
           if (rewind && answer.endsWith(rewind)) answer = answer.slice(0, -rewind.length);
@@ -467,7 +634,7 @@ export function App() {
           const id = String(data.id || `t${tools.length}`);
           const card = {
             id,
-            name: String(data.name || "ask_subgraph"),
+            name: String(data.name || "unknown"),
             status: "running" as const,
             args: data.arguments ?? data.args,
           };
@@ -483,23 +650,41 @@ export function App() {
           steps = steps.map((item) =>
             item.kind === "tool" && item.id === id ? { ...item, status, result } : item
           );
+        } else if (event === "card_draft") {
+          flush("streaming", {
+            cardDraft: data.draft as ChatMessage["cardDraft"],
+            cardTemplateName: String(data.template_name || card?.templateName || "Карточка"),
+          });
         } else if (event === "done") {
           if (data.final_content) answer = String(data.final_content);
-          const runId = data.graph_run_id ? String(data.graph_run_id) : "";
+          const checkpointId = data.checkpoint_id ? String(data.checkpoint_id) : "";
           const chains = Number(data.graph_chain_count) || 0;
+          if (data.modelId) modelId = String(data.modelId);
+          if (data.modelLabel) modelLabel = String(data.modelLabel);
           flush("done", {
-            graphRunId: runId || undefined,
             graphChainCount: chains || undefined,
+            checkpointId: checkpointId || undefined,
           });
-          if (runId && chains > 0) setGraphRunId(runId);
+          if (checkpointId && data.open_graph) {
+            setRightPanel({ kind: "research", tab: "data", checkpointId });
+            setLastResearchTabs((tabs) => ({ ...tabs, [conversationId]: "data" }));
+          }
+          terminal = true;
           return true;
         } else if (event === "approval_required") {
           const approval = data.approval as PendingApproval;
           setPendingApproval(approval);
           flush("waiting_approval");
+          terminal = true;
+          return true;
+        } else if (event === "turn_rolled_back") {
+          restoreComposer(String(data.text || value), user.id, assistantId);
+          if (data.message) setNotice(String(data.message));
+          terminal = true;
           return true;
         } else if (event === "error") {
           flush("error", { text: String(data.message || "Ошибка стрима") });
+          terminal = true;
           return true;
         }
         flush("streaming");
@@ -528,22 +713,24 @@ export function App() {
         if (stop) return;
       }
       if (buf.trim()) consume(buf);
-      if (answer.trim()) flush("done");
-      else flush("error", { text: "Поток оборвался" });
+      if (!terminal) restoreComposer(value, user.id, assistantId);
     } catch (err) {
       if ((err as Error).name === "AbortError") {
-        patchAssistant(assistantId, { status: "aborted" });
+        restoreComposer(value, user.id, assistantId);
       } else {
-        patchAssistant(assistantId, {
-          status: "error",
-          text: "Ошибка соединения с сервером",
-        });
+        restoreComposer(value, user.id, assistantId);
+        setNotice("Ошибка соединения с сервером");
       }
     } finally {
+      liveTurnRef.current = false;
       setBusy(false);
       abortRef.current = null;
       void refreshSessions();
       if (conversationId) {
+        setBranchId(activeBranchId);
+        setRequestedCheckpointId("");
+        setSelectedResearchStep(null);
+        setResearchMapRefresh((value) => value + 1);
         void fetchConversation(conversationId, activeBranchId).then(applyDetail).catch(() => undefined);
       }
     }
@@ -592,27 +779,52 @@ export function App() {
   }
 
   async function handleApproval(
-    action: "approve" | "revise",
-    subquestions: string[],
+    action: "approve" | "revise" | "cancel",
+    selection: { openSqRefs: string[]; newSubquestions: string[] },
     feedback = ""
   ) {
     if (!pendingApproval || approvalBusy) return;
+    const streaming = action !== "cancel";
+    const controller = streaming ? new AbortController() : null;
+    const approvalAssistantId = pendingApproval.assistantMessageId;
+    const assistantIndex = messages.findIndex((message) => message.id === approvalAssistantId);
+    const approvalUser = assistantIndex > 0
+      ? [...messages.slice(0, assistantIndex)].reverse().find((message) => message.role === "user")
+      : undefined;
     setApprovalBusy(true);
+    if (streaming) {
+      setBusy(true);
+      liveTurnRef.current = true;
+      abortRef.current = controller;
+    }
     try {
-      const res = await resolveApproval(pendingApproval, action, subquestions, feedback);
-      // The server has claimed the approval synchronously. Hide the form before
-      // consuming the long-running retrieval/LLM SSE stream so it cannot remain
-      // in the thread while the same assistant message continues streaming.
-      if (action === "approve") setPendingApproval(null);
+      const res = await resolveApproval(
+        pendingApproval,
+        action,
+        selection,
+        feedback,
+        controller?.signal,
+      );
+      setPendingApproval(null);
+      if (action === "cancel") {
+        const payload = await res.json() as { text?: string; message?: string };
+        restoreComposer(String(payload.text || ""));
+        if (payload.message) setNotice(String(payload.message));
+        if (currentId) applyDetail(await fetchConversation(currentId, branchId));
+        return;
+      }
+      let openGraph = false;
+      let rolledBack = false;
       if (res.body) {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
-        const assistantId = pendingApproval.assistantMessageId;
+        const assistantId = approvalAssistantId;
         const existing = messages.find((message) => message.id === assistantId);
         let answer = existing?.text || "";
         let thinking = existing?.thinking || "";
         let steps = [...(existing?.steps || [])];
+        let status = existing?.status || "streaming";
         while (true) {
           const { done, value } = await reader.read();
           buffer += decoder.decode(value || new Uint8Array(), { stream: !done }).replace(/\r\n/g, "\n");
@@ -626,14 +838,46 @@ export function App() {
               const last = steps[steps.length - 1];
               if (last?.kind === "think") steps = [...steps.slice(0, -1), { kind: "think", text: last.text + delta }];
               else steps = [...steps, { kind: "think", text: delta }];
-            }
-            if (parsed?.event === "content") answer += String(parsed.data.delta || "");
-            if (parsed?.event === "done") answer = String(parsed.data.final_content || answer);
-            if (parsed?.event === "approval_required") {
+            } else if (parsed?.event === "content") {
+              answer += String(parsed.data.delta || "");
+            } else if (parsed?.event === "tool_call") {
+              const id = String(parsed.data.id || `tool-${steps.length}`);
+              const tool = {
+                kind: "tool" as const,
+                id,
+                name: String(parsed.data.name || "unknown"),
+                status: "running" as const,
+                args: parsed.data.arguments ?? parsed.data.args,
+              };
+              steps = [...steps.filter((item) => item.kind !== "tool" || item.id !== id), tool];
+            } else if (parsed?.event === "tool_result") {
+              const id = String(
+                parsed.data.id || [...steps].reverse().find((item) => item.kind === "tool")?.id || "tool"
+              );
+              const result = String(parsed.data.result ?? parsed.data.preview ?? "");
+              const toolStatus = parsed.data.ok === false ? "error" : "done";
+              steps = steps.map((item) =>
+                item.kind === "tool" && item.id === id
+                  ? { ...item, status: toolStatus, result }
+                  : item
+              );
+            } else if (parsed?.event === "done") {
+              answer = String(parsed.data.final_content || answer);
+              status = "done";
+              openGraph = Boolean(parsed.data.open_graph);
+            } else if (parsed?.event === "approval_required") {
               setPendingApproval(parsed.data.approval as PendingApproval);
+              status = "waiting_approval";
+            } else if (parsed?.event === "turn_rolled_back") {
+              restoreComposer(String(parsed.data.text || ""));
+              if (parsed.data.message) setNotice(String(parsed.data.message));
+              rolledBack = true;
+              status = "aborted";
+            } else if (parsed?.event === "error") {
+              setNotice(String(parsed.data.message || "Ошибка продолжения"));
+              status = "error";
             }
-            if (parsed?.event === "error") setNotice(String(parsed.data.message || "Ошибка продолжения"));
-            patchAssistant(assistantId, { text: answer, thinking, steps, status: parsed?.event === "approval_required" ? "waiting_approval" : "streaming" });
+            if (!rolledBack) patchAssistant(assistantId, { text: answer, thinking, steps, status });
             separator = buffer.indexOf("\n\n");
           }
           if (done) break;
@@ -641,22 +885,46 @@ export function App() {
       }
       const detail = await fetchConversation(currentId, branchId);
       applyDetail(detail);
-      if (action === "approve") {
+      if (action === "approve" && openGraph && !rolledBack && detail.headCheckpointId) {
         setPendingApproval(null);
-        if (detail.headCheckpointId) setCheckpointGraphId(detail.headCheckpointId);
+        setRightPanel({ kind: "research", tab: "data", checkpointId: detail.headCheckpointId });
+        setLastResearchTabs((tabs) => ({ ...tabs, [currentId]: "data" }));
       }
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось продолжить ответ");
+      if (error instanceof DOMException && error.name === "AbortError") {
+        if (currentId) {
+          try { applyDetail(await fetchConversation(currentId, branchId)); }
+          catch { /* The local rollback below still restores the question. */ }
+        }
+        restoreComposer(
+          String(approvalUser?.text || ""),
+          approvalUser?.id || "",
+          approvalAssistantId,
+        );
+        setPendingApproval(null);
+        setNotice("Продолжение остановлено.");
+      } else {
+        setNotice(error instanceof Error ? error.message : "Не удалось продолжить ответ");
+      }
     } finally {
       setApprovalBusy(false);
+      if (streaming) {
+        setBusy(false);
+        liveTurnRef.current = false;
+        if (abortRef.current === controller) abortRef.current = null;
+      }
     }
   }
 
   async function mutateAgenda(
-    action: "add" | "close" | "reopen",
-    input: { sq_id?: string; text?: string }
+    action: "close" | "reopen",
+    input: { sq_ref: string }
   ) {
     if (!branchId || !headCheckpointId) return;
+    if (activeBranchMode !== "staged") {
+      setNotice("План поиска доступен только в режиме «С планом».");
+      return;
+    }
     if (pendingApproval) {
       setNotice("Сначала подтвердите или отклоните текущий план поиска.");
       return;
@@ -666,25 +934,26 @@ export function App() {
       setAgenda(result.agenda);
       setHeadCheckpointId(result.checkpointId);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось изменить SQ");
+      setNotice(error instanceof Error ? error.message : "Не удалось изменить план");
       const detail = await fetchConversation(currentId, branchId);
       applyDetail(detail);
     }
   }
 
   async function handleGenerateCard(templateVersionId: string) {
-    if (!headCheckpointId || !currentId || cardBusy || busy) return;
+    if (!headCheckpointId || !currentId || cardBusy || busy || pendingApproval) return;
+    const template = cardTemplates.find((item) => item.latestVersion.id === templateVersionId);
+    if (!template) return;
     setCardBusy(true);
+    setRightPanel({ kind: "closed" });
     try {
-      const result = await generateCardDraft(
-        headCheckpointId,
+      await send(`Создай карточку «${template.name}» по нашему диалогу.`, {
         templateVersionId,
-        profile,
-        effort
-      );
-      setHeadCheckpointId(result.checkpointId);
-      applyDetail(await fetchConversation(currentId, branchId));
-      setNotice("Карточка сформирована как draft в текущей ветке.");
+        templateName: template.name,
+        version: template.latestVersion.version,
+        schema: template.latestVersion.schema,
+        ui: template.latestVersion.ui,
+      });
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Не удалось сформировать карточку");
     } finally {
@@ -692,8 +961,15 @@ export function App() {
     }
   }
 
-  async function handleSaveCard(draftId: string, title: string) {
+  async function handleSaveCard(
+    draftId: string,
+    title: string,
+    data?: Record<string, unknown>,
+    provenance?: Record<string, unknown>,
+    gaps?: unknown[]
+  ) {
     try {
+      if (data && provenance) await updateCardDraft(draftId, { data, provenance, gaps });
       await saveCardDraft(draftId, title);
       applyDetail(await fetchConversation(currentId, branchId));
       setNotice("Карточка сохранена в библиотеку.");
@@ -702,17 +978,118 @@ export function App() {
     }
   }
 
-  async function forkFrom(checkpointId: string) {
-    if (!currentId || !checkpointId) return;
+  async function handleInsertCard(card: SavedCard) {
+    if (!branchId || !headCheckpointId || busy || pendingApproval) return;
     try {
-      const branch = await forkConversation(currentId, checkpointId);
-      setBranches((items) => [...items, branch]);
-      setBranchId(branch.id);
-      setHeadCheckpointId(checkpointId);
-      setWorkspace("chat");
-      setNotice(`Создана ветка «${branch.name}».`);
+      const result = await insertCardMessage(
+        branchId,
+        headCheckpointId,
+        card.latestRevision.id
+      );
+      setHeadCheckpointId(result.checkpointId);
+      if (currentId) applyDetail(await fetchConversation(currentId, branchId));
+      setRightPanel({ kind: "closed" });
+      setNotice(`Карточка «${card.title}» добавлена в контекст варианта.`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось создать ветку");
+      setNotice(error instanceof Error ? error.message : "Не удалось вставить карточку");
+    }
+  }
+
+  async function handleRenameBranch(id: string, name: string) {
+    const cleanName = name.trim().replace(/\s+/g, " ").slice(0, 64);
+    if (!cleanName) return;
+    branchNameOverridesRef.current = { ...branchNameOverridesRef.current, [id]: cleanName };
+    setBranchNameOverrides((items) => ({ ...items, [id]: cleanName }));
+    setBranches((items) => items.map((branch) => branch.id === id ? { ...branch, name: cleanName } : branch));
+    try {
+      const updated = await renameBranch(id, cleanName);
+      branchNameOverridesRef.current = { ...branchNameOverridesRef.current, [id]: updated.name };
+      setBranchNameOverrides((items) => ({ ...items, [id]: updated.name }));
+      setBranches((items) => items.map((branch) => branch.id === id ? { ...branch, ...updated, name: updated.name } : branch));
+      setNotice(`Вариант переименован: «${updated.name}».`);
+    } catch (error) {
+      const nextOverrides = { ...branchNameOverridesRef.current };
+      delete nextOverrides[id];
+      branchNameOverridesRef.current = nextOverrides;
+      setBranchNameOverrides((items) => {
+        const next = { ...items };
+        delete next[id];
+        return next;
+      });
+      void fetchConversation(currentId, branchId).then((detail) => applyDetail(detail)).catch(() => undefined);
+      setNotice(error instanceof Error ? error.message : "Не удалось переименовать вариант");
+      throw error;
+    }
+  }
+
+  async function forkFromAnswer(checkpointId: string) {
+    if (!currentId || !branchId || !checkpointId || busy || forkingCheckpointId) return;
+    const sourceBranch = branches.find((item) => item.id === branchId);
+    setForkingCheckpointId(checkpointId);
+    try {
+      const created = await forkConversation(
+        currentId,
+        checkpointId,
+        sourceBranch?.mode || mode,
+        branchId
+      );
+      setRequestedCheckpointId("");
+      setSelectedResearchStep(null);
+      setRightPanel({ kind: "closed" });
+      setBranches((items) => items.some((item) => item.id === created.id) ? items : [...items, created]);
+      setBranchId(created.id);
+      setHeadCheckpointId(checkpointId);
+      setViewCheckpointId(checkpointId);
+      setMode(created.mode);
+      localStorage.setItem("retrieval_mode", created.mode);
+      applyDetail(await fetchConversation(currentId, created.id));
+      setResearchMapRefresh((value) => value + 1);
+      setComposerFocusKey((value) => value + 1);
+      setNotice(`Создан вариант «${created.name}» от выбранного ответа.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Не удалось создать вариант");
+    } finally {
+      setForkingCheckpointId("");
+    }
+  }
+
+  function openResearch(tab?: ResearchTab, checkpointId?: string) {
+    const remembered = currentId ? lastResearchTabs[currentId] : undefined;
+    const requested = tab || remembered || "map";
+    const nextTab = requested === "directions" && !stagedAgendaActive ? "map" : requested;
+    const panelCheckpoint = rightPanel.kind === "research" ? rightPanel.checkpointId : undefined;
+    const nextCheckpoint = nextTab === "data"
+      ? checkpointId || panelCheckpoint || lastGraphCheckpointId
+      : panelCheckpoint;
+    if (nextTab === "data" && !nextCheckpoint) return;
+    setRightPanel({ kind: "research", tab: nextTab, checkpointId: nextCheckpoint });
+    if (currentId) setLastResearchTabs((tabs) => ({ ...tabs, [currentId]: nextTab }));
+  }
+
+  function selectResearchStep(nextBranchId: string, step: ResearchStep) {
+    const checkpointId = step.resumeCheckpointId || step.answerCheckpointId || "";
+    if (!checkpointId) return;
+    const graphCheckpointId = step.graphCheckpointId || step.answerCheckpointId || checkpointId;
+    setSelectedResearchStep(step);
+    setBranchId(nextBranchId);
+    setRequestedCheckpointId(checkpointId);
+    setLastGraphCheckpointId(graphCheckpointId);
+    setRightPanel((panel) => panel.kind === "research"
+      ? { ...panel, checkpointId: graphCheckpointId }
+      : panel);
+    if (window.innerWidth <= 900) setRightPanel({ kind: "closed" });
+  }
+
+  async function openResearchStep(stepId: string, originBranchId?: string) {
+    if (!currentId) return;
+    try {
+      const map = await fetchResearchMap(currentId, originBranchId || branchId);
+      const step = map.steps.find((item) => item.id === stepId);
+      if (!step) throw new Error("Исходный шаг не найден");
+      openResearch("map");
+      selectResearchStep(originBranchId || step.branchId, step);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Не удалось открыть исходный шаг");
     }
   }
 
@@ -736,10 +1113,16 @@ export function App() {
         username={config?.username || "demo"}
         onNewChat={() => void newChat()}
         onOpenSession={openSession}
-        onExplorer={() => setWorkspace("graph")}
-        onCards={() => setWorkspace("cards")}
+        onExplorer={() => { setRightPanel({ kind: "closed" }); setWorkspace("graph"); }}
+        onLibrary={() => { setRightPanel({ kind: "closed" }); setWorkspace("library"); }}
+        onHelp={() => openHelp()}
+        onCards={() => { setRightPanel({ kind: "closed" }); setWorkspace("cards"); }}
         cardsEnabled={config?.cards_enabled !== false}
+        health={health}
+        settingsOpen={settingsOpen}
+        onSettings={() => setSettingsOpen((value) => !value)}
         onLogout={() => void logout()}
+        keyWarning={!hasUserKey}
       />
       {!collapsed && (
         <PanelResizer
@@ -753,111 +1136,60 @@ export function App() {
       <div className="main-col">
         <header className="topbar">
           <div className="topbar-title">
-            <span>{workspace === "graph" ? "Граф базы" : workspace === "cards" ? "Карточки" : current?.title || "Новый чат"}</span>
+            <span>{workspace === "graph" ? "Вся база" : workspace === "library" ? "Статьи" : workspace === "help" ? "Справка" : workspace === "cards" ? "Карточки" : current?.title || "Новый чат"}</span>
             {workspace === "chat" && branches.length > 0 && (
-              <select value={branchId} onChange={(event) => setBranchId(event.target.value)} aria-label="Ветка чата">
-                {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
-              </select>
+              <BranchMenu
+                branches={branches}
+                activeId={branchId}
+                open={rightPanel.kind === "research"}
+                openDirections={stagedAgendaActive ? openDirectionCount : 0}
+                onOpen={() => rightPanel.kind === "research" ? setRightPanel({ kind: "closed" }) : openResearch()}
+              />
             )}
-          </div>
-          <div className="topbar-right">
-            {workspace === "chat" && (
-              <button type="button" className="sq-button" onClick={() => setAgendaOpen((value) => !value)}>
-                SQ {agenda.filter((item) => item.status === "open").length}
-              </button>
-            )}
-            <span className={`health ${health === "онлайн" ? "is-ok" : ""}`}><i />{health}</span>
-            <div className="settings-wrap" ref={settingsRef}>
-              <button
-                type="button"
-                className="icon-btn"
-                onClick={() => setSettingsOpen((v) => !v)}
-                aria-label="Настройки"
-              >
-                <IconSettings />
-              </button>
-              {settingsOpen && (
-                <div className="settings-pop">
-                  <p className="settings-title">Подключение</p>
-                  <p className="settings-hint">Ключ хранится только в этой вкладке браузера.</p>
-                  <input
-                    type="password"
-                    value={keyDraft}
-                    onChange={(e) => setKeyDraft(e.target.value)}
-                    placeholder="из конфига сервера"
-                  />
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    onClick={() => {
-                      setLlmKey(profile, keyDraft);
-                      setSettingsOpen(false);
-                    }}
-                  >
-                    Сохранить
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    disabled={!currentId}
-                    onClick={async () => {
-                      try {
-                        await clearHistory();
-                        setMessages([]);
-                        setGraphRunId(null);
-                        await refreshSessions();
-                        setNotice("История текущего чата очищена.");
-                      } catch (err) {
-                        setNotice(err instanceof Error ? err.message : "Не удалось очистить историю.");
-                      }
-                    }}
-                  >
-                    Очистить историю
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost-btn"
-                    disabled={!currentId}
-                    onClick={async () => {
-                      if (!currentId || !window.confirm("Удалить этот чат без возможности восстановления?")) return;
-                      try {
-                        await deleteConversation(currentId);
-                        const remaining = sessions.filter((item) => item.id !== currentId);
-                        setSessions(remaining);
-                        const nextId = remaining[0]?.id || "";
-                        if (nextId) adoptSessionId(nextId);
-                        else sessionStorage.removeItem("neo4j-assistant.session-id");
-                        setCurrentId(nextId);
-                        setMessages([]);
-                        setGraphRunId(null);
-                        setSettingsOpen(false);
-                      } catch (err) {
-                        setNotice(err instanceof Error ? err.message : "Не удалось удалить чат");
-                      }
-                    }}
-                  >
-                    Удалить чат
-                  </button>
-                </div>
-              )}
-            </div>
           </div>
         </header>
-        {workspace === "chat" ? <div className={`chat-col ${empty ? "is-empty" : ""} ${graphRunId || checkpointGraphId ? "with-graph" : ""}`}>
+        {workspace === "chat" ? <div className={`chat-col ${empty ? "is-empty" : ""} ${rightPanelOpen ? "with-graph" : ""}`}>
+          {!empty && (
           <ChatThread
             messages={messages}
-            openGraphId={graphRunId}
-            onOpenGraph={(runId) => setGraphRunId(runId)}
+            cardTemplates={cardTemplates}
+            agenda={agenda}
+            openGraphId={checkpointGraphId}
+            onOpenGraph={(checkpointId) => openResearch("data", checkpointId)}
             pendingApproval={pendingApproval}
             approvalBusy={approvalBusy}
             onResolveApproval={(action, sqs, feedback) => void handleApproval(action, sqs, feedback)}
-            onCheckpoint={(checkpointId) => {
-              setCheckpointGraphId(checkpointId);
-              setGraphRunId(null);
-            }}
-            onFork={(checkpointId) => void forkFrom(checkpointId)}
-            onSaveCard={(draftId, title) => void handleSaveCard(draftId, title)}
+            turnFailures={turnFailures.filter((item) => !dismissedFailures.has(item.createdAt))}
+            onDismissFailure={(createdAt) => setDismissedFailures((prev) => new Set(prev).add(createdAt))}
+            selectedMessageIds={selectedResearchStep ? [
+              selectedResearchStep.question.messageId,
+              ...(selectedResearchStep.answer?.messageId ? [selectedResearchStep.answer.messageId] : []),
+            ] : []}
+            onSaveCard={(draftId, title, data, provenance, gaps) => void handleSaveCard(draftId, title, data, provenance, gaps)}
+            onFork={(checkpointId) => void forkFromAnswer(checkpointId)}
+            forkingCheckpointId={forkingCheckpointId}
           />
+          )}
+          <div className="composer-stack">
+          {empty && (
+            <div className="welcome">
+              <p>
+                <button type="button" className="welcome-help-link" onClick={() => openHelp()}>
+                  Как пользоваться
+                </button>
+                <span> — или спросите у ассистента, он сам расскажет</span>
+              </p>
+            </div>
+          )}
+          {viewCheckpointId && headCheckpointId && viewCheckpointId !== headCheckpointId && selectedResearchStep && (
+            <div className="context-continuation" role="status">
+              <span><b>Продолжение от:</b> «{selectedResearchStep.question.preview}» · отправите — начнётся отдельный вариант</span>
+              <button type="button" onClick={() => {
+                setSelectedResearchStep(null);
+                setRequestedCheckpointId("");
+              }}>К последнему шагу</button>
+            </div>
+          )}
           <Composer
             text={draft}
             onText={setDraft}
@@ -885,7 +1217,6 @@ export function App() {
               localStorage.setItem("llm_profile", id);
               const found = config?.models.find((item) => item.id === id);
               if (found?.reasoning_effort) setEffort(found.reasoning_effort);
-              setKeyDraft(getLlmKey(id));
             }}
             centered={empty}
             mode={mode}
@@ -894,14 +1225,29 @@ export function App() {
               localStorage.setItem("retrieval_mode", value);
             }}
             stagedEnabled={config?.staged_enabled !== false}
-            cardTemplates={cardTemplates}
-            cardBusy={cardBusy}
-            cardEnabled={Boolean(headCheckpointId && currentId && !pendingApproval && !busy)}
-            onGenerateCard={(templateVersionId) => void handleGenerateCard(templateVersionId)}
+            branchMode={activeBranchMode}
+            cardsEnabled={config?.cards_enabled !== false}
+            cardActionsEnabled={Boolean(headCheckpointId && currentId && !pendingApproval && !busy)}
+            onOpenCardTemplates={() => setRightPanel({ kind: "cards", tab: "templates" })}
+            onOpenCardLibrary={() => setRightPanel({ kind: "cards", tab: "library" })}
+            focusKey={composerFocusKey}
           />
+          </div>
         </div> : workspace === "graph" ? (
-          <Suspense fallback={<p className="explorer-status">Загрузка Graph Workspace…</p>}>
-            <Explorer />
+          <Suspense fallback={<p className="explorer-status">Загрузка базы…</p>}>
+            <Explorer onUseCollection={(text) => {
+              setDraft((currentDraft) => currentDraft.trim() ? `${currentDraft.trim()}\n\n${text}` : text);
+              setWorkspace("chat");
+              setNotice("Подборка добавлена в черновик сообщения.");
+            }} />
+          </Suspense>
+        ) : workspace === "library" ? (
+          <Suspense fallback={<p className="explorer-status">Загрузка библиотеки…</p>}>
+            <LibraryWorkspace />
+          </Suspense>
+        ) : workspace === "help" ? (
+          <Suspense fallback={<p className="explorer-status">Загрузка справки…</p>}>
+            <HelpWorkspace focusHeading={helpSection} />
           </Suspense>
         ) : (
           <Suspense fallback={<p className="explorer-status">Загрузка карточек…</p>}>
@@ -914,7 +1260,7 @@ export function App() {
           </Suspense>
         )}
       </div>
-      {workspace === "chat" && (graphRunId || checkpointGraphId) && (
+      {workspace === "chat" && rightPanelOpen && (
         <PanelResizer
           side="graph"
           value={graphWidth}
@@ -923,23 +1269,106 @@ export function App() {
           onChange={setGraphWidth}
         />
       )}
-      {workspace === "chat" && (graphRunId || checkpointGraphId) && (
-        <Suspense fallback={<aside className="graph-pane"><p className="explorer-status">Загрузка графа…</p></aside>}>
-          <GraphPane
-            runId={graphRunId || undefined}
-            checkpointId={checkpointGraphId || undefined}
-            onClose={() => { setGraphRunId(null); setCheckpointGraphId(""); }}
-          />
+      {workspace === "chat" && rightPanel.kind === "research" && (
+        <ResearchPanelShell
+          tab={rightPanel.tab}
+          branchName={activeBranchLabel}
+          staged={stagedAgendaActive}
+          openDirections={openDirectionCount}
+          dataAvailable={Boolean(lastGraphCheckpointId || rightPanel.checkpointId)}
+          onTab={(tab) => openResearch(tab)}
+          onClose={() => setRightPanel({ kind: "closed" })}
+        >
+          {rightPanel.tab === "map" ? (
+            <Suspense fallback={<p className="explorer-status">Загрузка карты…</p>}>
+              <ResearchMapPane
+                conversationId={currentId}
+                activeBranchId={branchId}
+                selectedStepId={selectedResearchStep?.id || ""}
+                refreshKey={researchMapRefresh}
+                dataCheckpointId={rightPanel.checkpointId || lastGraphCheckpointId}
+                onSelectStep={selectResearchStep}
+                onOpenGraph={(checkpointId) => openResearch("data", checkpointId)}
+                onOpenData={() => openResearch("data")}
+                onRenameBranch={handleRenameBranch}
+                onClose={() => setRightPanel({ kind: "closed" })}
+                embedded
+              />
+            </Suspense>
+          ) : rightPanel.tab === "directions" ? (
+            <AgendaDrawer
+              agenda={agenda}
+              embedded
+              onToggle={(item) => mutateAgenda(item.status === "open" ? "close" : "reopen", { sq_ref: item.ref })}
+            />
+          ) : checkpointGraphId ? (
+            <Suspense fallback={<p className="explorer-status">Загрузка фактов…</p>}>
+              <GraphPane
+                checkpointId={checkpointGraphId}
+                onClose={() => setRightPanel({ kind: "closed" })}
+                onOpenStep={(stepId, originBranchId) => void openResearchStep(stepId, originBranchId)}
+                embedded
+              />
+            </Suspense>
+          ) : <p className="explorer-status">В этом диалоге ещё нет фактов из базы.</p>}
+        </ResearchPanelShell>
+      )}
+      {workspace === "chat" && rightPanel.kind === "cards" && (
+        <Suspense fallback={<aside className="card-side-pane"><p className="explorer-status">Загрузка карточек…</p></aside>}>
+          <aside className="card-side-pane">
+            <CardsWorkspace
+              checkpointId={headCheckpointId}
+              branchId={branchId}
+              onCheckpoint={setHeadCheckpointId}
+              onNotice={setNotice}
+              chatMode
+              initialTab={rightPanel.tab}
+              onGenerate={(templateVersionId) => void handleGenerateCard(templateVersionId)}
+              onInsert={(card) => void handleInsertCard(card)}
+              onClose={() => setRightPanel({ kind: "closed" })}
+            />
+          </aside>
         </Suspense>
       )}
-      {agendaOpen && workspace === "chat" && (
-        <AgendaDrawer
-          agenda={agenda}
-          onClose={() => setAgendaOpen(false)}
-          onAdd={(text) => mutateAgenda("add", { text })}
-          onToggle={(item) => mutateAgenda(item.status === "open" ? "close" : "reopen", { sq_id: item.id })}
-        />
-      )}
+      {settingsOpen && <div className="sidebar-settings-pop" ref={settingsRef}>
+        <p className="settings-title">Подключение</p>
+        <p className="settings-hint">Ключи хранятся только в этой вкладке браузера.</p>
+        {!hasUserKey && (
+          <p className="settings-key-warning" id="qwen-key-warning" role="status">
+            Ключ не вставлен — используется демонстрационный. Вставьте свой ключ QwenCloud.
+            {" "}
+            <button type="button" className="settings-key-warning-link" onClick={() => openHelp(QWEN_CLOUD_KEY_HEADING)}>
+              Как получить ключ
+            </button>
+          </p>
+        )}
+        <label className="key-field">
+          <span>Qwen</span>
+          <input
+            type="password"
+            value={qwenKeyDraft}
+            onChange={(event) => setQwenKeyDraft(event.target.value)}
+            placeholder="из конфига сервера"
+            aria-describedby={!hasUserKey ? "qwen-key-warning" : undefined}
+          />
+        </label>
+        <button type="button" className="ghost-btn" onClick={() => {
+          setLlmKey("qwen_cloud", qwenKeyDraft);
+          setHasUserKey(Boolean(qwenKeyDraft.trim()));
+          setSettingsOpen(false);
+        }}>Сохранить</button>
+        <button type="button" className="ghost-btn danger-btn" disabled={!currentId} onClick={async () => {
+          if (!currentId || !window.confirm("Удалить этот чат без возможности восстановления?")) return;
+          try {
+            await deleteConversation(currentId);
+            const remaining = sessions.filter((item) => item.id !== currentId);
+            setSessions(remaining);
+            const nextId = remaining[0]?.id || "";
+            if (nextId) adoptSessionId(nextId); else sessionStorage.removeItem("neo4j-assistant.session-id");
+            setCurrentId(nextId); setMessages([]); setRightPanel({ kind: "closed" }); setSettingsOpen(false);
+          } catch (error) { setNotice(error instanceof Error ? error.message : "Не удалось удалить чат"); }
+        }}>Удалить чат</button>
+      </div>}
       {notice && <div className="toast" role="status">{notice}</div>}
     </div>
   );

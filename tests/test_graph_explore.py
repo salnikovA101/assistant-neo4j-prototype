@@ -4,26 +4,37 @@ import pytest
 from server.algorithm.cypher.explore import (
     EXPLORE_FIELDS,
     EXPLORE_LIMITS,
+    MAX_EXPLORE_LIMIT,
+    MIN_EXPLORE_LIMIT,
+    _EXPAND_TRIPLETS,
+    _FACET_NODE_LABELS,
+    _FACET_RELATIONSHIPS,
+    _FACET_SOURCES,
     _FETCH_TRIPLETS,
     clamp_explore_field,
     clamp_explore_limit,
+    graph_filters_active,
+    normalize_graph_filters,
     nodes_from_triplet_rows,
 )
-from server.core.http_api import GraphExploreBody
+from server.core.http_api import GraphExpandBody, GraphExploreBody, GraphFacetsBody, GraphFilters
 from server.tools.graph_explore import rows_to_explore_payload
 
 
 def test_explore_limits_and_fields() -> None:
     assert EXPLORE_LIMITS == (10, 100, 1000)
+    assert MIN_EXPLORE_LIMIT == 1
+    assert MAX_EXPLORE_LIMIT == 5000
     assert EXPLORE_FIELDS == ("all", "name", "label", "rel", "evidence", "source")
-    assert clamp_explore_limit(25) == 100
+    assert clamp_explore_limit(25) == 25
     assert clamp_explore_limit(1000) == 1000
+    assert clamp_explore_limit(0) == 1
+    assert clamp_explore_limit(6000) == 5000
     assert clamp_explore_field("EVIDENCE") == "evidence"
     assert clamp_explore_field("nope") == "all"
     GraphExploreBody(q="lactobacillus", limit=10)
     GraphExploreBody(limit=100, field="rel")
-    with pytest.raises(ValidationError):
-        GraphExploreBody(limit=25)
+    GraphExploreBody(limit=25)
     with pytest.raises(ValidationError):
         GraphExploreBody(field="vertex")  # type: ignore[arg-type]
 
@@ -43,6 +54,52 @@ def test_explore_cypher_matches_triplets_not_bare_nodes() -> None:
     assert "type(r)" in blob
     assert "r.evidence" in blob
     assert "MATCH (n)" not in blob
+
+
+def test_graph_filters_and_facets_contract() -> None:
+    filters = GraphFilters(
+        node_labels=["Microbe"],
+        relationship_types=["PRODUCES"],
+        sources=["paper.pdf"],
+        min_confidence=0.7,
+    )
+    assert graph_filters_active(filters.model_dump())
+    normalized = normalize_graph_filters(
+        {"node_labels": ["Microbe", "Microbe", ""], "min_confidence": 2}
+    )
+    assert normalized["node_labels"] == ["Microbe"]
+    assert normalized["min_confidence"] == 1.0
+    assert not graph_filters_active(None)
+    GraphFacetsBody(q="kefir", filters=filters, source_limit=50)
+    with pytest.raises(ValidationError):
+        GraphFilters(min_confidence=1.1)
+
+    for query in (_FETCH_TRIPLETS, _EXPAND_TRIPLETS):
+        assert "$node_labels" in query
+        assert "$relationship_types" in query
+        assert "$sources" in query
+        assert "trim(coalesce(r.evidence, '')) <> ''" in query
+        assert "$min_confidence" in query
+    assert "$exclude_edge_ids" in _EXPAND_TRIPLETS
+    assert "$direction" in _EXPAND_TRIPLETS
+    assert "ORDER BY evidence_rank DESC" in _EXPAND_TRIPLETS
+    assert "count(DISTINCT n)" in _FACET_NODE_LABELS
+    assert "count(DISTINCT r)" in _FACET_RELATIONSHIPS
+    assert "ORDER BY count DESC, value" in _FACET_SOURCES
+
+
+def test_graph_expand_body_accepts_incremental_request() -> None:
+    body = GraphExpandBody(
+        node_id="4:1",
+        limit=25,
+        exclude_edge_ids=["5:1", "5:2"],
+        direction="outgoing",
+        filters={"node_labels": ["Metabolite"]},
+    )
+    assert body.limit == 25
+    assert body.exclude_edge_ids == ["5:1", "5:2"]
+    assert body.direction == "outgoing"
+    assert body.filters.node_labels == ["Metabolite"]
 
 
 def test_nodes_come_from_triplet_endpoints() -> None:
@@ -106,7 +163,7 @@ def test_rows_to_explore_payload_shape_and_no_embedding() -> None:
     assert "[0.1]" not in dumped
 
 
-def test_graph_explore_http_rejects_non_chip_limit() -> None:
+def test_graph_explore_http_accepts_custom_limit_and_guards_range() -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -117,8 +174,13 @@ def test_graph_explore_http_rejects_non_chip_limit() -> None:
         return {"q": body.q, "limit": body.limit, "field": body.field}
 
     client = TestClient(app)
-    bad = client.post("/graph_explore", json={"q": "x", "limit": 25})
+    custom = client.post("/graph_explore", json={"q": "x", "limit": 25})
+    assert custom.status_code == 200
+    assert custom.json()["limit"] == 25
+    bad = client.post("/graph_explore", json={"q": "x", "limit": 0})
     assert bad.status_code == 422
+    too_large = client.post("/graph_explore", json={"q": "x", "limit": 5001})
+    assert too_large.status_code == 422
     empty = client.post("/graph_explore", json={"q": "", "limit": 10})
     assert empty.status_code == 200
     assert empty.json() == {"q": "", "limit": 10, "field": "all"}

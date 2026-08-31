@@ -4,6 +4,7 @@ import json
 import re
 from typing import Any, Sequence
 
+from server.utils.constants import RETRIEVAL_STATE_VERSION
 from server.core.db import get_driver
 from server.core.graph_runs import chain_unit_index, record_accepted_chains
 from server.core.sessions import current_sources
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 TOOL_ERROR = "TOOL_ERROR"
 NO_RESULTS = "NO_RESULTS"
 
-MAX_SUBQUESTIONS = 6
+MAX_SUBQUESTIONS = 5
 _CYRILLIC_RE = re.compile(r"[\u0400-\u04FF]")
 
 
@@ -46,6 +47,8 @@ def normalize_subquestions(
     problems: list[str] = []
     local_seen: set[str] = set()
     seen = seen or set()
+    if raw is not None and not isinstance(raw, (list, tuple)):
+        return [], ["subquestions must be a JSON array of strings"]
 
     for item in raw or []:
         text = str(item).strip()
@@ -193,11 +196,16 @@ class SubgraphSearchAgent:
                 and turn.checkpoint_id
             )
             if persistent:
+                snapshot = await turn.store.conversation_source_snapshot(
+                    turn.conversation_id
+                )
+                (current_sources() or self.source_registry).restore(snapshot)
                 agenda = await turn.store.upsert_turn_subquestions(
                     turn.conversation_id,
                     turn.checkpoint_id,
                     sqs,
                     increment=True,
+                    agenda_visible=turn.mode == "staged",
                 )
                 by_key = {
                     turn.store.canonical_subquestion(item["text"]): item
@@ -273,10 +281,19 @@ class SubgraphSearchAgent:
                     )
                     result["accepted"] = recorded
                     result["accepted_all"] = recorded
+                    source_files = [
+                        path
+                        for item in recorded
+                        for path in collect_source_files([item])
+                    ]
+                    snapshot = await turn.store.merge_conversation_sources(
+                        turn.conversation_id, source_files
+                    )
+                    (current_sources() or self.source_registry).restore(snapshot)
                     carousel = dict(result.get("carousel_state") or {})
                     retrieval.update(
                         {
-                            "algorithmVersion": "v6-checkpoint-1",
+                            "algorithmVersion": RETRIEVAL_STATE_VERSION,
                             "s3Bundle": master,
                             "carousel": carousel,
                             "priorSignatures": list(carousel.get("accepted_signatures") or []),

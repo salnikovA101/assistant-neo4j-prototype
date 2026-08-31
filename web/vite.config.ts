@@ -9,13 +9,13 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      "/api": api,
       "/process_text_stream": api,
       "/process_text": api,
       "/graph_viz": api,
       "/graph_explore": api,
       "/ui_config": api,
       "/health": api,
-      "/clear_history": api,
       "/stt": api,
       "/login": api,
       "/logout": api,

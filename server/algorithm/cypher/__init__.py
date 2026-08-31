@@ -1,1 +1,1 @@
-"""V6 cypher package."""
+"""Cypher for relationship ANN, induced bridges, and explorer search."""

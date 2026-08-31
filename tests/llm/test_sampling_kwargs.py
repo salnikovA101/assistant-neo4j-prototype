@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from server.llm.base import (
     _merge_request_kwargs,
     _reasoning_kwargs,
@@ -142,7 +144,7 @@ def test_ollama_gptoss_yaml_profile():
     assert gptoss.temperature == 1.0
     assert gptoss.top_p == 1.0
     assert gptoss.top_k is None
-    assert gptoss.think_effort == "medium"
+    assert gptoss.think_effort == "high"
     assert gptoss.think_efforts == ["low", "medium", "high"]
     assert gptoss.think_token == ""
     assert gptoss.preserve_thinking is False
@@ -180,24 +182,30 @@ def test_qwen_cloud_yaml_profile():
     assert qwen.temperature == 0.7
     assert qwen.top_p == 0.8
     assert qwen.top_k == 20
-    assert qwen.think_effort == "xhigh"
-    assert qwen.think_efforts == ["low", "medium", "xhigh"]
+    assert qwen.think_effort == "medium"
+    assert qwen.think_efforts == ["low", "medium", "xhigh", "off"]
     assert qwen.preserve_thinking is True
     allowed = profile_think_efforts(qwen)
-    assert parse_ui_think_effort("off", allowed) is None
+    assert parse_ui_think_effort("off", allowed) == "off"
     assert parse_ui_think_effort("xhigh", allowed) == "xhigh"
     assert parse_ui_think_effort("medium", allowed) == "medium"
 
 
 def test_resolve_request_profile_ui_allowlist():
-    from server.utils.config import load_config, resolve_request_profile
+    from server.utils.config import AUTO_PROFILE, load_config, resolve_request_profile
 
     llm = load_config().llm
-    assert resolve_request_profile(llm, "ollama_gptoss") == "ollama_gptoss"
-    assert resolve_request_profile(llm, "qwen_cloud") == "qwen_cloud"
-    assert resolve_request_profile(llm, "other") == llm.current_profile
-    assert resolve_request_profile(llm, None) == llm.current_profile
-    assert resolve_request_profile(llm, "nope") == llm.current_profile
+    assert resolve_request_profile(llm, "auto") == AUTO_PROFILE
+    assert resolve_request_profile(llm, "qwen38_flash") == "qwen38_flash"
+    assert resolve_request_profile(llm, None) == AUTO_PROFILE
+    with pytest.raises(ValueError, match="unknown_profile"):
+        resolve_request_profile(llm, "qwen_cloud")
+    with pytest.raises(ValueError, match="unknown_profile"):
+        resolve_request_profile(llm, "ollama")
+    with pytest.raises(ValueError, match="unknown_profile"):
+        resolve_request_profile(llm, "other")
+    with pytest.raises(ValueError, match="unknown_profile"):
+        resolve_request_profile(llm, "nope")
 
 
 def test_provider_for_caches_ui_profiles():
@@ -205,15 +213,70 @@ def test_provider_for_caches_ui_profiles():
     from server.utils.config import load_config
 
     mgr = LLMManager(load_config())
-    gptoss = mgr.provider_for("ollama_gptoss")
-    assert gptoss is mgr.provider_for("ollama_gptoss")
-    assert gptoss.profile.model == "gpt-oss:120b-cloud"
+    flash = mgr.provider_for("qwen38_flash")
+    assert flash is mgr.provider_for("qwen38_flash")
+    assert flash.profile.model == "qwen3.8-flash"
+    assert mgr.provider_for("auto") is flash
     qwen = mgr.provider_for("qwen_cloud")
     assert qwen is mgr.provider_for("qwen_cloud")
     assert qwen.profile.model == "qwen3.8-27b"
-    rejected = mgr.provider_for("other")
-    assert rejected is mgr.provider_for(mgr.config.current_profile)
-    assert rejected.profile.model == mgr.model.profile.model
+    with pytest.raises(ValueError, match="unknown_profile"):
+        mgr.provider_for("other")
+
+
+def test_qwen_catalog_inherits_dashscope_credentials():
+    from server.utils.config import AppConfig, inherit_qwen_cloud_credentials
+
+    cfg = AppConfig()
+    cfg.llm.auto_order = ["qwen38_flash", "kimi_k3"]
+    cfg.llm.profiles.qwen_cloud.api_key = "sk-dashscope"
+    cfg.llm.profiles.qwen_cloud.base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    cfg.llm.profiles.qwen38_flash.api_key = ""
+    cfg.llm.profiles.qwen38_flash.base_url = ""
+    cfg.llm.profiles.kimi_k3.api_key = ""
+    inherit_qwen_cloud_credentials(cfg)
+    assert cfg.llm.profiles.qwen38_flash.api_key == "sk-dashscope"
+    assert cfg.llm.profiles.kimi_k3.api_key == "sk-dashscope"
+    assert "dashscope" in cfg.llm.profiles.qwen38_flash.base_url
+
+
+def test_qwen38_family_sends_effort_without_thinking_budget():
+    kwargs = _reasoning_kwargs(
+        OpenAIProfile(think=True, think_family="qwen38", think_effort="xhigh"),
+    )
+    extra = kwargs["extra_body"]
+    assert extra["enable_thinking"] is True
+    assert extra["reasoning_effort"] == "xhigh"
+    assert "thinking_budget" not in extra
+    assert "reasoning_effort" not in kwargs
+
+
+def test_qwen37_family_is_enable_thinking_only():
+    kwargs = _reasoning_kwargs(
+        OpenAIProfile(think=True, think_family="qwen37", think_effort="high"),
+        effort_override="high",
+    )
+    assert "reasoning_effort" not in kwargs
+    assert kwargs["extra_body"]["enable_thinking"] is True
+    assert "reasoning_effort" not in kwargs["extra_body"]
+
+
+def test_kimi_family_always_thinks():
+    from server.llm.base import thinking_is_on
+
+    profile = OpenAIProfile(think=True, think_family="kimi", think_effort="high")
+    assert thinking_is_on(profile, "off") is True
+    kwargs = _reasoning_kwargs(profile, effort_override="off")
+    assert kwargs["extra_body"]["enable_thinking"] is True
+    assert "reasoning_effort" not in kwargs
+
+
+def test_deepseek_v4_maps_ui_effort():
+    profile = OpenAIProfile(think=True, think_family="deepseek_v4", think_effort="high")
+    low = _reasoning_kwargs(profile, effort_override="low")
+    assert low["extra_body"]["reasoning_effort"] == "high"
+    maxed = _reasoning_kwargs(profile, effort_override="xhigh")
+    assert maxed["extra_body"]["reasoning_effort"] == "max"
 
 
 def test_public_llm_error_message_auth_and_quota():

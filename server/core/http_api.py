@@ -35,22 +35,45 @@ class TextProcessBody(BaseModel):
     mode: Literal["auto", "staged"] = "auto"
     branch_id: Optional[str] = None
     base_checkpoint_id: Optional[str] = None
+    fork_if_needed: bool = False
+    intent: Literal["chat", "generate_card"] = "chat"
+    template_version_id: Optional[str] = None
 
 
 class GraphVizBody(BaseModel):
     graph_run_id: str = Field(default="")
 
 
+class GraphFilters(BaseModel):
+    node_labels: list[str] = Field(default_factory=list, max_length=32)
+    relationship_types: list[str] = Field(default_factory=list, max_length=128)
+    sources: list[str] = Field(default_factory=list, max_length=128)
+    min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
 class GraphExploreBody(BaseModel):
     q: str = ""
-    limit: Literal[10, 100, 1000] = 100
+    limit: int = Field(default=100, ge=1, le=5000)
     field: Literal["all", "name", "label", "rel", "evidence", "source"] = "all"
     cursor: str = Field(default="", max_length=256)
+    filters: GraphFilters = Field(default_factory=GraphFilters)
 
 
 class GraphExpandBody(BaseModel):
     node_id: str
-    limit: Literal[10, 100, 1000] = 100
+    limit: int = Field(default=100, ge=1, le=5000)
+    exclude_edge_ids: list[str] = Field(default_factory=list, max_length=5000)
+    direction: Literal["all", "incoming", "outgoing"] = "all"
+    filters: GraphFilters = Field(default_factory=GraphFilters)
+
+
+class GraphFacetsBody(BaseModel):
+    q: str = ""
+    field: Literal["all", "name", "label", "rel", "evidence", "source"] = "all"
+    filters: GraphFilters = Field(default_factory=GraphFilters)
+    source_query: str = Field(default="", max_length=256)
+    source_cursor: str = Field(default="", max_length=32)
+    source_limit: int = Field(default=50, ge=1, le=200)
 
 
 def session_id_from_request(request: Request) -> str:
@@ -71,9 +94,15 @@ def parse_llm_api_key_header(raw: str | None) -> str | None:
     if not key:
         return None
     if any(ch.isspace() for ch in key):
-        raise HTTPException(status_code=400, detail="Invalid X-LLM-Api-Key")
+        raise HTTPException(
+            status_code=400,
+            detail="Некорректный ключ LLM. Проверьте значение в настройках.",
+        )
     if not (_LLM_API_KEY_MIN_LEN <= len(key) <= _LLM_API_KEY_MAX_LEN):
-        raise HTTPException(status_code=400, detail="Invalid X-LLM-Api-Key")
+        raise HTTPException(
+            status_code=400,
+            detail="Некорректный ключ LLM. Проверьте значение в настройках.",
+        )
     return key
 
 

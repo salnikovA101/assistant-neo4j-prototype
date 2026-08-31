@@ -1,4 +1,4 @@
-"""V6 embed client uses local Ollama defaults (not OpenRouter)."""
+"""Embed client uses local Ollama defaults (not OpenRouter)."""
 
 from __future__ import annotations
 

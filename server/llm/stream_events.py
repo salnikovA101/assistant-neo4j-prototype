@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Literal, Optional
 from server.utils.config import OpenAIProfile
 
 StreamEventType = Literal[
+    "model",
     "thinking",
     "tool_call",
     "tool_result",
@@ -19,7 +20,9 @@ StreamEventType = Literal[
     "agenda_updated",
     "unit_batch",
     "checkpoint_committed",
+    "branch_context",
     "card_draft",
+    "turn_rolled_back",
     "done",
     "error",
 ]

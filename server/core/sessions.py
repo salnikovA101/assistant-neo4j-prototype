@@ -108,16 +108,16 @@ class SessionStore:
         sources: list[tuple[int, str]],
     ) -> ConversationSession:
         sess = self.get_or_create(session_id, history_len)
+        sess.sources.restore(sources)
         if sess.hydrated:
             return sess
         sess.history.clear_history()
-        for turn in turns[-history_len:]:
+        for turn in turns:
             sess.history.add_entry(
                 str(turn.get("user") or ""),
                 str(turn.get("assistant") or ""),
                 tool_messages=turn.get("tool_messages") or [],
             )
-        sess.sources.restore(sources)
         sess.hydrated = True
         return sess
 

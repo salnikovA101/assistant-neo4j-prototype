@@ -1,4 +1,4 @@
-"""Cypher helpers for V6 (bridges ranked by cosine in DB)."""
+"""Cypher for relationship ANN, induced bridges, and explorer search."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Any
 
 from neo4j import AsyncDriver
 
-from server.algorithm.models import PRIMARY_NODE_LABELS
+from server.algorithm.models import PRIMARY_NODE_LABELS, parse_confidence
 
 # Whitelist only; nodes usually carry an extra non-schema label too.
 _PRIMARY_LABEL_CYPHER = "[" + ", ".join(repr(x) for x in PRIMARY_NODE_LABELS) + "]"
@@ -98,7 +98,7 @@ RETURN elementId(r) AS rid,
        coalesce(r.chunk_id, '') AS chunk_id,
        coalesce(r.evidence, '') AS evidence,
        coalesce(r.source_file, '') AS source_file,
-       coalesce(r.confidence, 1.0) AS confidence,
+       r.confidence AS confidence,
        score AS score
 """
 
@@ -117,7 +117,7 @@ RETURN elementId(r) AS rid,
        coalesce(r.chunk_id, '') AS chunk_id,
        coalesce(r.evidence, '') AS evidence,
        coalesce(r.source_file, '') AS source_file,
-       coalesce(r.confidence, 1.0) AS confidence
+       r.confidence AS confidence
 """
 
 
@@ -129,7 +129,7 @@ RETURN elementId(r) AS rid,
        coalesce(r.evidence, '') AS evidence,
        coalesce(r.chunk_id, '') AS chunk_id,
        coalesce(r.source_file, '') AS source_file,
-       coalesce(r.confidence, 1.0) AS confidence
+       r.confidence AS confidence
 """
 
 
@@ -151,7 +151,7 @@ RETURN elementId(r) AS id,
        coalesce(r.evidence, '') AS evidence,
        coalesce(r.chunk_id, '') AS chunk_id,
        coalesce(r.source_file, '') AS source_file,
-       coalesce(r.confidence, 1.0) AS confidence,
+       r.confidence AS confidence,
        coalesce(r.run_id, '') AS run_id
 """
 
@@ -195,7 +195,7 @@ async def fetch_edge_evidence(driver: AsyncDriver, element_ids: Iterable[str]) -
                     "evidence": r["evidence"] or "",
                     "chunk_id": r["chunk_id"] or "",
                     "source_file": r["source_file"] or "",
-                    "confidence": float(r["confidence"] or 1.0),
+                    "confidence": parse_confidence(r["confidence"]),
                 }
         return partial
 
@@ -303,14 +303,18 @@ async def fetch_evidences_for_edge_keys(driver: AsyncDriver, edge_keys: Iterable
         return {}
     chunks: set[str] = set()
     wanted: set[str] = set()
+    bad: list[str] = []
     for k in keys:
         try:
             parts = parse_edge_key(k)
         except ValueError:
+            bad.append(k)
             continue
         wanted.add(k)
         if parts["chunk_id"]:
             chunks.add(parts["chunk_id"])
+    if bad:
+        raise ValueError(f"malformed edge_key(s): {bad[:5]}")
     if not chunks:
         return {}
 

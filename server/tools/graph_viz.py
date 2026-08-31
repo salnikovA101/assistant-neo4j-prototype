@@ -244,7 +244,10 @@ def build_chain_views(
 
     for idx, chain in enumerate(chains, 1):
         chain_id = str(chain.get("chain_id") or f"a{idx}")
-        view_id = f"a{idx}"
+        unit_no = chain.get("unit_no")
+        has_unit_no = isinstance(unit_no, int) and unit_no > 0
+        view_id = f"u{unit_no}" if has_unit_no else f"a{idx}"
+        label = f"UNIT {unit_no}" if has_unit_no else f"Цепь {idx}"
         hub_names = chain.get("fan_hub_names") or {}
         nodes: dict[str, dict[str, Any]] = {}
         edges: dict[str, dict[str, Any]] = {}
@@ -293,9 +296,12 @@ def build_chain_views(
         views.append(
             {
                 "id": view_id,
-                "label": f"Цепь {idx}",
+                "label": label,
                 "score": _as_float(chain.get("score"), 0.0),
                 "source_chain_id": chain_id,
+                "unit_no": int(unit_no) if has_unit_no else None,
+                "is_new": bool(chain.get("is_new")),
+                "origin": dict(chain.get("origin") or {}),
                 "nodes": list(nodes.values()),
                 "edges": list(edges.values()),
             }

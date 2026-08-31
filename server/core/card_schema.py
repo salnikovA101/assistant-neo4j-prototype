@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+import re
 from typing import Any
 
 
@@ -39,6 +41,12 @@ def validate_template_schema(schema: dict[str, Any], path: str = "$") -> list[st
     required = schema.get("required", [])
     if not isinstance(required, list) or any(not isinstance(v, str) for v in required):
         errors.append(f"{path}.required must be a string array")
+    enum = schema.get("enum")
+    if enum is not None and (not isinstance(enum, list) or not enum):
+        errors.append(f"{path}.enum must be a non-empty array")
+    value_format = schema.get("format")
+    if value_format is not None and value_format != "date":
+        errors.append(f"{path}.format is not supported")
     return errors
 
 
@@ -67,6 +75,16 @@ def validate_card_data(data: Any, schema: dict[str, Any], path: str = "$") -> li
     if data is None:
         return []
     errors: list[str] = []
+    enum = schema.get("enum")
+    if isinstance(enum, list) and data not in enum:
+        errors.append(f"{path}: expected one of {enum!r}")
+    if schema.get("format") == "date" and isinstance(data, str):
+        try:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", data):
+                raise ValueError
+            date.fromisoformat(data)
+        except ValueError:
+            errors.append(f"{path}: expected ISO date YYYY-MM-DD")
     if isinstance(data, dict):
         properties = schema.get("properties") or {}
         required = schema.get("required") or []

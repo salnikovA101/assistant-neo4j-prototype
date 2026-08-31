@@ -29,7 +29,9 @@ def _resolve_slm_base_url(raw: str | None) -> str:
 def _resolve_tool_llm_profile(config: Any) -> Any:
     profile_name = config.llm.tool_profile
     llm_profile = getattr(config.llm.profiles, profile_name, None)
-    return llm_profile or config.llm.profiles.other
+    if llm_profile is None:
+        raise RuntimeError(f"unknown tool_profile {profile_name!r}")
+    return llm_profile
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ASSISTANT_LOGIC_PATH = _REPO_ROOT / "prompts" / "assistant_logic.md"
@@ -41,7 +43,7 @@ _QUESTION_START_RE = re.compile(
 )
 
 _DECOMPOSE_TEST_FOOTER = """
-# РЕЖИМ ТЕСТА (только evaluate_v6)
+# Test mode (eval harness only)
 
 Сейчас проверяется только модуль SUBQUESTIONS. Не вызывай ask_subgraph, не
 выбирай effort, не пиши научную заметку и не заполняй GAPS.
@@ -145,9 +147,10 @@ async def mock_decompose(question: str) -> list[dict[str, str]]:
         resp = await client.chat.completions.create(**params)
         raw = resp.choices[0].message.content or ""
         sqs = _parse_sq(raw)
-        if sqs:
-            return sqs
-        logger.warning("mock_decompose parse/filter fail; using declarative fallbacks")
+        if not sqs:
+            raise RuntimeError("mock_decompose: SLM returned no usable subquestions")
+        return sqs
+    except RuntimeError:
+        raise
     except Exception as e:
-        logger.warning("mock_decompose failed: %s", e)
-    return _fallback_statements(question)
+        raise RuntimeError(f"mock_decompose failed: {e}") from e

@@ -123,5 +123,51 @@
       "Нет вывода «значит продукт получается так-то».",
       "Русские термины даны корректно, латиница из цитаты сохранена."
     ]
+  },
+  {
+    "id": "staged_greeting_no_tool",
+    "mode": "staged",
+    "question": "Привет! Кратко скажи, чем ты можешь помочь.",
+    "depth": "low",
+    "expect_tool_call": false,
+    "require_citations": false,
+    "require_gaps": false,
+    "rubric": [
+      "Короткий ответ без заявки SQ и без поиска.",
+      "Нет обещаний закрыть чеклист без данных графа."
+    ]
+  },
+  {
+    "id": "staged_start_must_search",
+    "mode": "staged",
+    "question": "Какая закваска нужна для творога?",
+    "depth": "medium",
+    "max_tool_calls": 1,
+    "expect_tool_name": "advance_research",
+    "expect_new_subquestions": true,
+    "expect_approval_required": true,
+    "require_citations": false,
+    "require_gaps": false,
+    "rubric": [
+      "Пустой чеклист: старт через new_subquestions, open_sq_refs пуст.",
+      "SQ — английские утверждения по осям (культура / матрица / процесс), не вопросы.",
+      "Интерфейс показал заявку approval, модель не просила подтверждение текстом."
+    ]
+  },
+  {
+    "id": "staged_catalog_start",
+    "mode": "staged",
+    "question": "Собери каталог индикаторов свежести и матриц, в которых они применялись.",
+    "depth": "high",
+    "max_tool_calls": 1,
+    "expect_tool_name": "advance_research",
+    "expect_new_subquestions": true,
+    "expect_approval_required": true,
+    "require_citations": false,
+    "require_gaps": false,
+    "rubric": [
+      "Каталожный вопрос без имени штамма всё равно запускает поиск.",
+      "Несколько SQ покрывают разные оси, а не перефразы одной мысли."
+    ]
   }
 ]

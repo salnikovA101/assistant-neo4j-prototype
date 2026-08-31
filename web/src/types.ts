@@ -53,14 +53,59 @@ export type GraphView = {
   label: string;
   score?: number;
   source_chain_id?: string;
+  unit_no?: number | null;
+  is_new?: boolean;
+  origin?: {
+    step_id?: string | null;
+    step_no?: number | null;
+    question?: string;
+    branch_id?: string | null;
+    branch_name?: string | null;
+    answer_checkpoint_id?: string | null;
+  };
   nodes: GraphNode[];
   edges: GraphEdge[];
 };
 
+export type GraphFilters = {
+  node_labels: string[];
+  relationship_types: string[];
+  sources: string[];
+  min_confidence: number | null;
+};
+
+export type GraphFacetItem = { value: string; count: number };
+
+export type GraphFacets = {
+  matchingRelationships: number;
+  matchingNodes: number;
+  nodeLabels: GraphFacetItem[];
+  relationshipTypes: GraphFacetItem[];
+  sources: {
+    items: GraphFacetItem[];
+    nextCursor?: string | null;
+    hasMore: boolean;
+  };
+};
+
+export type GraphExpansion = {
+  anchorNodeId: string;
+  returned: number;
+  totalMatching: number;
+  hasMore: boolean;
+};
+
+export type GraphCollectionItem =
+  | { kind: "node"; key: string; node: GraphNode }
+  | { kind: "edge"; key: string; edge: GraphEdge };
+
 export type GraphPayload = {
   views: GraphView[];
   all: { nodes: GraphNode[]; edges: GraphEdge[] };
+  mode?: "auto" | "staged";
+  effectiveScope?: "context" | "new_in_answer" | "unit" | "all_branches";
   page?: { nextCursor?: string | null; hasMore: boolean };
+  expansion?: GraphExpansion;
 };
 
 export type ChatRole = "user" | "assistant";
@@ -90,8 +135,25 @@ export type ChatMessage = {
   status?: "streaming" | "waiting_approval" | "done" | "error" | "aborted" | "cancelled";
   elapsedSec?: number;
   checkpointId?: string;
+  modelId?: string;
+  modelLabel?: string;
   cardDraft?: CardDraft;
   cardTemplateName?: string;
+  cardRequest?: {
+    templateVersionId: string;
+    templateName: string;
+    version: number;
+    schema: Record<string, unknown>;
+    ui?: Record<string, unknown>;
+  };
+  cardReference?: {
+    revisionId: string;
+    templateVersionId?: string;
+    title: string;
+    revision: number;
+    data: Record<string, unknown>;
+    provenance?: Record<string, unknown>;
+  };
 };
 
 export type ExploreField = "all" | "name" | "label" | "rel" | "evidence" | "source";
@@ -100,14 +162,44 @@ export type Branch = {
   id: string;
   conversationId: string;
   name: string;
+  mode: "auto" | "staged";
   createdFromCheckpointId?: string | null;
   headCheckpointId?: string | null;
   createdAt: number;
   updatedAt: number;
 };
 
-export type AgendaItem = {
+export type ResearchStep = {
   id: string;
+  displayNo: number;
+  parentStepId?: string | null;
+  branchId: string;
+  question: { messageId: string; preview: string };
+  answer?: { messageId: string; preview: string; status: string } | null;
+  userCheckpointId?: string | null;
+  answerCheckpointId?: string | null;
+  graphCheckpointId?: string | null;
+  resumeCheckpointId?: string | null;
+  unitNos: number[];
+  graphUnitCount: number;
+  createdAt: number;
+};
+
+export type ResearchBranch = Branch & {
+  originStepId?: string | null;
+  headStepId?: string | null;
+  unitCount: number;
+};
+
+export type ResearchMap = {
+  conversationId: string;
+  activeBranchId: string;
+  branches: ResearchBranch[];
+  steps: ResearchStep[];
+};
+
+export type AgendaItem = {
+  ref: string;
   text: string;
   status: "open" | "closed";
   position: number;
@@ -122,7 +214,17 @@ export type PendingApproval = {
   revision: number;
   status: string;
   assistantMessageId: string;
-  toolCall: { id?: string; name: string; arguments?: { subquestions?: string[] } };
+  toolCall: {
+    id?: string;
+    name: string;
+    arguments?: {
+      open_sq_refs?: string[];
+      /** Legacy persisted approvals are normalized by the server. */
+      open_sq_ids?: string[];
+      new_subquestions?: string[];
+      subquestions?: string[];
+    };
+  };
 };
 
 export type ConversationSummary = {
@@ -132,6 +234,14 @@ export type ConversationSummary = {
   createdAt: number;
   activeBranchId?: string;
   headCheckpointId?: string | null;
+  mode?: "auto" | "staged";
+};
+
+export type TurnFailure = {
+  reason: "aborted" | "error" | "cancelled" | string;
+  message: string;
+  text: string;
+  createdAt: number;
 };
 
 export type ConversationDetail = ConversationSummary & {
@@ -139,8 +249,12 @@ export type ConversationDetail = ConversationSummary & {
   branches: Branch[];
   activeBranchId: string;
   headCheckpointId?: string | null;
+  branchHeadCheckpointId?: string | null;
+  viewCheckpointId?: string | null;
+  atBranchHead?: boolean;
   agenda: AgendaItem[];
   pendingApproval?: PendingApproval | null;
+  turnFailures?: TurnFailure[];
 };
 
 export type CardTemplate = {
@@ -173,6 +287,12 @@ export type SavedCard = {
   id: string;
   title: string;
   templateVersionId: string;
+  template?: {
+    name: string;
+    version: number;
+    schema: Record<string, unknown>;
+    ui: Record<string, unknown>;
+  };
   latestRevision: {
     id: string;
     revision: number;

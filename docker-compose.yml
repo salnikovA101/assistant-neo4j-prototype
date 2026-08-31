@@ -28,7 +28,6 @@ services:
       - hf_cache:/root/.cache/huggingface
 
   # Not started by `docker compose up`. Enable with `--profile rerank`.
-  # CPU default (this Dockerfile). GPU later: Dockerfile.gpu + a separate profile.
   reranker:
     profiles: ["rerank"]
     container_name: reranker

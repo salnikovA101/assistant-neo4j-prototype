@@ -114,12 +114,197 @@ async def test_concurrent_turns_allow_only_one_active_turn_per_branch(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_research_map_historical_view_and_atomic_auto_fork(tmp_path):
+    store = AppStore(str(tmp_path / "research-map.db"))
+    await store.open()
+    try:
+        user = await store.create_user("map-user", "long research map password")
+        conv = await store.create_conversation(user.id)
+        branch_id = conv["activeBranchId"]
+
+        first = await store.begin_branch_turn(
+            user.id,
+            conv["id"],
+            branch_id,
+            "77777777-7777-4777-8777-777777777777",
+            "Какая культура подходит для кефира?",
+            mode="auto",
+        )
+        recorded = await store.record_units(
+            conv["id"],
+            first["userCheckpointId"],
+            [{
+                "chain_id": "c1",
+                "edge_keys": ["edge-map-1"],
+                "text": "UNIT c1",
+                "walk": [{
+                    "edge_key": "edge-map-1",
+                    "start": "Culture",
+                    "end": "Kefir",
+                    "type": "USED_IN",
+                    "evidence": "Culture is used in kefir.",
+                }],
+            }],
+        )
+        first_answer_checkpoint = await store.finish_turn(
+            conv["id"],
+            first["assistantMessageId"],
+            text="Используйте молочнокислую культуру.",
+            status="done",
+            payload={"graphChainCount": 1},
+            graph_chains=recorded,
+        )
+
+        second = await store.begin_branch_turn(
+            user.id,
+            conv["id"],
+            branch_id,
+            "88888888-8888-4888-8888-888888888888",
+            "Какая нужна температура?",
+            base_checkpoint_id=first_answer_checkpoint,
+            mode="auto",
+        )
+        await store.finish_turn(
+            conv["id"],
+            second["assistantMessageId"],
+            text="Около 30 градусов.",
+            status="done",
+            payload={},
+        )
+
+        research = await store.research_map(user.id, conv["id"], branch_id)
+        assert research is not None
+        assert [step["displayNo"] for step in research["steps"]] == [1, 2]
+        assert research["steps"][0]["unitNos"] == [1]
+        assert research["steps"][1]["parentStepId"] == research["steps"][0]["id"]
+
+        chains = await store.checkpoint_chains(
+            user.id, first_answer_checkpoint, scope="new_in_answer"
+        )
+        assert chains and chains[0]["origin"]["question"] == "Какая культура подходит для кефира?"
+        assert chains[0]["origin"]["step_no"] == 1
+
+        historical = await store.get_conversation(
+            user.id,
+            conv["id"],
+            branch_id=branch_id,
+            checkpoint_id=first_answer_checkpoint,
+        )
+        assert historical is not None
+        assert historical["atBranchHead"] is False
+        assert [message["text"] for message in historical["messages"]] == [
+            "Какая культура подходит для кефира?",
+            "Используйте молочнокислую культуру.",
+        ]
+
+        forked = await store.begin_branch_turn(
+            user.id,
+            conv["id"],
+            branch_id,
+            "99999999-9999-4999-8999-999999999999",
+            "А если использовать дрожжи?",
+            base_checkpoint_id=first_answer_checkpoint,
+            fork_if_needed=True,
+            mode="auto",
+        )
+        assert forked["branchCreated"]["name"] == "Версия 2"
+        assert forked["branchId"] != branch_id
+        fork_detail = await store.get_conversation(
+            user.id, conv["id"], branch_id=forked["branchId"]
+        )
+        assert [message["text"] for message in fork_detail["messages"]] == [
+            "Какая культура подходит для кефира?",
+            "Используйте молочнокислую культуру.",
+            "А если использовать дрожжи?",
+        ]
+        assert len(await store.list_branches(user.id, conv["id"])) == 2
+
+        with pytest.raises(RuntimeError, match="invalid_fork_checkpoint"):
+            await store.begin_branch_turn(
+                user.id,
+                conv["id"],
+                branch_id,
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "Неверная точка",
+                base_checkpoint_id=first["userCheckpointId"],
+                fork_if_needed=True,
+                mode="auto",
+            )
+        assert len(await store.list_branches(user.id, conv["id"])) == 2
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_manual_fork_starts_at_selected_assistant_step(tmp_path):
+    store = AppStore(str(tmp_path / "manual-fork-map.db"))
+    await store.open()
+    try:
+        user = await store.create_user("manual-fork-user", "long manual fork password")
+        conv = await store.create_conversation(user.id, mode="staged")
+        branch_id = conv["activeBranchId"]
+        first = await store.begin_branch_turn(
+            user.id,
+            conv["id"],
+            branch_id,
+            "12121212-1212-4212-8212-121212121212",
+            "Первый вопрос",
+            mode="staged",
+        )
+        first_answer_checkpoint = await store.finish_turn(
+            conv["id"],
+            first["assistantMessageId"],
+            text="Первый ответ",
+            status="done",
+            payload={},
+        )
+        second = await store.begin_branch_turn(
+            user.id,
+            conv["id"],
+            branch_id,
+            "34343434-3434-4434-8434-343434343434",
+            "Второй вопрос",
+            base_checkpoint_id=first_answer_checkpoint,
+            mode="staged",
+        )
+        await store.finish_turn(
+            conv["id"],
+            second["assistantMessageId"],
+            text="Второй ответ",
+            status="done",
+            payload={},
+        )
+
+        fork = await store.create_fork(
+            user.id,
+            conv["id"],
+            first_answer_checkpoint,
+            source_branch_id=branch_id,
+        )
+        detail = await store.get_conversation(user.id, conv["id"], branch_id=fork["id"])
+        assert detail is not None
+        assert [message["text"] for message in detail["messages"]] == [
+            "Первый вопрос",
+            "Первый ответ",
+        ]
+
+        research = await store.research_map(user.id, conv["id"], fork["id"])
+        assert research is not None
+        first_step = research["steps"][0]
+        fork_branch = next(branch for branch in research["branches"] if branch["id"] == fork["id"])
+        assert fork_branch["originStepId"] == first_step["id"]
+        assert fork_branch["headStepId"] == first_step["id"]
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_checkpoint_fork_agenda_and_cards_survive_conversation_delete(tmp_path):
     store = AppStore(str(tmp_path / "state.db"))
     await store.open()
     try:
         user = await store.create_user("state-user", "long state user password")
-        conv = await store.create_conversation(user.id)
+        conv = await store.create_conversation(user.id, mode="staged")
         branch_id = conv["activeBranchId"]
         started = await store.begin_branch_turn(
             user.id,
@@ -130,7 +315,11 @@ async def test_checkpoint_fork_agenda_and_cards_survive_conversation_delete(tmp_
             mode="staged",
         )
         agenda = await store.upsert_turn_subquestions(
-            conv["id"], started["userCheckpointId"], ["Starter cultures acidify milk."], increment=True
+            conv["id"],
+            started["userCheckpointId"],
+            ["Starter cultures acidify milk."],
+            increment=True,
+            agenda_visible=True,
         )
         sq_id = agenda[0]["id"]
         chain = {
@@ -158,7 +347,7 @@ async def test_checkpoint_fork_agenda_and_cards_survive_conversation_delete(tmp_
             raw_text="answer",
             graph_chains=recorded,
             retrieval_state={
-                "algorithmVersion": "v6-checkpoint-1",
+                "algorithmVersion": "retrieval-carousel-v1",
                 "s3Bundle": {"graphs": {sq_id: {"source_graph": sq_id, "edges": []}}},
                 "carousel": {"p_store": {"edge-1": 0.7}, "counts": {sq_id: 1}},
                 "priorSignatures": ["quote-1"],
@@ -173,12 +362,14 @@ async def test_checkpoint_fork_agenda_and_cards_survive_conversation_delete(tmp_
         assert (await store.load_retrieval_state(user.id, answer_checkpoint))["carousel"]["p_store"]["edge-1"] == 0.7
 
         fork = await store.create_fork(user.id, conv["id"], answer_checkpoint)
+        renamed = await store.rename_branch(user.id, fork["id"], "  Клубничная версия  ")
+        assert renamed["name"] == "Клубничная версия"
         changed = await store.apply_agenda_event(
             user.id,
             fork["id"],
             base_checkpoint_id=answer_checkpoint,
             action="close",
-            sq_id=sq_id,
+            sq_ref=agenda[0]["ref"],
         )
         sibling = await store.get_conversation(user.id, conv["id"], branch_id=branch_id)
         assert changed["agenda"][0]["status"] == "closed"
@@ -223,7 +414,7 @@ async def test_pending_approval_revision_is_persistent_and_single_use(tmp_path):
     await store.open()
     try:
         user = await store.create_user("approval-user", "long approval user password")
-        conv = await store.create_conversation(user.id)
+        conv = await store.create_conversation(user.id, mode="staged")
         started = await store.begin_branch_turn(
             user.id,
             conv["id"],
@@ -239,7 +430,11 @@ async def test_pending_approval_revision_is_persistent_and_single_use(tmp_path):
             user_message_id=started["userMessageId"],
             assistant_message_id=started["assistantMessageId"],
             base_checkpoint_id=started["userCheckpointId"],
-            tool_call={"id": "call-1", "name": "ask_subgraph", "arguments": {"subquestions": ["A"]}},
+            tool_call={
+                "id": "call-1",
+                "name": "advance_research",
+                "arguments": {"open_sq_refs": [], "new_subquestions": ["A"]},
+            },
             resume={"text": "question"},
             settings={"mode": "staged"},
         )
@@ -248,5 +443,32 @@ async def test_pending_approval_revision_is_persistent_and_single_use(tmp_path):
         assert claimed and claimed["toolCall"]["id"] == "call-1"
         with pytest.raises(RuntimeError):
             await store.claim_pending_approval(user.id, approval["id"], 1, "approve")
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_corrupt_state_json_raises(tmp_path):
+    from server.core.app_store import AppStore, CorruptStoreError
+
+    store = AppStore(str(tmp_path / "corrupt.db"))
+    await store.open()
+    try:
+        user = await store.create_user("corrupt-user", "long enough corrupt password")
+        conv = await store.create_conversation(user.id)
+        started = await store.begin_branch_turn(
+            user.id,
+            conv["id"],
+            conv["activeBranchId"],
+            "33333333-3333-4333-8333-333333333333",
+            "question",
+        )
+        await store._conn().execute(
+            "UPDATE checkpoints SET state_json=? WHERE id=?",
+            ("{not-json", started["userCheckpointId"]),
+        )
+        await store._conn().commit()
+        with pytest.raises(CorruptStoreError):
+            await store.checkpoint_state(user.id, started["userCheckpointId"])
     finally:
         await store.close()

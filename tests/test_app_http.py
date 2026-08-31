@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
 import pytest
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -74,6 +74,7 @@ def test_parse_llm_api_key_header():
         parse_llm_api_key_header("short")
     assert short.value.status_code == 400
     assert "ollama" not in str(short.value.detail).lower()
+    assert str(short.value.detail) == "Некорректный ключ LLM. Проверьте значение в настройках."
 
     with pytest.raises(HTTPException) as spaced:
         parse_llm_api_key_header("bad key\nvalue")
@@ -126,18 +127,36 @@ def test_ui_config_models_catalog_hides_secrets():
     payload = build_ui_config(Pipeline())
     dumped = str(payload)
     ids = [item["id"] for item in payload["models"]]
-    assert ids == ["ollama", "ollama_gptoss", "qwen_cloud"]
-    gemma = payload["models"][0]
-    gptoss = payload["models"][1]
-    qwen = payload["models"][2]
-    assert gemma["label"] == "Gemma 4 31B"
-    assert gemma["reasoning_effort_options"] == ["high", "off"]
-    assert gptoss["label"] == "GPT-OSS 120B"
-    assert gptoss["reasoning_effort"] == "medium"
-    assert gptoss["reasoning_effort_options"] == ["low", "medium", "high"]
-    assert qwen["label"] == "Qwen 3.8 27B"
-    assert qwen["reasoning_effort"] == "xhigh"
-    assert qwen["reasoning_effort_options"] == ["low", "medium", "xhigh"]
+    assert ids[0] == "auto"
+    assert ids[1:] == [
+        "qwen38_max",
+        "qwen38_2_4t",
+        "deepseek_v4_pro",
+        "kimi_k3",
+        "glm_52",
+        "qwen37_max",
+        "qwen38_27b",
+        "qwen38_flash",
+        "qwen37_plus",
+        "qwen37_flash",
+    ]
+    assert "ollama" not in ids
+    assert "ollama_gptoss" not in ids
+    assert "qwen_cloud" not in ids
+    auto = payload["models"][0]
+    flash = next(item for item in payload["models"] if item["id"] == "qwen38_flash")
+    kimi = next(item for item in payload["models"] if item["id"] == "kimi_k3")
+    glm = next(item for item in payload["models"] if item["id"] == "glm_52")
+    assert auto["label"] == "Авто"
+    assert auto["reasoning_effort_options"] == []
+    assert flash["label"] == "Qwen 3.8 Flash"
+    assert flash["reasoning_effort"] == "medium"
+    assert flash["reasoning_effort_options"] == ["low", "medium", "xhigh", "off"]
+    assert kimi["reasoning_effort_options"] == ["high"]
+    assert "none" in glm["reasoning_effort_options"]
+    assert "max" in glm["reasoning_effort_options"]
+    assert payload["current_profile"] == "auto"
+    assert payload["reasoning_effort_options"] == []
     assert "api_key" not in dumped
     secret = (ollama.api_key or "").strip()
     if secret:
@@ -166,31 +185,44 @@ def test_request_think_effort_follows_selected_profile():
 
     pipeline = Pipeline()
     gptoss_off = TextProcessBody(
-        text="hi", profile="ollama_gptoss", reasoning_effort="off"
+        text="hi", profile="qwen37_max", reasoning_effort="off"
     )
     gptoss_name = _request_profile_name(pipeline, gptoss_off)
-    assert gptoss_name == "ollama_gptoss"
-    assert _request_think_effort(pipeline, gptoss_off, gptoss_name) is None
+    assert gptoss_name == "qwen37_max"
+    assert _request_think_effort(pipeline, gptoss_off, gptoss_name) == "off"
 
     gptoss_low = TextProcessBody(
-        text="hi", profile="ollama_gptoss", reasoning_effort="low"
+        text="hi", profile="qwen37_max", reasoning_effort="low"
     )
-    assert _request_think_effort(pipeline, gptoss_low, gptoss_name) == "low"
+    assert _request_think_effort(pipeline, gptoss_low, gptoss_name) is None
 
-    gemma_off = TextProcessBody(text="hi", profile="ollama", reasoning_effort="off")
-    gemma_name = _request_profile_name(pipeline, gemma_off)
-    assert gemma_name == "ollama"
-    assert _request_think_effort(pipeline, gemma_off, gemma_name) == "off"
+    auto_body = TextProcessBody(text="hi", profile="auto", reasoning_effort="high")
+    auto_name = _request_profile_name(pipeline, auto_body)
+    assert auto_name == "auto"
+    assert _request_think_effort(pipeline, auto_body, auto_name) is None
+
+    kimi = TextProcessBody(text="hi", profile="kimi_k3", reasoning_effort="high")
+    kimi_name = _request_profile_name(pipeline, kimi)
+    assert kimi_name == "kimi_k3"
+    assert _request_think_effort(pipeline, kimi, kimi_name) == "high"
 
     qwen_xhigh = TextProcessBody(
-        text="hi", profile="qwen_cloud", reasoning_effort="xhigh"
+        text="hi", profile="qwen38_flash", reasoning_effort="xhigh"
     )
     qwen_name = _request_profile_name(pipeline, qwen_xhigh)
-    assert qwen_name == "qwen_cloud"
+    assert qwen_name == "qwen38_flash"
     assert _request_think_effort(pipeline, qwen_xhigh, qwen_name) == "xhigh"
 
     unknown = TextProcessBody(text="hi", profile="other", reasoning_effort="xhigh")
-    assert _request_profile_name(pipeline, unknown) == cfg.llm.current_profile
+    with pytest.raises(HTTPException) as exc:
+        _request_profile_name(pipeline, unknown)
+    assert exc.value.status_code == 400
+    assert "Неизвестная модель" in str(exc.value.detail)
+
+    from server.core.app import _ensure_turn_options
+
+    stale_auto = TextProcessBody(text="hi", profile="auto", reasoning_effort="high")
+    assert _ensure_turn_options(pipeline, stale_auto) == "auto"
 
 
 @pytest.mark.asyncio

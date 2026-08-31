@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from server.algorithm.models import CandidateGraph, Chain, EdgeRecord, SubQuestion
 from server.algorithm.params import Params
 from server.algorithm.scoring import (
@@ -114,7 +116,7 @@ def test_dedup_keeps_first_spine():
     assert [u.chain_id for u in uniq] == ["x", "z"]
     assert uniq[0].score == 0.9
     assert uniq[0].source_graphs == ["sq1", "sq3"]
-    batch = prepare_s5_batch(uniq, params=Params())
+    batch = prepare_s5_batch(uniq)
     assert [u.chain_id for u in batch] == ["c1", "c2"]
 
 
@@ -131,7 +133,7 @@ def test_s5_batch_copies_walk():
         fans={"h": [e2]},
         walk=[e1, e2, e3],
     )
-    batch = prepare_s5_batch([src], params=Params())
+    batch = prepare_s5_batch([src])
     assert len(batch) == 1
     assert [e.edge_key for e in batch[0].walk] == ["e1", "e2", "e3"]
 
@@ -519,7 +521,7 @@ def test_linger_hubs_tags_rays_and_exit():
     assert linger_hubs([ah, hd, he, hc, ck]) == ["", "H", "H", "H", ""]
 
 
-def test_linger_hubs_bamboo_unmarked():
+def test_linger_hubs_through_pair_unmarked():
     from server.algorithm.unit_reshape import linger_hubs
 
     e1 = _edge("e1", "A", "B")
@@ -573,8 +575,8 @@ def test_format_single_edge_spine_neo4j_direction():
     c = Chain("c1", ["e1"], 1.0, edges=[e])
     text = c.format_unit()
     assert "A —INHIBITS→ B" in text
-    assert '  "quote with \'quotes\'"  (source:None; conf=1.00)' in text
-    assert " (source:None; conf=1.00)" not in text.split("\n")[1]
+    assert '  "quote with \'quotes\'"  (source:None; conf=None)' in text
+    assert " (source:None; conf=None)" not in text.split("\n")[1]
     assert "FANS" not in text
     assert "SPINE:" not in text
     assert "(score=" not in text
@@ -727,12 +729,12 @@ def test_format_spine_broken_still_prints_direction():
     assert joints == [("A", "B"), ("X", "Y")]
 
 
-def test_format_empty_spine_keys_fallback():
-    """Edge case: no EdgeRecord list → print raw edge_keys."""
+def test_format_empty_walk_prints_label_only():
+    """Empty walk does not dump raw edge_keys as if they were evidence."""
     c = Chain("c1", ["key-only-1", "key-only-2"], 0.5, edges=[])
     text = c.format_unit()
-    assert "key-only-1" in text
-    assert "key-only-2" in text
+    assert text.strip() == "UNIT c1"
+    assert "key-only-1" not in text
 
 
 def test_format_empty_fans_dict_omitted():
@@ -1317,3 +1319,163 @@ def test_run_embed_failure_sets_error():
     assert result["error"] == "embed_failed"
     assert result["accepted"] == []
     assert "http 500" in str(result.get("error_detail") or "")
+
+
+def test_parse_confidence_keeps_zero():
+    from server.algorithm.models import parse_confidence
+
+    assert parse_confidence(0.0) == 0.0
+    assert parse_confidence(0) == 0.0
+    assert parse_confidence(None) is None
+    assert parse_confidence("") is None
+    assert parse_confidence(0.42) == pytest.approx(0.42)
+
+
+def test_rerank_malformed_json_missing_index():
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from server.algorithm.stage2b_rerank import RerankError, rerank_ann_by_sq
+
+    sq = SubQuestion(id="sq1", text="Culture choices affect acidification.")
+    hits = {"e1": _fake_edge("e1", 0.9, "evidence one")}
+    params = Params(rerank_enabled=True, L_raw_max=300, L=2, rerank_url="http://127.0.0.1:7997")
+
+    async def fake_post(url, json=None, timeout=None):
+        resp = MagicMock()
+        resp.raise_for_status = MagicMock()
+        resp.json = MagicMock(return_value=[{"score": 1.0}])
+        return resp
+
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(side_effect=fake_post)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch(
+            "server.algorithm.stage2b_rerank.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            return await rerank_ann_by_sq([sq], {"sq1": hits}, params)
+
+    with pytest.raises(RerankError, match="index"):
+        asyncio.run(_run())
+
+
+def test_rerank_http_error_raises():
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    import httpx
+
+    from server.algorithm.stage2b_rerank import RerankError, rerank_ann_by_sq
+
+    sq = SubQuestion(id="sq1", text="Culture choices affect acidification.")
+    hits = {"e1": _fake_edge("e1", 0.9, "evidence one")}
+    params = Params(rerank_enabled=True, L_raw_max=300, L=2, rerank_url="http://127.0.0.1:7997")
+
+    async def fake_post(url, json=None, timeout=None):
+        raise httpx.HTTPStatusError(
+            "502",
+            request=httpx.Request("POST", url),
+            response=httpx.Response(502),
+        )
+
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(side_effect=fake_post)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run():
+        with patch(
+            "server.algorithm.stage2b_rerank.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            return await rerank_ann_by_sq([sq], {"sq1": hits}, params)
+
+    with pytest.raises(RerankError):
+        asyncio.run(_run())
+
+
+def test_pipeline_rerank_failure_sets_error():
+    import asyncio
+    from unittest.mock import patch
+
+    from server.algorithm.stage2b_rerank import RerankError
+    from server.algorithm.pipeline import run
+
+    async def fake_embed(*_a, **_k):
+        return {"sq1": [0.1, 0.2]}
+
+    async def fake_ann(*_a, **_k):
+        return {"sq1": {"e1": _fake_edge("e1", 0.9)}}
+
+    async def boom(*_a, **_k):
+        raise RerankError("ce down")
+
+    async def _run():
+        with (
+            patch("server.algorithm.pipeline.embed_subquestions", fake_embed),
+            patch("server.algorithm.pipeline.ann_for_subquestions", fake_ann),
+            patch("server.algorithm.pipeline.rerank_ann_by_sq", boom),
+        ):
+            return await run(
+                driver=None,  # type: ignore[arg-type]
+                subquestions=[{"id": "sq1", "text": "q"}],
+                effort="low",
+            )
+
+    result = asyncio.run(_run())
+    assert result["error"] == "rerank_failed"
+    assert result["accepted"] == []
+    assert "ce down" in str(result.get("error_detail") or "")
+
+
+def test_scored_reports_exclude_infra_errors():
+    from tests.evaluate_v6 import mean_metrics, scored_reports
+
+    reports = [
+        {
+            "recall_accepted": 1.0,
+            "precision_accepted": 1.0,
+            "error": "rerank_failed",
+        },
+        {"recall_accepted": 0.5, "precision_accepted": 0.25},
+    ]
+    scored = scored_reports(reports)
+    assert len(scored) == 1
+    means = mean_metrics(scored)
+    assert means["n"] == 1
+    assert means["mean_recall_accepted"] == 0.5
+
+
+@pytest.mark.asyncio
+async def test_mock_decompose_raises_when_slm_fails(monkeypatch):
+    from tests.algorithm import mock_decompose as md
+
+    class BoomClient:
+        def __init__(self, *a, **k):
+            pass
+
+        @property
+        def chat(self):
+            return self
+
+        @property
+        def completions(self):
+            return self
+
+        async def create(self, **kwargs):
+            raise ConnectionError("slm down")
+
+    monkeypatch.setattr(md, "AsyncOpenAI", BoomClient)
+    monkeypatch.setattr(md, "load_config", lambda: object())
+    monkeypatch.setattr(
+        md,
+        "_resolve_tool_llm_profile",
+        lambda _cfg: type("P", (), {"api_key": "", "base_url": "http://x", "model": "m", "think": False})(),
+    )
+    monkeypatch.setattr(md, "_resolve_slm_base_url", lambda url: url)
+    with pytest.raises(RuntimeError, match="mock_decompose failed"):
+        await md.mock_decompose("What AMPs from casein?")

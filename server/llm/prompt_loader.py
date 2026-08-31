@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 class PromptLoader:
     """
     Класс для загрузки и управления текстовыми промптами.
-    Загружает базовую логику (assistant_logic.md) и, при включённом аудио,
-    формат вывода для TTS (output_{mode}.md).
+    Загружает отдельную логику auto/staged/card и, при включённом аудио,
+    формат вывода для TTS. TTS-формат никогда не добавляется к card prompt.
     """
 
     def __init__(
@@ -20,6 +20,8 @@ class PromptLoader:
         Инициализирует загрузчик и считывает файлы.
         """
         self.logic_text = ""
+        self.staged_text = ""
+        self.card_text = ""
         self.output_text = ""
         self.mode = mode
         self.audio_enabled = audio_enabled
@@ -28,21 +30,42 @@ class PromptLoader:
     def _load(self, folder_name: str) -> None:
         path = Path(folder_name)
         if not path.is_dir():
-            logger.error(
+            raise FileNotFoundError(
                 f"Путь {folder_name} не существует или не является директорией."
             )
-            return
 
         logic_file = path / "assistant_logic.md"
+        staged_file = path / "assistant_staged.md"
+        card_file = path / "card_generation.md"
         output_file_speed = path / "output_speed.md"
         output_file_quality = path / "output_quality.md"
 
         try:
-            if logic_file.exists():
-                self.logic_text = logic_file.read_text(encoding="utf-8").strip()
-                logger.info("Промпт assistant_logic.md успешно загружен.")
-            else:
-                logger.warning("Файл assistant_logic.md не найден.")
+            required = {
+                "assistant_logic.md": logic_file,
+                "assistant_staged.md": staged_file,
+                "card_generation.md": card_file,
+            }
+            missing = [name for name, file in required.items() if not file.exists()]
+            if missing:
+                raise FileNotFoundError(
+                    f"Не найдены обязательные промпты: {', '.join(missing)}"
+                )
+            self.logic_text = logic_file.read_text(encoding="utf-8").strip()
+            self.staged_text = staged_file.read_text(encoding="utf-8").strip()
+            self.card_text = card_file.read_text(encoding="utf-8").strip()
+            empty = [
+                name
+                for name, text in (
+                    ("assistant_logic.md", self.logic_text),
+                    ("assistant_staged.md", self.staged_text),
+                    ("card_generation.md", self.card_text),
+                )
+                if not text
+            ]
+            if empty:
+                raise ValueError(f"Пустые обязательные промпты: {', '.join(empty)}")
+            logger.info("Промпты auto, staged и card успешно загружены.")
 
             if not self.audio_enabled:
                 logger.info("Аудио выключено — промпт для озвучки не загружается.")
@@ -65,13 +88,17 @@ class PromptLoader:
                 else:
                     logger.warning("Файл output_quality.md не найден.")
 
-        except Exception as e:
-            logger.error(f"Ошибка при чтении файлов промптов: {e}")
+        except Exception:
+            logger.exception("Ошибка при чтении файлов промптов")
+            raise
 
-    def get_system_prompt(self) -> str:
+    def get_system_prompt(self, mode: str = "auto") -> str:
         """
         Возвращает объединенный текст промптов.
         """
+        if mode == "card":
+            return self.card_text.strip()
+        logic = self.staged_text if mode == "staged" else self.logic_text
         if not self.output_text:
-            return self.logic_text.strip()
-        return f"{self.logic_text}\n\n{self.output_text}".strip()
+            return logic.strip()
+        return f"{logic}\n\n{self.output_text}".strip()

@@ -83,7 +83,7 @@ def take_search_slot() -> bool:
     """Spend one ask_subgraph slot. False → budget exhausted, do not search."""
     turn = _current_turn.get()
     if turn is None:
-        return True
+        return False
     if turn.searches_used >= turn.max_searches:
         return False
     turn.searches_used += 1
@@ -117,6 +117,7 @@ def bind_turn(
     state = TurnState(
         search_depth=parse_search_depth(depth) or DEFAULT_SEARCH_DEPTH,
         max_searches=max(1, int(max_searches or DEFAULT_MAX_SEARCHES)),
+        searches_used=max(0, int(ctx.get("searches_used") or 0)),
         user_id=str(ctx.get("user_id") or ""),
         conversation_id=str(ctx.get("conversation_id") or ""),
         branch_id=str(ctx.get("branch_id") or ""),

@@ -1,4 +1,4 @@
-"""Embedding HTTP client + Neo4j vector-index discovery for V6."""
+"""Embedding HTTP client + Neo4j vector-index discovery."""
 
 from __future__ import annotations
 
@@ -118,8 +118,29 @@ async def _post_embeddings_once(
             data = body.get("data")
             if not isinstance(data, list):
                 raise EmbeddingError("embedding response missing data[]")
-            data_sorted = sorted(data, key=lambda item: item.get("index", 0))
-            return [item["embedding"] for item in data_sorted]
+            inputs = payload.get("input") if isinstance(payload.get("input"), list) else []
+            parsed: list[tuple[int, list[float]]] = []
+            missing_index = False
+            for offset, item in enumerate(data):
+                if not isinstance(item, dict) or "embedding" not in item:
+                    raise EmbeddingError("embedding response missing embedding")
+                if "index" not in item:
+                    missing_index = True
+                    parsed.append((offset, item["embedding"]))
+                    continue
+                parsed.append((int(item["index"]), item["embedding"]))
+            if missing_index:
+                if len(data) != len(inputs):
+                    raise EmbeddingError("embedding response missing index")
+            else:
+                parsed.sort(key=lambda pair: pair[0])
+                expected = list(range(len(inputs))) if inputs else [i for i, _ in parsed]
+                got = [i for i, _ in parsed]
+                if inputs and got != expected:
+                    raise EmbeddingError(
+                        f"embedding index mismatch: got {got} want {expected}"
+                    )
+            return [emb for _, emb in parsed]
         except EmbeddingError:
             raise
         except Exception as e:
@@ -222,8 +243,9 @@ async def fetch_vector_indexes(driver: AsyncDriver) -> dict[str, list[str]]:
             elif entity_type == "RELATIONSHIP":
                 indexes["relationships"].append(idx_name)
             else:
-                if "edge" in idx_name.lower():
-                    indexes["relationships"].append(idx_name)
-                else:
-                    indexes["nodes"].append(idx_name)
+                logger.error(
+                    "Skipping vector index %s with unknown entityType=%r",
+                    idx_name,
+                    entity_type,
+                )
     return indexes

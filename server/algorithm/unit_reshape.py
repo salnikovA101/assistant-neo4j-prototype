@@ -52,7 +52,7 @@ def linger_hubs(path_edges: list[EdgeRecord]) -> list[str]:
     """Hub id to prefix `@Hub` on each walk edge, or `""`.
 
     Star segment (≥3 edges sharing H): entry unmarked; rays **and** exit tagged
-    H. Pure through pairs (bamboo) stay unmarked.
+    H. Through pairs stay unmarked.
     """
     n = len(path_edges)
     tags = [""] * n
@@ -132,7 +132,7 @@ def reshape_star_walk(
     while i < n - 1:
         hub = _shared_id(path_edges[i], path_edges[i + 1])
         if not hub:
-            # Broken stitch: treat next edge as new spine start
+            # Discontinuous walk: treat the next edge as a new spine start
             spine.append(path_edges[i + 1])
             i += 1
             continue

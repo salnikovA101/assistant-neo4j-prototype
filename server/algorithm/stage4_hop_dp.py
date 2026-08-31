@@ -232,7 +232,8 @@ def continue_s4_carousel(
 ) -> CarouselResult:
     """Continue S4 without resetting diversity state.
 
-    Auto preserves the legacy first-round-full behavior. Manual mode mines at
+    Auto keeps the first carousel round complete (one tour per graph when DP
+    finds a path). Manual mode mines at
     most one *new* UNIT per SQ; duplicate tours are decayed and audited but not
     returned.
     """

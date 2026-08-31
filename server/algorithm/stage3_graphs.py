@@ -8,7 +8,7 @@ from neo4j import AsyncDriver
 
 from server.algorithm.cypher.edges import fetch_induced_bridges_by_sim
 from server.algorithm.edge_keys import compute_edge_key
-from server.algorithm.models import CandidateGraph, EdgeRecord, SubQuestion
+from server.algorithm.models import CandidateGraph, EdgeRecord, SubQuestion, parse_confidence
 from server.algorithm.params import Params
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ def _row_to_bridge(b: dict) -> EdgeRecord:
         evidence=evidence,
         source_file=b.get("source_file") or "",
         source="bridge",
-        confidence=float(b.get("confidence") or 1.0),
+        confidence=parse_confidence(b.get("confidence")),
     )
 
 
@@ -94,8 +94,10 @@ async def _add_bridges(
     sq_vec: list[float],
     params: Params,
 ) -> dict[str, EdgeRecord]:
-    if not anchors or not sq_vec:
+    if not anchors:
         return {}
+    if not sq_vec:
+        raise ValueError("cannot fetch induced bridges without a subquestion embedding")
     nodes: set[str] = set()
     for e in anchors.values():
         if e.start_id:
@@ -146,7 +148,7 @@ async def build_sq_graph(
     merged = dict(anchors)
     merged.update(bridges)
     logger.info(
-        "V6 S3 sq=%s anchors=%s bridges=%s total=%s",
+        "S3 sq=%s anchors=%s bridges=%s total=%s",
         sq.id,
         len(anchors),
         len(bridges),
@@ -164,11 +166,14 @@ async def build_all_graphs(
 ) -> dict[str, CandidateGraph]:
     graphs: dict[str, CandidateGraph] = {}
     for sq in sqs:
+        emb = sq_embeddings.get(sq.id) or []
+        if not emb:
+            raise ValueError(f"empty embedding for subquestion {sq.id}")
         g = await build_sq_graph(
             driver,
             sq,
             ann_by_sq.get(sq.id) or {},
-            sq_embeddings.get(sq.id) or [],
+            emb,
             params,
         )
         graphs[sq.id] = g

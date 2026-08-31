@@ -1,6 +1,6 @@
 debug_mode: false
 audio_enabled: false
-# Corpus for V6 ANN/bridges (relationship.run_id). Empty = whole vector index + warning.
+# Corpus for ANN/bridges (relationship.run_id). Empty = whole vector index + warning.
 run_id: "full_corpus_20260713"
 rerank_enabled: false
 staged_enabled: true
@@ -41,44 +41,36 @@ tts:
 
 # Algorithm knobs (L, effort K, rerank_url, …) live in server/algorithm/params.py.
 # Deploy switches: run_id and rerank_enabled at the top of this file.
-# V6 embeddings: local Ollama embeddinggemma:300m-qat-q8_0 (EMBED__* in .env, not yaml).
+# Embeddings: local Ollama embeddinggemma:300m-qat-q8_0 (EMBED__* in .env, not yaml).
 llm:
-  current_profile: "ollama"
+  current_profile: "auto"
   tool_profile: "ollama"
-  ui_profiles: ["ollama", "ollama_gptoss", "qwen_cloud"]
-  history_len: 30
+  fallback_profile: "ollama"
+  auto_order:
+    - qwen38_max
+    - qwen38_2_4t
+    - deepseek_v4_pro
+    - kimi_k3
+    - glm_52
+    - qwen37_max
+    - qwen38_27b
+    - qwen38_flash
+    - qwen37_plus
+    - qwen37_flash
+  ui_profiles:
+    - auto
+    - qwen38_max
+    - qwen38_2_4t
+    - deepseek_v4_pro
+    - kimi_k3
+    - glm_52
+    - qwen37_max
+    - qwen38_27b
+    - qwen38_flash
+    - qwen37_plus
+    - qwen37_flash
   prompt_folder: "prompts"
   profiles:
-    # other:
-    #   provider: "openai"
-    #   model: "qwen/qwen3.8-27b:exacto" #Локально
-    #   temperature: 0.7
-    #   top_p: 0.80
-    #   top_k: 20
-    #   min_p: 0.0
-    #   presence_penalty: 1.5
-    #   repetition_penalty: 1.0
-    #   max_output_tokens: 32768
-    #   max_turns: 2
-    #   think: true
-    #   think_effort: "xhigh"
-    #   think_efforts: ["low", "medium", "xhigh"]
-    #   preserve_thinking: true
-    # lm_studio:
-    #   provider: "openai"
-    #   model: "google/gemma-4-12b-qat"
-    #   base_url: "http://host.docker.internal:1234/v1"
-    #   temperature: 1.0
-    #   top_p: 0.95
-    #   top_k: 64
-    #   max_output_tokens: 16384
-    #   max_turns: 2
-    #   think: true
-    #   think_effort: "high"
-    #   think_efforts: ["high", "off"]
-    #   preserve_thinking: true
-    #   # Gemma: без этого токена в system думает только до tool call, после — reasoning_tokens=0
-    #   think_token: "<|think|>"
     ollama:
       provider: "openai"
       model: "gemma4:31b-cloud"
@@ -104,9 +96,10 @@ llm:
       max_output_tokens: 16384
       max_turns: 2
       think: true
-      think_effort: "medium"
+      think_effort: "high"
       # gpt-oss: thinking cannot be disabled. UI has no "off".
       think_efforts: ["low", "medium", "high"]
+    # Credential parent for DashScope (LLM__PROFILES__QWEN_CLOUD__*). Not in the UI.
     qwen_cloud:
       provider: "openai"
       model: "qwen3.8-27b"
@@ -119,8 +112,157 @@ llm:
       presence_penalty: 1.5
       repetition_penalty: 1.0
       max_output_tokens: 32768
+      context_window: 262144
       max_turns: 2
       think: true
-      think_effort: "xhigh"
-      think_efforts: ["low", "medium", "xhigh"]
+      think_family: qwen38
+      think_effort: "medium"
+      think_efforts: ["low", "medium", "xhigh", "off"]
+      preserve_thinking: true
+    qwen38_flash:
+      provider: "openai"
+      model: "qwen3.8-flash"
+      display_name: "Qwen 3.8 Flash"
+      temperature: 0.7
+      top_p: 0.80
+      top_k: 20
+      max_output_tokens: 32768
+      context_window: 1000000
+      max_turns: 2
+      think: true
+      think_family: qwen38
+      think_effort: "medium"
+      think_efforts: ["low", "medium", "xhigh", "off"]
+      preserve_thinking: true
+    qwen38_max:
+      provider: "openai"
+      model: "qwen3.8-max"
+      display_name: "Qwen 3.8 Max"
+      temperature: 0.7
+      top_p: 0.80
+      top_k: 20
+      max_output_tokens: 32768
+      context_window: 1000000
+      max_turns: 2
+      think: true
+      think_family: qwen38
+      think_effort: "medium"
+      think_efforts: ["low", "medium", "xhigh", "off"]
+      preserve_thinking: true
+    qwen38_27b:
+      provider: "openai"
+      model: "qwen3.8-27b"
+      display_name: "Qwen 3.8 27B"
+      temperature: 0.7
+      top_p: 0.80
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 1.5
+      repetition_penalty: 1.0
+      max_output_tokens: 32768
+      context_window: 262144
+      max_turns: 2
+      think: true
+      think_family: qwen38
+      think_effort: "medium"
+      think_efforts: ["low", "medium", "xhigh", "off"]
+      preserve_thinking: false
+    qwen38_2_4t:
+      provider: "openai"
+      model: "qwen3.8-2.4t-a95b"
+      display_name: "Qwen 3.8 2.4T"
+      temperature: 0.7
+      top_p: 0.80
+      top_k: 20
+      max_output_tokens: 32768
+      context_window: 1000000
+      max_turns: 2
+      think: true
+      think_family: qwen38
+      think_effort: "medium"
+      think_efforts: ["low", "medium", "xhigh", "off"]
+      preserve_thinking: false
+    deepseek_v4_pro:
+      provider: "openai"
+      model: "deepseek-v4-pro-0813"
+      display_name: "DeepSeek V4 Pro"
+      temperature: 1.0
+      top_p: 1.0
+      max_output_tokens: 32768
+      context_window: 1000000
+      max_turns: 2
+      think: true
+      think_family: deepseek_v4
+      think_effort: "high"
+      think_efforts: ["high", "max", "off"]
+    kimi_k3:
+      provider: "openai"
+      model: "kimi-k3"
+      display_name: "Kimi K3"
+      temperature: 1.0
+      top_p: 0.95
+      max_output_tokens: 32768
+      context_window: 256000
+      max_turns: 2
+      think: true
+      think_family: kimi
+      think_effort: "high"
+      think_efforts: ["high"]
+      preserve_thinking: true
+    glm_52:
+      provider: "openai"
+      model: "glm-5.2"
+      display_name: "GLM 5.2"
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 20
+      repetition_penalty: 1.0
+      max_output_tokens: 32768
+      context_window: 1000000
+      max_turns: 2
+      think: true
+      think_family: glm
+      think_effort: "high"
+      think_efforts: ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+    qwen37_max:
+      provider: "openai"
+      model: "qwen3.7-max"
+      display_name: "Qwen 3.7 Max"
+      temperature: 0.7
+      top_p: 0.80
+      max_output_tokens: 32768
+      context_window: 1000000
+      max_turns: 2
+      think: true
+      think_family: qwen37
+      think_effort: "high"
+      think_efforts: ["high", "off"]
+      preserve_thinking: true
+    qwen37_plus:
+      provider: "openai"
+      model: "qwen3.7-plus"
+      display_name: "Qwen 3.7 Plus"
+      temperature: 0.7
+      top_p: 0.80
+      max_output_tokens: 32768
+      context_window: 1000000
+      max_turns: 2
+      think: true
+      think_family: qwen37
+      think_effort: "high"
+      think_efforts: ["high", "off"]
+      preserve_thinking: true
+    qwen37_flash:
+      provider: "openai"
+      model: "qwen3.7-flash"
+      display_name: "Qwen 3.7 Flash"
+      temperature: 0.7
+      top_p: 0.80
+      max_output_tokens: 32768
+      context_window: 1000000
+      max_turns: 2
+      think: true
+      think_family: qwen37
+      think_effort: "high"
+      think_efforts: ["high", "off"]
       preserve_thinking: true

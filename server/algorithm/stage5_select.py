@@ -8,8 +8,7 @@ from collections.abc import Sequence
 from neo4j import AsyncDriver
 
 from server.algorithm.cypher.edges import fetch_edge_evidence
-from server.algorithm.models import Chain
-from server.algorithm.params import Params
+from server.algorithm.models import Chain, parse_confidence
 
 logger = logging.getLogger(__name__)
 
@@ -66,20 +65,13 @@ async def hydrate_chains(driver: AsyncDriver, chains: Sequence[Chain]) -> None:
                 e.chunk_id = row.get("chunk_id") or e.chunk_id
                 e.source_file = row.get("source_file") or e.source_file
                 if row.get("confidence") is not None:
-                    e.confidence = float(row.get("confidence") or e.confidence)
+                    e.confidence = parse_confidence(row.get("confidence"))
     for c in chains:
         c.text = c.format_unit(c.chain_id)
 
 
-def prepare_s5_batch(
-    s4_pool: list[Chain],
-    *,
-    params: Params,
-    graph_ids: Sequence[str] | None = None,
-    k: int | None = None,
-) -> list[Chain]:
-    del params, graph_ids, k
+def prepare_s5_batch(s4_pool: list[Chain]) -> list[Chain]:
     unique = dedup_s4_pool(s4_pool)
     batch = [_copy_labeled(c, f"c{i + 1}") for i, c in enumerate(unique)]
-    logger.info("V6 S5 unique=%s from pool=%s", len(batch), len(s4_pool))
+    logger.info("S5 unique=%s from pool=%s", len(batch), len(s4_pool))
     return batch

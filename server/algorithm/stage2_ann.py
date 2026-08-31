@@ -12,7 +12,7 @@ from server.algorithm.cypher.edges import fetch_edge_properties, query_relations
 from server.algorithm.edge_keys import compute_edge_key
 from server.algorithm.embed import embed_texts
 from server.algorithm.embed_client import EmbeddingError, fetch_vector_indexes
-from server.algorithm.models import EdgeRecord, SubQuestion
+from server.algorithm.models import EdgeRecord, SubQuestion, parse_confidence
 from server.algorithm.params import Params
 
 logger = logging.getLogger(__name__)
@@ -134,12 +134,11 @@ async def edge_ann_search(
 
     results = await asyncio.gather(*tasks)
     n_err = sum(1 for _, err in results if err is not None)
-    if n_err == len(results):
+    if n_err:
         first_err = next(err for _, err in results if err is not None)
-        raise AnnError(f"all ANN queries failed: {first_err}")
+        raise AnnError(f"{n_err}/{len(results)} ANN queries failed: {first_err}")
     for hits, err in results:
         if err is not None:
-            logger.error("ANN query failed: %s", err)
             continue
         for h in hits:
             rid = h.get("rid")
@@ -166,7 +165,7 @@ async def edge_ann_search(
         raw = {h.edge_key: h for h in ranked[: params.L_raw_max]}
     rid = (params.run_id or "").strip()
     logger.info(
-        "V6 S2 ANN indexes=%s per_index_L=%s merged_unique=%s after_L_raw_max=%s run_id=%s",
+        "S2 ANN indexes=%s per_index_L=%s merged_unique=%s after_L_raw_max=%s run_id=%s",
         len(rel_indexes),
         params.L,
         n_merged,
@@ -189,7 +188,7 @@ async def edge_ann_search(
                 if p.get("source_file"):
                     hit.source_file = p["source_file"] or ""
                 if p.get("confidence") is not None:
-                    hit.confidence = float(p.get("confidence") or hit.confidence)
+                    hit.confidence = parse_confidence(p.get("confidence"))
                 if p.get("start_label") and not hit.start_label:
                     hit.start_label = p["start_label"] or ""
                 if p.get("end_label") and not hit.end_label:
@@ -228,5 +227,5 @@ async def ann_for_subquestions(
             embed_cache[sq.text.strip()] = emb
         hits = await edge_ann_search(driver, [sq.text], params, embed_cache)
         out[sq.id] = hits
-        logger.info("V6 S2 sq=%s hits=%s", sq.id, len(hits))
+        logger.info("S2 sq=%s hits=%s", sq.id, len(hits))
     return out

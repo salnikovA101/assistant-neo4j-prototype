@@ -9,7 +9,7 @@ from server.utils.constants import EmbeddingBackend
 
 logger = logging.getLogger(__name__)
 
-_V6_EMBED_BACKEND = EmbeddingBackend.OLLAMA
+_EMBED_BACKEND = EmbeddingBackend.OLLAMA
 
 # EmbeddingGemma retrieval prefixes (Google model card). Queries and
 # documents must use the matching pair or ANN quality drops.
@@ -47,7 +47,7 @@ async def embed_texts(
     if missing_texts:
         vectors = await get_embeddings_batch(
             missing_texts,
-            backend=_V6_EMBED_BACKEND,
+            backend=_EMBED_BACKEND,
         )
         if len(vectors) != len(missing_texts):
             raise EmbeddingError(

@@ -16,9 +16,20 @@ from server.core.graph_runs import (
 )
 from server.core.sessions import bind_conversation, session_store
 from server.core.turn_state import bind_turn
-from server.tools.source_registry import filter_chains_by_source_files
 
 logger = logging.getLogger(__name__)
+
+
+def _graph_done_payload(collector: list | None, cited_files: list | None) -> dict:
+    """Persist every collected UNIT; auto-open the graph only when cited."""
+    graph_chains = list(collector or [])
+    cited = [str(item).strip() for item in (cited_files or []) if str(item).strip()]
+    return {
+        "graph_chains": graph_chains,
+        "graph_run_id": graph_run_store.put(graph_chains) if graph_chains else "",
+        "graph_chain_count": len(graph_chains),
+        "open_graph": bool(cited),
+    }
 
 
 class ServerPipeline:
@@ -192,26 +203,20 @@ class ServerPipeline:
                         final_content = (
                             event.data.get("final_content") or final_content
                         )
-                        cited = event.data.get("cited_source_files") or []
-                        graph_chains = filter_chains_by_source_files(
-                            current_graph_collector() or [],
-                            cited,
-                        )
-                        graph_run_id = (
-                            graph_run_store.put(graph_chains) if graph_chains else ""
-                        )
-                        graph_chain_count = (
-                            len(graph_chains) if graph_run_id else 0
+                        graph_fields = _graph_done_payload(
+                            current_graph_collector(),
+                            event.data.get("cited_source_files") or [],
                         )
                         event = StreamEvent(
                             "done",
                             {
                                 "final_content": final_content,
-                                "graph_run_id": graph_run_id,
-                                "graph_chain_count": graph_chain_count,
+                                "graph_run_id": graph_fields["graph_run_id"],
+                                "graph_chain_count": graph_fields["graph_chain_count"],
+                                "open_graph": graph_fields["open_graph"],
                                 "_raw_content": event.data.get("_raw_content", ""),
                                 "_history_tool_messages": event.data.get("_history_tool_messages", []),
-                                "_graph_chains": graph_chains,
+                                "_graph_chains": graph_fields["graph_chains"],
                                 "_retrieval_state": event.data.get("_retrieval_state", {}),
                             },
                         )
@@ -242,27 +247,44 @@ class ServerPipeline:
             collector_token = new_graph_collector()
             try:
                 call_id = str(tool_call.get("id") or "approved_search")
+                tool_name = str(tool_call.get("name") or "advance_research")
+                tool_arguments = dict(tool_call.get("arguments") or {})
                 yield StreamEvent(
                     "tool_call",
-                    {"id": call_id, "name": "ask_subgraph", "arguments": {"subquestions": subquestions}},
+                    {"id": call_id, "name": tool_name, "arguments": tool_arguments},
                 )
+                search_context = dict(turn_context)
+                search_context["searches_used"] = 0
                 with bind_turn(
                     search_depth,
                     max_searches=1,
-                    context=turn_context,
+                    context=search_context,
                 ) as retrieval_turn:
-                    evidence = await self.llm.tools.ask_subgraph(subquestions=subquestions)
+                    evidence = await self.llm.tools.subgraph_search.query(
+                        subquestions=subquestions
+                    )
                     retrieval_state = dict(retrieval_turn.retrieval_state)
+                prefix = str(turn_context.get("tool_result_prefix") or "")
+                if prefix:
+                    evidence = f"{prefix}{evidence}"
                 yield StreamEvent(
                     "tool_result",
-                    {"id": call_id, "name": "ask_subgraph", "ok": not evidence.startswith("TOOL_ERROR"), "result": evidence},
+                    {"id": call_id, "name": tool_name, "ok": not evidence.startswith("TOOL_ERROR"), "result": evidence},
                 )
                 answer_context = dict(turn_context)
                 answer_context["retrieval_state"] = retrieval_state
+                answer_context["searches_used"] = 1
+                answer_context["model_user_text"] = str(
+                    turn_context.get("model_user_text") or user_text
+                )
                 async for event in self.llm.generate_approved_response_stream(
                     user_text=user_text,
                     evidence=evidence,
-                    tool_call={"id": call_id, "arguments": {"subquestions": subquestions}},
+                    tool_call={
+                        "id": call_id,
+                        "name": tool_name,
+                        "arguments": tool_arguments,
+                    },
                     think_effort=think_effort,
                     search_depth=search_depth,
                     api_key=api_key,
@@ -272,20 +294,20 @@ class ServerPipeline:
                     if request and await request.is_disconnected():
                         break
                     if event.type == "done":
-                        cited = event.data.get("cited_source_files") or []
-                        graph_chains = filter_chains_by_source_files(
-                            current_graph_collector() or [], cited
+                        graph_fields = _graph_done_payload(
+                            current_graph_collector(),
+                            event.data.get("cited_source_files") or [],
                         )
-                        graph_run_id = graph_run_store.put(graph_chains) if graph_chains else ""
                         event = StreamEvent(
                             "done",
                             {
                                 "final_content": event.data.get("final_content", ""),
-                                "graph_run_id": graph_run_id,
-                                "graph_chain_count": len(graph_chains),
+                                "graph_run_id": graph_fields["graph_run_id"],
+                                "graph_chain_count": graph_fields["graph_chain_count"],
+                                "open_graph": graph_fields["open_graph"],
                                 "_raw_content": event.data.get("_raw_content", ""),
                                 "_history_tool_messages": event.data.get("_history_tool_messages", []),
-                                "_graph_chains": graph_chains,
+                                "_graph_chains": graph_fields["graph_chains"],
                                 "_retrieval_state": event.data.get("_retrieval_state", retrieval_state),
                             },
                         )

@@ -1,4 +1,4 @@
-# Algorithm V6
+# Retrieval pipeline
 
 Edge-native GraphRAG pipeline:
 
@@ -49,7 +49,7 @@ Print tags (`linger_hubs`): entry unmarked; rays **and** exit get `@Hub`.
 ### S5
 
 Exact `spine_evidence_seq` duplicates drop; the **first** (carousel order) is
-kept. No per-graph quota and no emit cap / score-cliff. The assistant sees
+kept. The assistant sees
 the whole S5 pool in carousel order.
 
 Unit = hop-DP tour in walk order (not spine-then-FANS dump). Each edge prints
@@ -72,7 +72,7 @@ ANN/CE/bridges run once per question. Eval headline recall is on the full
 # eval (needs Neo4j + local Ollama embeddings; mock_decompose SLM unless --sq-cache)
 .venv/bin/python tests/evaluate_v6.py --effort auto --limit 1 --sq-cache
 # reports → tests/reports/v6/ (wiped each run)
-# sq cache (open) → tests/reports/v6_cache/sq_open20_grok46.json (preserved)
+# sq cache (open) → tests/reports/v6_cache/ (preserved)
 
 # Build S3 graph cache once, then sweep S4 params without ANN/CE:
 .venv/bin/python tests/evaluate_v6.py --sq-cache --graph-cache
