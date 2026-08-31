@@ -79,6 +79,14 @@ def test_recent_chats_use_relative_time_buckets():
     assert "min-height:38px" in styles
 
 
+def test_message_ids_work_on_plain_http_hosts():
+    app = (WEB / "App.tsx").read_text(encoding="utf-8")
+    uid = app.split("function uid()", 1)[1].split("\n}\n", 1)[0]
+    assert "crypto.randomUUID" in uid
+    assert "crypto.getRandomValues" in uid
+    assert "is not a secure context" in uid
+
+
 def test_empty_chat_welcome_is_short_help_not_suggestion_grid():
     app = (WEB / "App.tsx").read_text(encoding="utf-8")
     styles = (WEB / "styles.css").read_text(encoding="utf-8")
