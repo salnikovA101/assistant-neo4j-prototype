@@ -4,6 +4,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type ComponentType,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -58,12 +59,35 @@ import type {
   UiConfig,
 } from "./types";
 
-const Explorer = lazy(() => import("./components/Explorer").then((module) => ({ default: module.Explorer })));
-const GraphPane = lazy(() => import("./components/GraphPane").then((module) => ({ default: module.GraphPane })));
-const ResearchMapPane = lazy(() => import("./components/ResearchMapPane").then((module) => ({ default: module.ResearchMapPane })));
-const CardsWorkspace = lazy(() => import("./components/CardsWorkspace").then((module) => ({ default: module.CardsWorkspace })));
-const LibraryWorkspace = lazy(() => import("./components/LibraryWorkspace").then((module) => ({ default: module.LibraryWorkspace })));
-const HelpWorkspace = lazy(() => import("./components/HelpWorkspace").then((module) => ({ default: module.HelpWorkspace })));
+function lazyWithChunkReload<T extends ComponentType<any>>(
+  loader: () => Promise<{ default: T }>,
+  chunkName: string,
+) {
+  return lazy(async () => {
+    try {
+      const module = await loader();
+      sessionStorage.removeItem(`neo4j-chunk-reload:${chunkName}`);
+      return module;
+    } catch (error) {
+      // A running tab can still hold an older hashed entrypoint after the
+      // container is rebuilt. Reload once so it picks up the matching chunks
+      // instead of leaving React with an unhandled lazy-import error.
+      const key = `neo4j-chunk-reload:${chunkName}`;
+      if (!sessionStorage.getItem(key)) {
+        sessionStorage.setItem(key, "1");
+        window.location.reload();
+      }
+      throw error;
+    }
+  });
+}
+
+const Explorer = lazyWithChunkReload(() => import("./components/Explorer").then((module) => ({ default: module.Explorer })), "explorer");
+const GraphPane = lazyWithChunkReload(() => import("./components/GraphPane").then((module) => ({ default: module.GraphPane })), "graph-pane");
+const ResearchMapPane = lazyWithChunkReload(() => import("./components/ResearchMapPane").then((module) => ({ default: module.ResearchMapPane })), "research-map");
+const CardsWorkspace = lazyWithChunkReload(() => import("./components/CardsWorkspace").then((module) => ({ default: module.CardsWorkspace })), "cards");
+const LibraryWorkspace = lazyWithChunkReload(() => import("./components/LibraryWorkspace").then((module) => ({ default: module.LibraryWorkspace })), "library");
+const HelpWorkspace = lazyWithChunkReload(() => import("./components/HelpWorkspace").then((module) => ({ default: module.HelpWorkspace })), "help");
 
 function uid(): string {
   return crypto.randomUUID();
@@ -211,7 +235,7 @@ export function App() {
     : (currentBranch ? branchNameOverrides[currentBranch.id] || currentBranch.name : "Основной вариант");
   const activeBranchMode = currentBranch?.mode || current?.mode;
   const stagedAgendaActive = mode === "staged" && (!currentId || activeBranchMode === "staged");
-  const openDirectionCount = agenda.filter((item) => item.status === "open").length;
+  const openDirectionCount = agenda.filter((item) => item.status !== "closed").length;
   const checkpointGraphId = rightPanel.kind === "research" && rightPanel.tab === "data"
     ? rightPanel.checkpointId || lastGraphCheckpointId
     : "";
@@ -664,6 +688,7 @@ export function App() {
           flush("done", {
             graphChainCount: chains || undefined,
             checkpointId: checkpointId || undefined,
+            sqStatusWarning: data.sqStatusWarning ? String(data.sqStatusWarning) : undefined,
           });
           if (checkpointId && data.open_graph) {
             setRightPanel({ kind: "research", tab: "data", checkpointId });
@@ -865,6 +890,19 @@ export function App() {
               answer = String(parsed.data.final_content || answer);
               status = "done";
               openGraph = Boolean(parsed.data.open_graph);
+              if (!rolledBack) {
+                patchAssistant(assistantId, {
+                  text: answer,
+                  thinking,
+                  steps,
+                  status,
+                  sqStatusWarning: parsed.data.sqStatusWarning
+                    ? String(parsed.data.sqStatusWarning)
+                    : undefined,
+                });
+              }
+              separator = buffer.indexOf("\n\n");
+              continue;
             } else if (parsed?.event === "approval_required") {
               setPendingApproval(parsed.data.approval as PendingApproval);
               status = "waiting_approval";
@@ -917,8 +955,8 @@ export function App() {
   }
 
   async function mutateAgenda(
-    action: "close" | "reopen",
-    input: { sq_ref: string }
+    action: "set_status",
+    input: { sq_ref: string; status: AgendaItem["status"] }
   ) {
     if (!branchId || !headCheckpointId) return;
     if (activeBranchMode !== "staged") {
@@ -927,6 +965,10 @@ export function App() {
     }
     if (pendingApproval) {
       setNotice("Сначала подтвердите или отклоните текущий план поиска.");
+      return;
+    }
+    if (busy) {
+      setNotice("Дождитесь окончания ответа, затем измените план.");
       return;
     }
     try {
@@ -1299,7 +1341,8 @@ export function App() {
             <AgendaDrawer
               agenda={agenda}
               embedded
-              onToggle={(item) => mutateAgenda(item.status === "open" ? "close" : "reopen", { sq_ref: item.ref })}
+              locked={busy || Boolean(pendingApproval)}
+              onStatus={(item, status) => mutateAgenda("set_status", { sq_ref: item.ref, status })}
             />
           ) : checkpointGraphId ? (
             <Suspense fallback={<p className="explorer-status">Загрузка фактов…</p>}>

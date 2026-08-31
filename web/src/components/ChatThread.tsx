@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { ChangeEvent } from "react";
 import type { AgendaItem, CardDraft, CardTemplate, ChatMessage, ChatStep, PendingApproval, TurnFailure } from "../types";
 import { prettyJson, renderMarkdown, renderReasoningMarkdown } from "../format";
 import { blankData, fallbackSchemaForData } from "../cardModel";
@@ -14,6 +15,33 @@ function userEditedProvenance(provenance: Record<string, unknown>, key: string):
   const next = Object.fromEntries(Object.entries(provenance).filter(([existing]) => existing !== pointer && !existing.startsWith(`${pointer}/`)));
   next[pointer] = [{ verification: "user-edited" }];
   return next;
+}
+
+function GrowingTextarea({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (event: ChangeEvent<HTMLTextAreaElement>) => void;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const textarea = ref.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      value={value}
+      onChange={onChange}
+      aria-label="Пункт плана"
+    />
+  );
 }
 
 function InlineCardDraft({ draft, template, templateName, onSave }: {
@@ -221,7 +249,7 @@ function ApprovalCard({
               checked={item.enabled}
               onChange={(event) => setItems((prev) => prev.map((value, i) => i === index ? { ...value, enabled: event.target.checked } : value))}
             />
-            <input
+            <GrowingTextarea
               value={item.text}
               onChange={(event) => setItems((prev) => prev.map((value, i) => i === index ? { ...value, text: event.target.value } : value))}
             />
@@ -432,6 +460,9 @@ export function ChatThread({
               />
             ) : (
               null
+            )}
+            {msg.role === "assistant" && msg.sqStatusWarning && (
+              <p className="sq-status-warning">{msg.sqStatusWarning}</p>
             )}
             {msg.cardDraft && (
               <InlineCardDraft draft={msg.cardDraft} template={templateForVersion(cardTemplates, msg.cardDraft.templateVersionId)} templateName={msg.cardTemplateName || "Карточка"} onSave={onSaveCard} />

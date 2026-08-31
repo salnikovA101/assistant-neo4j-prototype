@@ -137,6 +137,7 @@ export type ChatMessage = {
   checkpointId?: string;
   modelId?: string;
   modelLabel?: string;
+  sqStatusWarning?: string;
   cardDraft?: CardDraft;
   cardTemplateName?: string;
   cardRequest?: {
@@ -201,7 +202,11 @@ export type ResearchMap = {
 export type AgendaItem = {
   ref: string;
   text: string;
-  status: "open" | "closed";
+  status: "not_closed" | "partial" | "closed";
+  statusOrigin: "assistant" | "user" | "legacy";
+  statusReason: string;
+  statusSourceRefs: string[];
+  statusMessageId?: string | null;
   position: number;
   questionCount: number;
   unitCount: number;

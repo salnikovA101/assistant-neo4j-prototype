@@ -211,7 +211,9 @@ class SubgraphSearchAgent:
                     turn.store.canonical_subquestion(item["text"]): item
                     for item in agenda
                 }
-                open_ids = {item["id"] for item in agenda if item.get("status") == "open"}
+                # Agenda statuses are now tri-state. Both not_closed and partial
+                # remain searchable; only explicitly closed SQs are excluded.
+                open_ids = {item["id"] for item in agenda if item.get("status") != "closed"}
                 payload = [
                     {
                         "id": by_key[turn.store.canonical_subquestion(text)]["id"],

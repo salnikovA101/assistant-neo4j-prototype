@@ -15,6 +15,11 @@ def test_prompt_loader_routes_auto_staged_and_card() -> None:
     assert "Чеклист пуст" in staged
     assert "open_sq_refs: []" in staged
     assert "Revise" in staged
+    assert "### GAPS" in auto
+    assert "Никогда не выводи `<SQ_STATUS_JSON>`" in auto
+    assert "В режиме «С планом» не пиши `### GAPS`" in staged
+    assert "<SQ_STATUS_JSON>" in staged
+    assert '"status":"closed"' in staged
     assert "можно писать LaTeX" in auto
     assert "можно писать LaTeX" in staged
     assert "Вызови `submit_card` ровно один раз" in loader.get_system_prompt("card")

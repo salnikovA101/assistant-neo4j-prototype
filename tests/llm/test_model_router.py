@@ -14,6 +14,7 @@ from server.llm.model_router import (
 )
 from server.llm.stream_events import StreamEvent
 from server.utils.config import load_config
+from server.tools.source_registry import SourceRegistry
 
 
 class _Err(Exception):
@@ -97,6 +98,56 @@ class _OkProvider:
         self.calls += 1
         yield StreamEvent("content", {"delta": "ok"})
         yield StreamEvent("done", {"final_content": "ok", "history_tool_messages": []})
+
+
+class _SqStatusProvider:
+    def __init__(self, profile) -> None:
+        self.profile = profile
+
+    async def generate_response_stream(self, **_kwargs):
+        final = (
+            "Ответ (source:1).\n\n<SQ_STATUS_JSON>\n"
+            '{"version":1,"items":[{"ref":"subquestion:1","status":"closed",'
+            '"reason":"Данные найдены","source_refs":["source:1"]}]}\n'
+            "</SQ_STATUS_JSON>"
+        )
+        yield StreamEvent("content", {"delta": final[:35]})
+        yield StreamEvent("content", {"delta": final[35:]})
+        yield StreamEvent("done", {"final_content": final, "history_tool_messages": []})
+
+
+@pytest.mark.asyncio
+async def test_staged_manager_hides_and_extracts_sq_status_block(monkeypatch):
+    from server.llm.manager import LLMManager
+
+    cfg = load_config()
+    mgr = LLMManager(cfg)
+    provider = _SqStatusProvider(cfg.llm.profiles.qwen38_flash)
+    sources = SourceRegistry()
+    sources.register("paper.pdf")
+    monkeypatch.setattr(mgr, "provider_for", lambda _name=None: provider)
+    monkeypatch.setattr(mgr, "_context_fits", lambda **_kwargs: True)
+    monkeypatch.setattr(mgr, "_active_sources", lambda: sources)
+    events = [
+        event
+        async for event in mgr.generate_response_stream(
+            "question",
+            profile_name="qwen38_flash",
+            turn_context={
+                "mode": "staged",
+                "store": MemoryBanStore(),
+                "active_sq_refs": ["subquestion:1"],
+            },
+        )
+    ]
+    streamed = "".join(
+        str(event.data.get("delta") or "") for event in events if event.type == "content"
+    )
+    assert "SQ_STATUS_JSON" not in streamed
+    done = next(event for event in events if event.type == "done")
+    assert "SQ_STATUS_JSON" not in done.data["final_content"]
+    assert "### Состояние направлений" in done.data["final_content"]
+    assert done.data["_sq_assessments"][0]["status"] == "closed"
 
 
 @pytest.mark.asyncio

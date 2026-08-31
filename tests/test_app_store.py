@@ -373,7 +373,7 @@ async def test_checkpoint_fork_agenda_and_cards_survive_conversation_delete(tmp_
         )
         sibling = await store.get_conversation(user.id, conv["id"], branch_id=branch_id)
         assert changed["agenda"][0]["status"] == "closed"
-        assert sibling["agenda"][0]["status"] == "open"
+        assert sibling["agenda"][0]["status"] == "not_closed"
 
         template = (await store.list_card_templates(user.id))[0]
         draft = await store.create_card_draft(

@@ -37,6 +37,31 @@ def test_service_guide_manual_search_is_english_names_not_chat():
     assert "`Lactobacillus`" in section
 
 
+def test_service_guide_distinguishes_auto_gaps_from_staged_sq_coverage():
+    guide = load_service_guide(ROOT / "prompts")
+    assert "В режиме **Ответ сразу** ответ заканчивается разделом **GAPS**" in guide
+    assert "В режиме **С планом** вместо GAPS" in guide
+    assert "**Не закрыт**, **Закрыт частично** или **Закрыт**" in guide
+    assert "такой пункт больше не участвует в следующем поиске" in guide
+    assert "Закрытие не удаляет связанные UNIT" in guide
+
+
+def test_agenda_ui_exposes_three_editable_coverage_states():
+    drawer = (WEB / "components" / "AgendaDrawer.tsx").read_text(encoding="utf-8")
+    types = (WEB / "types.ts").read_text(encoding="utf-8")
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
+    assert '"not_closed" | "partial" | "closed"' in types
+    assert '<option value="not_closed">Не закрыт</option>' in drawer
+    assert '<option value="partial">Частично</option>' in drawer
+    assert '<option value="closed">Закрыт</option>' in drawer
+    assert "Оценил ассистент" in drawer and "Изменено вами" in drawer
+    assert ".agenda-coverage.is-closed" in styles
+    assert ".agenda-coverage.is-partial" in styles
+    assert "locked = false" in drawer
+    assert "disabled={busy || locked}" in drawer
+    assert ".sq-status-warning" in styles
+
+
 def test_recent_chats_use_relative_time_buckets():
     fmt = (WEB / "format.ts").read_text(encoding="utf-8")
     sidebar = (WEB / "components" / "Sidebar.tsx").read_text(encoding="utf-8")
@@ -67,6 +92,19 @@ def test_empty_chat_welcome_is_short_help_not_suggestion_grid():
     assert "Подбери культуры для творога" not in welcome
     assert "или спросите у ассистента" in welcome
     assert welcome.count("<p>") == 1
+
+
+def test_stream_markdown_holds_incomplete_source_groups():
+    from server.tools.source_registry import _SOURCE_GROUP_RE
+
+    fmt = (WEB / "format.ts").read_text(encoding="utf-8")
+    assert _SOURCE_GROUP_RE.pattern in fmt
+    assert r"\d+[^)]*" in fmt
+    assert "function holdIncompleteCitation" in fmt
+    assert "holdIncompleteCitation(holdIncompleteFence(text))" in fmt
+    assert r"\(\s*source\b" in fmt
+    assert r"\d+(?:\s*,\s*\d+)*" not in fmt
+    assert r"\d+(?:\s*;\s*source\s*:?\s*\d+)*" not in fmt
 
 
 def test_journal_shows_full_thinking():

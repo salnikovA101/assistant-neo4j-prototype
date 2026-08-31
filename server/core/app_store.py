@@ -19,6 +19,7 @@ from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatc
 
 from server.utils.constants import LEGACY_RETRIEVAL_STATE_VERSIONS, RETRIEVAL_STATE_VERSION
 from server.tools.source_registry import present_source_aliases_in_value
+from server.core.sq_status import SQ_STATUS_USER_NOTICE
 
 
 PASSWORD_MIN_LENGTH = 12
@@ -226,7 +227,11 @@ CREATE TABLE IF NOT EXISTS retrieval_snapshots (
 CREATE TABLE IF NOT EXISTS checkpoint_subquestions (
     checkpoint_id TEXT NOT NULL REFERENCES checkpoints(id) ON DELETE CASCADE,
     sq_id TEXT NOT NULL REFERENCES subquestions(id) ON DELETE CASCADE,
-    status TEXT NOT NULL DEFAULT 'open',
+    status TEXT NOT NULL DEFAULT 'not_closed',
+    status_origin TEXT NOT NULL DEFAULT 'legacy',
+    status_reason TEXT NOT NULL DEFAULT '',
+    status_source_refs_json TEXT NOT NULL DEFAULT '[]',
+    status_message_id TEXT,
     position INTEGER NOT NULL DEFAULT 0,
     question_count INTEGER NOT NULL DEFAULT 0,
     unit_count INTEGER NOT NULL DEFAULT 0,
@@ -473,6 +478,19 @@ class AppStore:
             await conn.execute(
                 "ALTER TABLE checkpoint_subquestions ADD COLUMN agenda_visible INTEGER NOT NULL DEFAULT 0"
             )
+        agenda_columns = await self._table_columns("checkpoint_subquestions")
+        agenda_additions = {
+            "status_origin": "TEXT NOT NULL DEFAULT 'legacy'",
+            "status_reason": "TEXT NOT NULL DEFAULT ''",
+            "status_source_refs_json": "TEXT NOT NULL DEFAULT '[]'",
+            "status_message_id": "TEXT",
+        }
+        for name, ddl in agenda_additions.items():
+            if name not in agenda_columns:
+                await conn.execute(f"ALTER TABLE checkpoint_subquestions ADD COLUMN {name} {ddl}")
+        await conn.execute(
+            "UPDATE checkpoint_subquestions SET status='not_closed' WHERE status='open'"
+        )
         subquestion_columns = await self._table_columns("subquestions")
         if "display_no" not in subquestion_columns:
             await conn.execute(
@@ -543,6 +561,10 @@ class AppStore:
         await self._migrate_branch_unit_numbers()
         await conn.execute(
             "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(7,?)",
+            (now_ms(),),
+        )
+        await conn.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(8,?)",
             (now_ms(),),
         )
         await conn.commit()
@@ -1169,8 +1191,10 @@ class AppStore:
         )
         await self._conn().execute(
             """INSERT OR IGNORE INTO checkpoint_subquestions
-               (checkpoint_id,sq_id,status,position,question_count,unit_count,graph_snapshot_id,agenda_visible)
-               SELECT ?,sq_id,status,position,question_count,unit_count,graph_snapshot_id,agenda_visible
+               (checkpoint_id,sq_id,status,status_origin,status_reason,status_source_refs_json,
+                status_message_id,position,question_count,unit_count,graph_snapshot_id,agenda_visible)
+               SELECT ?,sq_id,status,status_origin,status_reason,status_source_refs_json,
+                      status_message_id,position,question_count,unit_count,graph_snapshot_id,agenda_visible
                FROM checkpoint_subquestions WHERE checkpoint_id=?""",
             (target_id, source_id),
         )
@@ -1301,7 +1325,9 @@ class AppStore:
     ) -> list[dict[str, Any]]:
         visibility = "" if include_internal else "AND cs.agenda_visible=1"
         rows = await (await self._conn().execute(
-            f"""SELECT s.id,s.display_no,s.text,cs.status,cs.position,cs.question_count,cs.unit_count,
+            f"""SELECT s.id,s.display_no,s.text,cs.status,cs.status_origin,cs.status_reason,
+                      cs.status_source_refs_json,cs.status_message_id,
+                      cs.position,cs.question_count,cs.unit_count,
                       cs.graph_snapshot_id
                FROM checkpoint_subquestions cs JOIN subquestions s ON s.id=cs.sq_id
                WHERE cs.checkpoint_id=? {visibility}
@@ -1314,6 +1340,10 @@ class AppStore:
                 "ref": self.subquestion_ref(int(row["display_no"])),
                 "text": str(row["text"]),
                 "status": str(row["status"]),
+                "statusOrigin": str(row["status_origin"]),
+                "statusReason": str(row["status_reason"] or ""),
+                "statusSourceRefs": _loads(row["status_source_refs_json"], []),
+                "statusMessageId": row["status_message_id"],
                 "position": int(row["position"]),
                 "questionCount": int(row["question_count"]),
                 "unitCount": int(row["unit_count"]),
@@ -1944,6 +1974,7 @@ class AppStore:
         sources: Iterable[tuple[int, str]] = (), graph_run_id: str = "",
         graph_chains: list[dict[str, Any]] | None = None,
         retrieval_state: dict[str, Any] | None = None,
+        sq_assessments: list[dict[str, Any]] | None = None,
     ) -> str:
         ts = now_ms()
         committed_checkpoint_id = ""
@@ -2017,6 +2048,20 @@ class AppStore:
                         ),
                     )
                     await self._copy_checkpoint_links(parent_checkpoint_id, assistant_checkpoint_id)
+                    if sq_assessments:
+                        applied = await self._apply_sq_assessments(
+                            conversation_id,
+                            assistant_checkpoint_id,
+                            assistant_message_id,
+                            sq_assessments,
+                        )
+                        if not applied:
+                            payload = dict(payload)
+                            payload["sqStatusWarning"] = SQ_STATUS_USER_NOTICE
+                            await self._conn().execute(
+                                "UPDATE messages SET payload_json=? WHERE id=? AND conversation_id=?",
+                                (_json(payload), assistant_message_id, conversation_id),
+                            )
                     if parent_checkpoint_id:
                         await self._conn().execute(
                             """UPDATE evidence_units SET created_checkpoint_id=?
@@ -2129,6 +2174,64 @@ class AppStore:
                 await self._conn().rollback()
                 raise
         return committed_checkpoint_id
+
+    async def _apply_sq_assessments(
+        self,
+        conversation_id: str,
+        checkpoint_id: str,
+        assistant_message_id: str,
+        assessments: list[dict[str, Any]],
+    ) -> bool:
+        """Apply matching assistant assessments inside finish_turn's transaction."""
+        if not assessments:
+            return False
+        refs = [str(item.get("ref") or "").strip() for item in assessments]
+        numbers = [self.parse_subquestion_ref(ref) for ref in refs]
+        if any(number is None for number in numbers) or len(set(refs)) != len(refs):
+            return False
+        rows = await (await self._conn().execute(
+            """SELECT s.id,s.display_no FROM checkpoint_subquestions cs
+                JOIN subquestions s ON s.id=cs.sq_id
+                WHERE cs.checkpoint_id=? AND s.conversation_id=?
+                  AND cs.agenda_visible=1 AND cs.status!='closed'""",
+            (checkpoint_id, conversation_id),
+        )).fetchall()
+        by_ref = {
+            self.subquestion_ref(int(row["display_no"])): str(row["id"])
+            for row in rows
+        }
+        if any(
+            str(item.get("status") or "") not in {"closed", "partial", "not_closed"}
+            or not str(item.get("reason") or "").strip()
+            or not isinstance(item.get("source_refs"), list)
+            for item in assessments
+            if str(item.get("ref") or "").strip() in by_ref
+        ):
+            return False
+        applied = False
+        for item in assessments:
+            ref = str(item["ref"])
+            if ref not in by_ref:
+                continue
+            status = str(item.get("status") or "")
+            reason = str(item.get("reason") or "")
+            source_refs = item.get("source_refs") or []
+            await self._conn().execute(
+                """UPDATE checkpoint_subquestions
+                   SET status=?,status_origin='assistant',status_reason=?,
+                       status_source_refs_json=?,status_message_id=?
+                   WHERE checkpoint_id=? AND sq_id=?""",
+                (
+                    status,
+                    reason,
+                    _json(source_refs),
+                    assistant_message_id,
+                    checkpoint_id,
+                    by_ref[ref],
+                ),
+            )
+            applied = True
+        return applied
 
     async def list_turn_failures(
         self, user_id: str, conversation_id: str, *, limit: int = 20
@@ -2416,18 +2519,27 @@ class AppStore:
                             "SELECT COALESCE(MAX(position),-1)+1 AS n FROM checkpoint_subquestions WHERE checkpoint_id=?",
                             (checkpoint_id,),
                         )).fetchone()
-                        values = ("open", int(pos["n"] if pos else 0), 0, 0)
+                        values = ("not_closed", int(pos["n"] if pos else 0), 0, 0)
                     await self._conn().execute(
                             """INSERT OR REPLACE INTO checkpoint_subquestions
                            (checkpoint_id,sq_id,status,position,question_count,unit_count,agenda_visible)
                            VALUES(?,?,?,?,?,?,1)""",
                         (checkpoint_id, new_sq_id, *values),
                     )
-                elif action in {"close", "reopen"}:
+                elif action in {"close", "reopen", "set_status"}:
+                    target_status = (
+                        "closed" if action == "close"
+                        else "not_closed" if action == "reopen"
+                        else str(text or "").strip()
+                    )
+                    if target_status not in {"closed", "partial", "not_closed"}:
+                        raise ValueError("Unsupported SQ status")
                     cur = await self._conn().execute(
-                        """UPDATE checkpoint_subquestions SET status=?
+                        """UPDATE checkpoint_subquestions
+                           SET status=?,status_origin='user',status_reason='',
+                               status_source_refs_json='[]',status_message_id=NULL
                            WHERE checkpoint_id=? AND sq_id=? AND agenda_visible=1""",
-                        ("closed" if action == "close" else "open", checkpoint_id, sq_id),
+                        (target_status, checkpoint_id, sq_id),
                     )
                     if not cur.rowcount:
                         raise KeyError(sq_id)
@@ -2506,7 +2618,7 @@ class AppStore:
                         await self._conn().execute(
                             """INSERT INTO checkpoint_subquestions
                                (checkpoint_id,sq_id,status,position,question_count,unit_count,agenda_visible)
-                               VALUES(?,?, 'open', ?, ?, 0, ?)""",
+                               VALUES(?,?, 'not_closed', ?, ?, 0, ?)""",
                             (checkpoint_id, sq_id, next_pos, 1 if increment else 0, 1 if agenda_visible else 0),
                         )
                         next_pos += 1
@@ -2517,7 +2629,7 @@ class AppStore:
                                    WHERE checkpoint_id=? AND sq_id=?""",
                                 (checkpoint_id, sq_id),
                             )
-                    if current is not None and increment and str(current["status"]) == "open":
+                    if current is not None and increment and str(current["status"]) != "closed":
                         parent_count_row = await (await self._conn().execute(
                             """SELECT COALESCE(pcs.question_count,0) AS n
                                FROM checkpoints cp
@@ -2562,7 +2674,7 @@ class AppStore:
         if any(number is None for number in numbers):
             return []
         placeholders = ",".join("?" for _ in numbers)
-        status = "AND cs.status='open'" if open_only else ""
+        status = "AND cs.status!='closed'" if open_only else ""
         rows = await (await self._conn().execute(
             f"""SELECT s.id,s.display_no,s.text FROM checkpoint_subquestions cs
                 JOIN subquestions s ON s.id=cs.sq_id
@@ -2592,7 +2704,7 @@ class AppStore:
         if not unique_ids:
             return []
         placeholders = ",".join("?" for _ in unique_ids)
-        status = "AND cs.status='open'" if open_only else ""
+        status = "AND cs.status!='closed'" if open_only else ""
         rows = await (await self._conn().execute(
             f"""SELECT s.id,s.display_no FROM checkpoint_subquestions cs
                 JOIN subquestions s ON s.id=cs.sq_id

@@ -165,8 +165,8 @@ export async function renameBranch(branchId: string, name: string): Promise<Bran
 export async function agendaEvent(
   branchId: string,
   baseCheckpointId: string,
-  action: "add" | "edit" | "close" | "reopen" | "reorder",
-  input: { sq_ref?: string; text?: string; ordered_refs?: string[] } = {}
+  action: "add" | "edit" | "close" | "reopen" | "set_status" | "reorder",
+  input: { sq_ref?: string; text?: string; status?: AgendaItem["status"]; ordered_refs?: string[] } = {}
 ): Promise<{ checkpointId: string; agenda: AgendaItem[] }> {
   return json(
     await fetch(`/api/branches/${encodeURIComponent(branchId)}/agenda-events`, {

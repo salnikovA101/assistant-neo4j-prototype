@@ -32,6 +32,41 @@ def _graph_done_payload(collector: list | None, cited_files: list | None) -> dic
     }
 
 
+def _llm_done_event(
+    event: StreamEvent,
+    *,
+    final_content: str | None = None,
+    retrieval_state: dict | None = None,
+) -> StreamEvent:
+    """Rebuild a done event without dropping staged SQ assessments."""
+    graph_fields = _graph_done_payload(
+        current_graph_collector(),
+        event.data.get("cited_source_files") or [],
+    )
+    return StreamEvent(
+        "done",
+        {
+            "final_content": (
+                final_content
+                if final_content is not None
+                else event.data.get("final_content", "")
+            ),
+            "graph_run_id": graph_fields["graph_run_id"],
+            "graph_chain_count": graph_fields["graph_chain_count"],
+            "open_graph": graph_fields["open_graph"],
+            "_raw_content": event.data.get("_raw_content", ""),
+            "_history_tool_messages": event.data.get("_history_tool_messages", []),
+            "_graph_chains": graph_fields["graph_chains"],
+            "_retrieval_state": event.data.get(
+                "_retrieval_state",
+                {} if retrieval_state is None else retrieval_state,
+            ),
+            "_sq_assessments": event.data.get("_sq_assessments", []),
+            "_sq_status_error": event.data.get("_sq_status_error", ""),
+        },
+    )
+
+
 class ServerPipeline:
     """
     Серверный пайплайн обработки: (STT) → LLM → (TTS).
@@ -203,23 +238,7 @@ class ServerPipeline:
                         final_content = (
                             event.data.get("final_content") or final_content
                         )
-                        graph_fields = _graph_done_payload(
-                            current_graph_collector(),
-                            event.data.get("cited_source_files") or [],
-                        )
-                        event = StreamEvent(
-                            "done",
-                            {
-                                "final_content": final_content,
-                                "graph_run_id": graph_fields["graph_run_id"],
-                                "graph_chain_count": graph_fields["graph_chain_count"],
-                                "open_graph": graph_fields["open_graph"],
-                                "_raw_content": event.data.get("_raw_content", ""),
-                                "_history_tool_messages": event.data.get("_history_tool_messages", []),
-                                "_graph_chains": graph_fields["graph_chains"],
-                                "_retrieval_state": event.data.get("_retrieval_state", {}),
-                            },
-                        )
+                        event = _llm_done_event(event, final_content=final_content)
                         logger.info(f"LLM (stream): {final_content}")
 
                     yield event
@@ -294,23 +313,7 @@ class ServerPipeline:
                     if request and await request.is_disconnected():
                         break
                     if event.type == "done":
-                        graph_fields = _graph_done_payload(
-                            current_graph_collector(),
-                            event.data.get("cited_source_files") or [],
-                        )
-                        event = StreamEvent(
-                            "done",
-                            {
-                                "final_content": event.data.get("final_content", ""),
-                                "graph_run_id": graph_fields["graph_run_id"],
-                                "graph_chain_count": graph_fields["graph_chain_count"],
-                                "open_graph": graph_fields["open_graph"],
-                                "_raw_content": event.data.get("_raw_content", ""),
-                                "_history_tool_messages": event.data.get("_history_tool_messages", []),
-                                "_graph_chains": graph_fields["graph_chains"],
-                                "_retrieval_state": event.data.get("_retrieval_state", retrieval_state),
-                            },
-                        )
+                        event = _llm_done_event(event, retrieval_state=retrieval_state)
                     yield event
             except Exception as exc:
                 yield StreamEvent("error", {"message": public_llm_error_message(exc)})

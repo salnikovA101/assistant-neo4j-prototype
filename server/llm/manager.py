@@ -6,6 +6,11 @@ from typing import AsyncIterator
 from server.utils.config import AUTO_PROFILE, AppConfig, boot_profile_name, llm_profile, resolve_request_profile
 from server.utils.constants import LLMProviderType
 from server.core.sessions import current_session
+from server.core.sq_status import (
+    SqStatusStreamFilter,
+    parse_sq_status_response,
+    resolve_active_sq_refs,
+)
 from server.core.turn_state import bind_turn, searches_state
 from server.llm.base import BaseLLMProvider, public_llm_error_message
 from server.llm.model_router import (
@@ -238,6 +243,7 @@ class LLMManager:
             retry_next = False
             try:
                 with bind_turn(search_depth, max_searches=max_searches, context=turn_context) as turn_state:
+                    sq_stream_filter = SqStatusStreamFilter(mode == "staged")
                     async for event in provider.generate_response_stream(
                         user_text=model_user_text,
                         prompt=prompt,
@@ -248,6 +254,24 @@ class LLMManager:
                         api_key=request_key,
                         resume_messages=resume_messages,
                     ):
+                        if event.type == "content":
+                            visible_delta = sq_stream_filter.feed(str(event.data.get("delta") or ""))
+                            if not visible_delta:
+                                continue
+                            event = StreamEvent("content", {"delta": visible_delta})
+                        elif event.type == "content_rewind":
+                            pending_delta = sq_stream_filter.flush()
+                            if pending_delta:
+                                if not announced:
+                                    announced = True
+                                    yield StreamEvent(
+                                        "model",
+                                        {
+                                            "id": candidate,
+                                            "label": display_name_for(self.config, candidate),
+                                        },
+                                    )
+                                yield StreamEvent("content", {"delta": pending_delta})
                         if event.type == "error" and not yielded_output:
                             kind = classify_error_event(event.data)
                             last_error = event
@@ -271,12 +295,32 @@ class LLMManager:
                         if event_has_model_output(event.type):
                             yielded_output = True
                         if event.type == "done":
+                            pending_delta = sq_stream_filter.flush()
+                            if pending_delta:
+                                if not announced:
+                                    announced = True
+                                    yield StreamEvent(
+                                        "model",
+                                        {
+                                            "id": candidate,
+                                            "label": display_name_for(self.config, candidate),
+                                        },
+                                    )
+                                yield StreamEvent("content", {"delta": pending_delta})
                             history_tool_messages = list(
                                 (turn_context or {}).get("seed_history_tools") or []
                             ) + list(event.data.get("history_tool_messages") or [])
-                            final_content = (
-                                event.data.get("final_content") or ""
-                            )
+                            final_content = event.data.get("final_content") or ""
+                            active_refs = await resolve_active_sq_refs(turn_context)
+                            sq_result = parse_sq_status_response(
+                                final_content,
+                                active_refs=active_refs,
+                                sources=sources,
+                            ) if mode == "staged" else None
+                            if sq_result is not None:
+                                final_content = sq_result.content
+                                if sq_result.error:
+                                    logger.warning("Ignored staged SQ status update: %s", sq_result.error)
                             history_manager.add_entry(
                                 user_text,
                                 final_content,
@@ -293,6 +337,8 @@ class LLMManager:
                                     "_raw_content": final_content,
                                     "_history_tool_messages": history_tool_messages,
                                     "_retrieval_state": dict(turn_state.retrieval_state),
+                                    "_sq_assessments": sq_result.assessments if sq_result else [],
+                                    "_sq_status_error": sq_result.error if sq_result else "",
                                     "modelId": candidate,
                                     "modelLabel": display_name_for(self.config, candidate),
                                 },

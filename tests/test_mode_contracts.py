@@ -67,6 +67,7 @@ async def test_staged_context_keeps_agenda_and_units_while_auto_hides_them(tmp_p
             purpose="card",
         )
         assert "CURRENT SQ AGENDA" in staged
+        assert "assess only these refs" in staged
         assert sq_ref in staged
         assert sq_id not in staged
         assert "UNIT U1 (" not in staged
@@ -76,6 +77,25 @@ async def test_staged_context_keeps_agenda_and_units_while_auto_hides_them(tmp_p
         assert "EVIDENCE UNITs" not in auto
         assert "CURRENT SQ AGENDA" not in card
         assert "EVIDENCE UNITs" in card
+
+        closed = await store.finish_turn(
+            conversation["id"],
+            started["assistantMessageId"],
+            text="answer",
+            status="done",
+            payload={},
+            sq_assessments=[{
+                "ref": sq_ref,
+                "status": "closed",
+                "reason": "Подтверждено",
+                "source_refs": ["source:1"],
+            }],
+        )
+        after_close = await _checkpoint_prompt_context(store, user.id, closed, mode="staged")
+        assert "CLOSED SQ (do not assess" in after_close
+        assert sq_ref in after_close
+        assert "[closed]" in after_close
+        assert "- none" in after_close
 
         auto_fork = await store.create_fork(
             user.id,
@@ -207,7 +227,11 @@ async def test_subquestion_refs_are_stable_across_forks_and_hide_uuid(tmp_path):
         assert checkpoint["agenda"] == [{
             "ref": "subquestion:1",
             "text": "Starter cultures acidify milk.",
-            "status": "open",
+            "status": "not_closed",
+            "statusOrigin": "legacy",
+            "statusReason": "",
+            "statusSourceRefs": [],
+            "statusMessageId": None,
             "position": 0,
             "questionCount": 1,
             "unitCount": 0,

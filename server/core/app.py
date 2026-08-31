@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, quote
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -61,6 +61,7 @@ from server.llm.model_router import (
     llm_key_fingerprint,
 )
 from server.llm.stream_events import StreamEvent
+from server.core.sq_status import SQ_STATUS_USER_NOTICE
 from server.tools.graph_explore import (
     build_graph_expand_payload,
     build_graph_explore_payload,
@@ -70,6 +71,7 @@ from server.tools.graph_viz import build_graph_viz_payload
 from server.tools.subgraph_search import MAX_SUBQUESTIONS, normalize_subquestions
 from server.tools.source_registry import (
     alias_source_files_in_value,
+    present_live_event_data,
     present_source_aliases_in_value,
 )
 
@@ -210,12 +212,13 @@ class BranchPatchBody(BaseModel):
 
 class AgendaEventBody(BaseModel):
     base_checkpoint_id: str
-    action: Literal["add", "edit", "close", "reopen", "reorder"]
+    action: Literal["add", "edit", "close", "reopen", "set_status", "reorder"]
     sq_ref: str = ""
     # Compatibility for a client built before public SQ refs. It is resolved
     # only against the owned checkpoint and never shown back to the model/UI.
     sq_id: str = ""
     text: str = Field(default="", max_length=1000)
+    status: Literal["closed", "partial", "not_closed"] | None = None
     ordered_refs: list[str] = Field(default_factory=list)
     ordered_ids: list[str] = Field(default_factory=list)
 
@@ -733,16 +736,26 @@ async def _checkpoint_prompt_context(
     blocks: list[str] = []
     agenda = list((checkpoint or {}).get("agenda") or [])
     if purpose == "chat" and mode == "staged" and agenda:
-        blocks.append(
-            "CURRENT SQ AGENDA:\n"
-            + "\n".join(
+        active = [item for item in agenda if item.get("status") != "closed"]
+        closed = [item for item in agenda if item.get("status") == "closed"]
+
+        def _sq_line(item: dict) -> str:
+            return (
                 f"- [{item['status']}] {item['ref']}: {item['text']} "
                 f"(paths={item['unitCount']}"
                 + (", review recommended" if item.get("reviewRecommended") else "")
                 + ")"
-                for item in agenda
             )
-        )
+
+        active_lines = [_sq_line(item) for item in active] or ["- none"]
+        lines = [
+            "CURRENT SQ AGENDA (assess only these refs in SQ_STATUS_JSON):",
+            *active_lines,
+        ]
+        if closed:
+            lines.append("CLOSED SQ (do not assess, do not include in SQ_STATUS_JSON):")
+            lines.extend(_sq_line(item) for item in closed)
+        blocks.append("\n".join(lines))
     if units and (purpose == "card" or mode == "staged"):
         blocks.append("EVIDENCE UNITs inherited by this branch checkpoint:")
         for unit in units:
@@ -1148,6 +1161,8 @@ async def _persistent_stream(
         )
     )
     raw_content = ""
+    sq_assessments: list[dict[str, Any]] = []
+    sq_status_error = ""
     history_tools: list[dict] = []
     graph_run_id = ""
     graph_chains: list[dict] = []
@@ -1171,6 +1186,12 @@ async def _persistent_stream(
         mode=mode,
         purpose="chat",
     )
+    checkpoint = await store.checkpoint_state(user.id, user_checkpoint_id) if user_checkpoint_id else None
+    active_sq_refs = [
+        str(item.get("ref") or "")
+        for item in list((checkpoint or {}).get("agenda") or [])
+        if item.get("status") != "closed" and str(item.get("ref") or "")
+    ] if mode == "staged" else []
     model_history = await store.checkpoint_model_messages(
         user.id, user_checkpoint_id, exclude_message_id=user_message_id
     )
@@ -1233,6 +1254,8 @@ async def _persistent_stream(
         if model_id:
             payload["modelId"] = model_id
             payload["modelLabel"] = model_label
+        if sq_status_error:
+            payload["sqStatusWarning"] = SQ_STATUS_USER_NOTICE
         session = session_store.get_or_create(session_key, pipeline.config.llm.history_len)
         return await store.finish_turn(
             conversation_id,
@@ -1246,6 +1269,7 @@ async def _persistent_stream(
             graph_run_id=graph_run_id,
             graph_chains=graph_chains,
             retrieval_state=None if body.intent == "generate_card" else retrieval_state,
+            sq_assessments=sq_assessments if status == "done" else [],
         )
 
     async def fail_turn(reason: str, error_message: str) -> dict[str, Any]:
@@ -1289,6 +1313,7 @@ async def _persistent_stream(
                 "resume_messages": resume_messages,
                 "searches_used": 0 if searches_used is None else searches_used,
                 "seed_history_tools": seed_history_tools or [],
+                "active_sq_refs": active_sq_refs,
             },
         )
     source_stream_closed = False
@@ -1408,6 +1433,8 @@ async def _persistent_stream(
             elif event.type == "tool_result":
                 update_tool(data, done=True)
             elif event.type == "done":
+                sq_assessments = data.pop("_sq_assessments", []) or []
+                sq_status_error = str(data.pop("_sq_status_error", "") or "")
                 answer = str(data.get("final_content") or answer)
                 raw_content = str(data.pop("_raw_content", "") or "")
                 history_tools = data.pop("_history_tool_messages", []) or []
@@ -1425,6 +1452,8 @@ async def _persistent_stream(
                 checkpoint_id = await persist("done")
                 if checkpoint_id:
                     data["checkpoint_id"] = checkpoint_id
+                if sq_status_error:
+                    data["sqStatusWarning"] = SQ_STATUS_USER_NOTICE
                 data["mode"] = mode
                 data["branch_id"] = branch_id
                 data["open_graph"] = open_graph
@@ -1437,12 +1466,11 @@ async def _persistent_stream(
                 yield StreamEvent("turn_rolled_back", rolled).to_sse()
                 return
             data.pop("_assistant_replay", None)
-            # The model and persisted payload keep stable source:N aliases.
-            # Every live UI event resolves them back to the actual filenames.
+            # Tool traces show filenames; the live answer keeps source:N for [n].
             live_sources = session_store.get_or_create(
                 session_key, pipeline.config.llm.history_len
             ).sources.snapshot()
-            event.data = present_source_aliases_in_value(data, live_sources)
+            event.data = present_live_event_data(event.type, data, live_sources)
             yield event.to_sse()
     except Exception:
         logger.exception("Failed persistent stream conversation=%s", conversation_id)
@@ -1543,7 +1571,7 @@ async def _approved_stream(
     wanted_new = {store.canonical_subquestion(text) for text in clean_new}
     for item in agenda:
         key = store.canonical_subquestion(str(item.get("text") or ""))
-        if key in wanted_new and key not in selected_keys and item.get("status") == "open":
+        if key in wanted_new and key not in selected_keys and item.get("status") != "closed":
             selected.append(str(item["text"]))
             selected_keys.add(key)
     if not selected:
@@ -1613,6 +1641,8 @@ async def _approved_stream(
     graph_chain_count = 0
     open_graph = False
     raw_content = ""
+    sq_assessments: list[dict[str, Any]] = []
+    sq_status_error = ""
     model_id = ""
     model_label = ""
     terminal = False
@@ -1632,6 +1662,8 @@ async def _approved_stream(
         if model_id:
             payload["modelId"] = model_id
             payload["modelLabel"] = model_label
+        if sq_status_error:
+            payload["sqStatusWarning"] = SQ_STATUS_USER_NOTICE
         session = session_store.get_or_create(session_key, pipeline.config.llm.history_len)
         return await store.finish_turn(
             conversation_id,
@@ -1645,6 +1677,7 @@ async def _approved_stream(
             graph_run_id=graph_run_id,
             graph_chains=graph_chains,
             retrieval_state=retrieval_state,
+            sq_assessments=sq_assessments if status == "done" else [],
         )
 
     async def fail_turn(reason: str, error_message: str) -> dict[str, Any]:
@@ -1680,6 +1713,11 @@ async def _approved_stream(
                 "model_user_text": model_user_text,
                 "tool_result_prefix": tool_result_prefix,
                 "searches_used": 1,
+                "active_sq_refs": [
+                    str(item.get("ref") or "")
+                    for item in agenda
+                    if item.get("status") != "closed" and str(item.get("ref") or "")
+                ],
             },
             request=request,
         ):
@@ -1716,6 +1754,8 @@ async def _approved_stream(
                 tools = [card]
                 steps = [item for item in steps if item.get("kind") != "tool"] + [{"kind": "tool", **card}]
             elif event.type == "done":
+                sq_assessments = data.pop("_sq_assessments", []) or []
+                sq_status_error = str(data.pop("_sq_status_error", "") or "")
                 answer = str(data.get("final_content") or answer)
                 raw_content = str(data.pop("_raw_content", "") or "")
                 history_tools = data.pop("_history_tool_messages", []) or []
@@ -1732,6 +1772,8 @@ async def _approved_stream(
                 checkpoint_id = await persist("done")
                 if checkpoint_id:
                     data["checkpoint_id"] = checkpoint_id
+                if sq_status_error:
+                    data["sqStatusWarning"] = SQ_STATUS_USER_NOTICE
                 data["mode"] = "staged"
                 data["open_graph"] = open_graph
                 terminal = True
@@ -1746,7 +1788,7 @@ async def _approved_stream(
                 live_sources = session_store.get_or_create(
                     session_key, pipeline.config.llm.history_len
                 ).sources.snapshot()
-                event.data = present_source_aliases_in_value(data, live_sources)
+                event.data = present_live_event_data(event.type, data, live_sources)
             yield event.to_sse()
     finally:
         if not terminal:
@@ -2517,7 +2559,7 @@ async def branch_agenda_event(request: Request, branch_id: str, body: AgendaEven
             base_checkpoint_id=body.base_checkpoint_id,
             action=body.action,
             sq_ref=sq_ref,
-            text=body.text,
+            text=body.status if body.action == "set_status" else body.text,
             ordered_refs=ordered_refs,
         )
     except KeyError as exc:
@@ -3254,6 +3296,23 @@ def _ui_static_dir() -> str:
     if dist.is_dir() and (dist / "index.html").is_file():
         return str(dist)
     return "server/static"
+
+
+# Keep a tab opened across a rebuild usable. Older entrypoints may still ask
+# for hashed JS/CSS chunks that were replaced in the new image; route those
+# requests to the corresponding stable chunk when it exists.
+@app.get("/ui/assets/{asset_name:path}", include_in_schema=False)
+async def ui_asset_compat(asset_name: str):
+    assets_dir = (Path(_ui_static_dir()) / "assets").resolve()
+    requested = (assets_dir / asset_name).resolve()
+    if assets_dir in requested.parents and requested.is_file():
+        return FileResponse(requested)
+    match = re.fullmatch(r"(.+)-[A-Za-z0-9_-]{8,}\.(js|css)", asset_name)
+    if match:
+        stable = (assets_dir / f"{match.group(1)}.{match.group(2)}").resolve()
+        if assets_dir in stable.parents and stable.is_file():
+            return FileResponse(stable)
+    raise HTTPException(status_code=404, detail="UI asset not found")
 
 
 app.mount("/ui", StaticFiles(directory=_ui_static_dir(), html=True), name="ui")

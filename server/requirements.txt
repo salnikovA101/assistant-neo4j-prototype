@@ -12,4 +12,5 @@ pydantic-settings
 PyYAML
 python-dotenv
 httpx
+json-repair
 numpy

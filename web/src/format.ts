@@ -76,16 +76,24 @@ function densifyCitations(text: string): string {
     if (!map.has(sid)) map.set(sid, map.size + 1);
     return map.get(sid);
   };
+  const markersFor = (chunk: string) => {
+    const markers: string[] = [];
+    const seen = new Set<string>();
+    const idRe = /source\s*:?\s*(\d+)/gi;
+    let match: RegExpExecArray | null;
+    while ((match = idRe.exec(chunk)) !== null) {
+      const sid = parseInt(match[1], 10);
+      if (!Number.isFinite(sid)) continue;
+      const marker = `[${display(sid)}]`;
+      if (seen.has(marker)) continue;
+      seen.add(marker);
+      markers.push(marker);
+    }
+    return markers.join("");
+  };
   let rendered = text.replace(
-    /\(\s*source\s*:\s*(\d+(?:\s*,\s*\d+)*)\s*\)/gi,
-    (_, ids: string) =>
-      ids
-        .split(",")
-        .map((part) => {
-          const n = parseInt(part.trim(), 10);
-          return Number.isFinite(n) ? `[${display(n)}]` : "";
-        })
-        .join("")
+    /\(\s*source\s*:?\s*\d+[^)]*\)/gi,
+    (group) => markersFor(group)
   );
   rendered = rendered.replace(/(?<!\w)source\s*:?\s*(\d+)(?!\w)/gi, (_, n) => {
     const sid = parseInt(n, 10);
@@ -107,8 +115,18 @@ function holdIncompleteFence(text: string): string {
   return text;
 }
 
+function holdIncompleteCitation(text: string): string {
+  let last = -1;
+  const start = /\(\s*source\b/gi;
+  let match: RegExpExecArray | null;
+  while ((match = start.exec(text)) !== null) last = match.index;
+  if (last < 0 || text.indexOf(")", last) !== -1) return text;
+  return text.slice(0, last);
+}
+
 export function renderMarkdown(text: string, streaming = false): string {
-  const src = renderLatex(densifyCitations(streaming ? holdIncompleteFence(text) : text));
+  const prepared = streaming ? holdIncompleteCitation(holdIncompleteFence(text)) : text;
+  const src = renderLatex(densifyCitations(prepared));
   const raw = marked.parse(src) as string;
   return DOMPurify.sanitize(raw);
 }

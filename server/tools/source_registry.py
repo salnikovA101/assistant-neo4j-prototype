@@ -61,11 +61,13 @@ class SourceRegistry:
             self._next_id = max(self._next_id, sid + 1)
 
 
-# (source:1), (source:1; source:3), (source 1), mixed whitespace
+# (source:1), (source:1; source:3), and mixed leftovers such as
+# (source:3; leaked-filename.pdf). Keep this in sync with densifyCitations.
 _SOURCE_GROUP_RE = re.compile(
-    r"\(\s*source\s*:?\s*\d+(?:\s*;\s*source\s*:?\s*\d+)*\s*\)",
+    r"\(\s*source\s*:?\s*\d+[^)]*\)",
     flags=re.IGNORECASE,
 )
+ANSWER_STREAM_EVENT_TYPES = frozenset({"content", "thinking", "content_rewind", "done"})
 _SOURCE_ID_RE = re.compile(r"source\s*:?\s*(\d+)", flags=re.IGNORECASE)
 
 _ISTOCHNIKI_SECTION_RE = re.compile(
@@ -285,6 +287,20 @@ def alias_source_files_in_value(
         return item
 
     return replace(value)
+
+
+def present_live_event_data(
+    event_type: str, data: Any, sources: Iterable[tuple[int, str]]
+) -> Any:
+    """Show filenames in tool traces, but keep source:N in the live answer.
+
+    The frontend densifier turns `(source:N)` into `[n]` while tokens arrive.
+    Resolving aliases in content/thinking/done first would leak PDF names
+    into the bubble and break mixed groups such as `(source:3; file.pdf)`.
+    """
+    if event_type in ANSWER_STREAM_EVENT_TYPES:
+        return data
+    return present_source_aliases_in_value(data, sources)
 
 
 def present_source_aliases_in_value(
