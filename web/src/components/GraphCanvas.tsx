@@ -1,10 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { DataSet, Network } from "vis-network/standalone";
 import "vis-network/styles/vis-network.min.css";
 import type { GraphCollectionItem, GraphEdge, GraphNode, GraphPayload } from "../types";
-import { tripletCaption } from "../format";
+import { visibleTripletCaption } from "../uiLabels";
+import { IconClose, IconSidebar } from "./Icons";
 
 type Selected = { kind: "node"; node: GraphNode } | { kind: "edge"; edge: GraphEdge } | null;
+const RESULT_LIST_LIMIT = 200;
+const DEFAULT_WORKSPACE_INSPECTOR_WIDTH = 420;
+const MIN_WORKSPACE_INSPECTOR_WIDTH = 300;
+const MAX_WORKSPACE_INSPECTOR_WIDTH = 720;
+const MIN_WORKSPACE_CANVAS_WIDTH = 320;
+const WORKSPACE_RESIZE_HANDLE_WIDTH = 7;
 export type GraphExpansionUi = { loaded: number; total: number; hasMore: boolean; busy: boolean };
 export type GraphAppendEvent = { id: string; anchorNodeId: string; nodes: GraphNode[]; edges: GraphEdge[] };
 type MutableDataSet = {
@@ -89,6 +96,10 @@ export function GraphCanvas({
   onExpandNode,
   onCanvasInteraction,
   onUseCollection,
+  workspaceMode = false,
+  resultEdges = [],
+  filtersContent,
+  activeFilterCount = 0,
 }: {
   payload: GraphPayload | null;
   viewId: string | "all";
@@ -101,6 +112,10 @@ export function GraphCanvas({
   onExpandNode?: (nodeId: string, direction: "all" | "incoming" | "outgoing") => void;
   onCanvasInteraction?: () => void;
   onUseCollection?: (items: GraphCollectionItem[]) => void;
+  workspaceMode?: boolean;
+  resultEdges?: GraphEdge[];
+  filtersContent?: ReactNode;
+  activeFilterCount?: number;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -117,8 +132,10 @@ export function GraphCanvas({
   const [query, setQuery] = useState("");
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [collection, setCollection] = useState<GraphCollectionItem[]>([]);
-  const [inspectorMode, setInspectorMode] = useState<"detail" | "collection">("detail");
+  const [inspectorMode, setInspectorMode] = useState<"results" | "filters" | "detail" | "collection">(workspaceMode ? "results" : "detail");
+  const [inspectorOpen, setInspectorOpen] = useState(true);
   const [inspectorHeight, setInspectorHeight] = useState(220);
+  const [workspaceInspectorWidth, setWorkspaceInspectorWidth] = useState(DEFAULT_WORKSPACE_INSPECTOR_WIDTH);
   const [expandDirection, setExpandDirection] = useState<"all" | "incoming" | "outgoing">("all");
 
   interactionRef.current = onCanvasInteraction;
@@ -127,6 +144,31 @@ export function GraphCanvas({
     const available = bodyRef.current?.clientHeight || window.innerHeight;
     setInspectorHeight(Math.max(110, Math.min(next, Math.max(110, available - 180))));
   };
+
+  const resizeWorkspaceInspector = (next: number) => {
+    const available = bodyRef.current?.clientWidth || window.innerWidth;
+    const responsiveMax = Math.max(
+      MIN_WORKSPACE_INSPECTOR_WIDTH,
+      Math.min(MAX_WORKSPACE_INSPECTOR_WIDTH, available - MIN_WORKSPACE_CANVAS_WIDTH - WORKSPACE_RESIZE_HANDLE_WIDTH),
+    );
+    setWorkspaceInspectorWidth(Math.max(MIN_WORKSPACE_INSPECTOR_WIDTH, Math.min(next, responsiveMax)));
+  };
+
+  useEffect(() => {
+    if (!workspaceMode) return undefined;
+    const body = bodyRef.current;
+    if (!body) return undefined;
+    const observer = new ResizeObserver(() => {
+      if (body.clientWidth < MIN_WORKSPACE_INSPECTOR_WIDTH + MIN_WORKSPACE_CANVAS_WIDTH + WORKSPACE_RESIZE_HANDLE_WIDTH) return;
+      const responsiveMax = Math.max(
+        MIN_WORKSPACE_INSPECTOR_WIDTH,
+        Math.min(MAX_WORKSPACE_INSPECTOR_WIDTH, body.clientWidth - MIN_WORKSPACE_CANVAS_WIDTH - WORKSPACE_RESIZE_HANDLE_WIDTH),
+      );
+      setWorkspaceInspectorWidth((current) => Math.min(current, responsiveMax));
+    });
+    observer.observe(body);
+    return () => observer.disconnect();
+  }, [workspaceMode]);
 
   const graph = useMemo(() => {
     if (!payload) return { nodes: [] as GraphNode[], edges: [] as GraphEdge[] };
@@ -137,7 +179,10 @@ export function GraphCanvas({
   useEffect(() => { setSuggestionsOpen(false); }, [payload, viewId]);
   useEffect(() => {
     setSelected(null);
-    setInspectorMode(collection.length ? "collection" : "detail");
+    setInspectorMode((current) => {
+      if (current === "filters") return "filters";
+      return collection.length ? "collection" : workspaceMode ? "results" : "detail";
+    });
     appendAppliedRef.current = "";
   }, [layoutKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -182,7 +227,7 @@ export function GraphCanvas({
     from: edge.from,
     to: edge.to,
     label: edge.label,
-    title: `${edge.from_name || edge.from} —${edge.label}→ ${edge.to_name || edge.to}`,
+    title: visibleTripletCaption(edge),
     width: collectedEdgeIds.has(edge.id) ? 2.4 : 1,
     color: collectedEdgeIds.has(edge.id) ? { color: "#8ab4ff", highlight: "#ffffff" } : undefined,
   });
@@ -362,7 +407,7 @@ export function GraphCanvas({
   const selectedLoadedEdges = selected?.kind === "node" ? graph.edges.filter((edge) => edge.from === selected.node.id || edge.to === selected.node.id).length : 0;
 
   return (
-    <div className="graph-stage">
+    <div className={`graph-stage ${workspaceMode ? "is-workspace" : ""}`}>
       {!hideSearch && (
         <div className="graph-local-search">
           <input
@@ -370,16 +415,14 @@ export function GraphCanvas({
             value={query}
             onChange={(event) => { setQuery(event.target.value); setSuggestionsOpen(true); }}
             onFocus={() => setSuggestionsOpen(true)}
-            placeholder="Например: kefir, Lactobacillus, GABA, 37 °C"
+            placeholder="Search entities, relations, or evidence in English"
             aria-label="Поиск на схеме по английским именам и evidence"
-            aria-describedby="graph-search-lang-hint"
           />
-          <p id="graph-search-lang-hint" className="search-lang-hint">Имена в базе английские.</p>
           {suggestionsOpen && q && hits.length > 0 && (
             <div className="edge-suggestions" role="listbox" aria-label="Связи на схеме">
               {hits.slice(0, 12).map((edge) => (
                 <button key={edge.id} type="button" onClick={() => pickTriplet(edge)}>
-                  <strong>{tripletCaption(edge)}</strong>
+                  <strong>{visibleTripletCaption(edge)}</strong>
                   {Boolean(edge.properties?.evidence) && <span>{String(edge.properties.evidence)}</span>}
                 </button>
               ))}
@@ -387,15 +430,22 @@ export function GraphCanvas({
           )}
         </div>
       )}
-      {!filtered.nodes.length && !collection.length ? <div className="graph-empty">{emptyHint || "Ничего не найдено"}</div> : (
-        <div ref={bodyRef} className="graph-body" style={{ gridTemplateRows: `minmax(180px, 1fr) 7px ${inspectorHeight}px` }}>
+      {!workspaceMode && !filtered.nodes.length && !collection.length ? <div className="graph-empty">{emptyHint || "Ничего не найдено"}</div> : (
+        <div
+          ref={bodyRef}
+          className={`graph-body ${workspaceMode && !inspectorOpen ? "is-inspector-hidden" : ""}`}
+          style={workspaceMode
+            ? ({ "--graph-inspector-width": `${workspaceInspectorWidth}px` } as CSSProperties)
+            : { gridTemplateRows: `minmax(180px, 1fr) 7px ${inspectorHeight}px` }}
+        >
           <div className="graph-canvas-wrap">
             {filtered.nodes.length ? <>
               <div ref={hostRef} className="graph-canvas" />
               <div className="graph-legend">{legend.map(([group, color]) => <span key={group} className="graph-legend-item"><i style={{ background: color }} />{group}</span>)}</div>
             </> : <div className="graph-empty">{emptyHint}</div>}
+            {workspaceMode && !inspectorOpen && <button type="button" className="inspector-reopen" onClick={() => setInspectorOpen(true)}><IconSidebar /> Показать панель</button>}
           </div>
-          <div
+          {!workspaceMode && <div
             className="graph-resize-handle"
             role="separator"
             tabIndex={0}
@@ -424,13 +474,62 @@ export function GraphCanvas({
               window.addEventListener("pointerup", stop);
               window.addEventListener("pointercancel", stop);
             }}
-          ><span /></div>
-          <aside ref={inspectorRef} className="graph-inspector">
+          ><span /></div>}
+          {workspaceMode && inspectorOpen && <div
+            className="graph-inspector-resize-handle"
+            role="separator"
+            tabIndex={0}
+            aria-label="Изменить ширину правой панели"
+            aria-orientation="vertical"
+            aria-valuemin={MIN_WORKSPACE_INSPECTOR_WIDTH}
+            aria-valuemax={MAX_WORKSPACE_INSPECTOR_WIDTH}
+            aria-valuenow={Math.round(workspaceInspectorWidth)}
+            title="Потяните, чтобы изменить ширину. Двойной щелчок — размер по умолчанию"
+            onDoubleClick={() => resizeWorkspaceInspector(DEFAULT_WORKSPACE_INSPECTOR_WIDTH)}
+            onKeyDown={(event) => {
+              const step = event.shiftKey ? 40 : 12;
+              if (event.key === "ArrowLeft") { event.preventDefault(); resizeWorkspaceInspector(workspaceInspectorWidth + step); }
+              if (event.key === "ArrowRight") { event.preventDefault(); resizeWorkspaceInspector(workspaceInspectorWidth - step); }
+              if (event.key === "Home") { event.preventDefault(); resizeWorkspaceInspector(DEFAULT_WORKSPACE_INSPECTOR_WIDTH); }
+            }}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              const startX = event.clientX;
+              const startWidth = workspaceInspectorWidth;
+              const move = (nextEvent: PointerEvent) => resizeWorkspaceInspector(startWidth + startX - nextEvent.clientX);
+              const stop = () => {
+                window.removeEventListener("pointermove", move);
+                window.removeEventListener("pointerup", stop);
+                window.removeEventListener("pointercancel", stop);
+                document.body.style.cursor = "";
+                document.body.style.userSelect = "";
+              };
+              document.body.style.cursor = "ew-resize";
+              document.body.style.userSelect = "none";
+              window.addEventListener("pointermove", move);
+              window.addEventListener("pointerup", stop);
+              window.addEventListener("pointercancel", stop);
+            }}
+          ><span /></div>}
+          {(!workspaceMode || inspectorOpen) && <aside ref={inspectorRef} className="graph-inspector">
             <div className="inspector-tabs">
+              {workspaceMode && <button type="button" className={inspectorMode === "filters" ? "is-on" : ""} onClick={() => setInspectorMode("filters")}>Фильтры {activeFilterCount || ""}</button>}
+              {workspaceMode && <button type="button" className={inspectorMode === "results" ? "is-on" : ""} onClick={() => setInspectorMode("results")}>Результаты {resultEdges.length || ""}</button>}
               <button type="button" className={inspectorMode === "detail" ? "is-on" : ""} onClick={() => setInspectorMode("detail")}>Детали</button>
               <button type="button" className={inspectorMode === "collection" ? "is-on" : ""} onClick={() => setInspectorMode("collection")}>Подборка {collection.length || ""}</button>
+              {workspaceMode && <button type="button" className="inspector-close" aria-label="Скрыть панель" title="Скрыть панель" onClick={() => setInspectorOpen(false)}><IconClose /></button>}
             </div>
-            {inspectorMode === "detail" ? <>
+            {inspectorMode === "results" ? <div className="graph-results-list">
+              {!resultEdges.length && <p className="muted">Введите запрос или выберите фильтры — найденные связи появятся здесь.</p>}
+              {resultEdges.slice(0, RESULT_LIST_LIMIT).map((edge) => (
+                <button key={edge.id} type="button" className={selected?.kind === "edge" && selected.edge.id === edge.id ? "is-active" : ""} onClick={() => pickTriplet(edge)}>
+                  <strong>{visibleTripletCaption(edge)}</strong>
+                  {Boolean(edge.properties?.evidence) && <span>{String(edge.properties.evidence)}</span>}
+                  {Boolean(edge.properties?.source_file) && <small>{String(edge.properties.source_file)}</small>}
+                </button>
+              ))}
+              {resultEdges.length > RESULT_LIST_LIMIT && <p className="muted">Показаны первые {RESULT_LIST_LIMIT} из {resultEdges.length}. Уменьшите лимит связей или уточните запрос.</p>}
+            </div> : inspectorMode === "filters" ? <div className="graph-filter-content">{filtersContent}</div> : inspectorMode === "detail" ? <>
               {!selected && <p className="muted">Выберите сущность или связь. Найденный контекст останется на схеме.</p>}
               {selected?.kind === "node" && <div>
                 <p className="inspector-kicker">{selected.node.group}</p>
@@ -451,14 +550,14 @@ export function GraphCanvas({
               {!collection.length && <p className="muted">Добавляйте сущности и доказательные связи, чтобы собрать контекст разработки.</p>}
               {collection.some((item) => item.kind === "node") && <p className="collection-section-title">Сущности</p>}
               {collection.filter((item): item is Extract<GraphCollectionItem, { kind: "node" }> => item.kind === "node").map((item) => <button key={item.key} type="button" onClick={() => pickNode(item.node)}><strong>{captionOf(item.node)}</strong><span>{item.node.group}</span></button>)}
-              {collection.some((item) => item.kind === "edge") && <p className="collection-section-title">Факты</p>}
-              {collection.filter((item): item is Extract<GraphCollectionItem, { kind: "edge" }> => item.kind === "edge").map((item) => <button key={item.key} type="button" onClick={() => pickTriplet(item.edge)}><strong>{tripletCaption(item.edge)}</strong><span>{String(item.edge.properties?.source_file || "Источник не указан")}</span></button>)}
+              {collection.some((item) => item.kind === "edge") && <p className="collection-section-title">Данные</p>}
+              {collection.filter((item): item is Extract<GraphCollectionItem, { kind: "edge" }> => item.kind === "edge").map((item) => <button key={item.key} type="button" onClick={() => pickTriplet(item.edge)}><strong>{visibleTripletCaption(item.edge)}</strong><span>{String(item.edge.properties?.source_file || "Источник не указан")}</span></button>)}
               {collection.length > 0 && <div className="collection-footer">
                 {onUseCollection && <button type="button" className="primary-btn" onClick={() => onUseCollection(collection)}>Вставить в чат</button>}
                 <button type="button" className="collection-clear" onClick={() => setCollection([])}>Очистить подборку</button>
               </div>}
             </div>}
-          </aside>
+          </aside>}
         </div>
       )}
     </div>
@@ -471,8 +570,8 @@ function EdgeCard({ edge, inCollection, onToggleCollection }: { edge: GraphEdge;
   const source = String(properties.source_file || "");
   const confidence = properties.confidence;
   return <div>
-    <p className="inspector-kicker">{edge.label}</p>
-    <h3>{edge.from_name || edge.from} → {edge.to_name || edge.to}</h3>
+    <p className="inspector-kicker">Связь <span className="relation-code">{edge.label}</span></p>
+    <h3>{visibleTripletCaption(edge)}</h3>
     {evidence && <blockquote className="inspector-quote">{evidence}</blockquote>}
     <dl className="inspector-meta">{source && <><dt>Источник</dt><dd>{source}</dd></>}{confidence != null && confidence !== "" && <><dt>Уверенность экстракции</dt><dd>{Number(confidence).toFixed(2)}</dd></>}</dl>
     <div className="inspector-actions">

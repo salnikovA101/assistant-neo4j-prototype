@@ -11,12 +11,13 @@ import {
 import { fetchResearchMap } from "../api";
 import type { ResearchBranch, ResearchMap, ResearchStep } from "../types";
 import { IconClose, IconEdit, IconGraph } from "./Icons";
+import { MODE_LABELS } from "../uiLabels";
 
 const BRANCH_COLORS = ["#6ea8ff", "#8bd5ca", "#c6a0f6", "#f5bde6", "#eed49f", "#91d7e3"];
-const COLUMN_PITCH = 228;
-const ROW_PITCH = 224;
-const CARD_WIDTH = 188;
-const CARD_HEIGHT = 164;
+const COLUMN_PITCH = 256;
+const ROW_PITCH = 236;
+const CARD_WIDTH = 216;
+const CARD_HEIGHT = 174;
 const CANVAS_LEFT = 48;
 const CANVAS_TOP = 42;
 const BRANCH_LABEL_HEIGHT = 28;
@@ -41,6 +42,7 @@ export function ResearchMapPane({
   refreshKey,
   dataCheckpointId,
   onSelectStep,
+  onSelectEmptyBranch,
   onOpenGraph,
   onOpenData,
   onRenameBranch,
@@ -53,6 +55,7 @@ export function ResearchMapPane({
   refreshKey: number;
   dataCheckpointId: string;
   onSelectStep: (branchId: string, step: ResearchStep) => void;
+  onSelectEmptyBranch: (branch: ResearchBranch) => void;
   onOpenGraph: (checkpointId: string, stepId: string) => void;
   onOpenData: () => void;
   onRenameBranch: (id: string, name: string) => Promise<void>;
@@ -268,7 +271,7 @@ export function ResearchMapPane({
         <div className="panel-title"><strong>Карта хода</strong><span>{model.branches.length} вариантов · {model.steps.length} шагов</span></div>
         <div className="side-pane-tabs" aria-label="Раздел правой панели">
           <button type="button" className="is-on">Карта</button>
-          <button type="button" disabled={!dataCheckpointId} title={dataCheckpointId ? "Вернуться к фактам" : "Откройте факты из нужного шага"} onClick={onOpenData}>Факты</button>
+          <button type="button" disabled={!dataCheckpointId} title={dataCheckpointId ? "Вернуться к данным" : "Откройте данные из нужного шага"} onClick={onOpenData}>Данные</button>
         </div>
         <button type="button" className="icon-btn" onClick={onClose} aria-label="Скрыть карту"><IconClose /></button>
       </header>}
@@ -333,7 +336,7 @@ export function ResearchMapPane({
                         <button type="submit" disabled={!name.trim()}>✓</button>
                       </form>
                     ) : (
-                      <><i /><span>{visibleBranchName(branch, lane)}</span><small>{branch.mode === "staged" ? "с планом" : "сразу"}</small><button type="button" onClick={() => { setEditingId(branch.id); setName(visibleBranchName(branch, lane)); }} aria-label={`Переименовать ${visibleBranchName(branch, lane)}`} title="Переименовать вариант"><IconEdit /></button></>
+                      <><i /><span>{visibleBranchName(branch, lane)}</span><small>{MODE_LABELS[branch.mode]}</small><button type="button" onClick={() => { setEditingId(branch.id); setName(visibleBranchName(branch, lane)); }} aria-label={`Переименовать ${visibleBranchName(branch, lane)}`} title="Переименовать вариант"><IconEdit /></button></>
                     ))}
                   </div>
                   <article
@@ -350,7 +353,7 @@ export function ResearchMapPane({
                     <header><span>Вопрос {step.displayNo}</span>{step.unitNos.length > 0 && <b>+{step.unitNos.length} {step.unitNos.length === 1 ? "цепочка" : "цепочек"}</b>}</header>
                     <strong>{step.question.preview || "Вопрос без текста"}</strong>
                     <p className={!step.answer?.preview ? "is-muted" : ""}>{step.answer?.preview || (step.answer?.status === "streaming" ? "Ассистент отвечает…" : "Ответ ещё не сформирован")}</p>
-                    <footer><span>{step.answer?.status === "error" ? "Ошибка" : step.answer?.status === "streaming" ? "В работе" : "Готово"}</span>{step.graphCheckpointId && step.graphUnitCount > 0 && <button type="button" onClick={(event) => { event.stopPropagation(); onSelectStep(step.branchId, step); onOpenGraph(step.graphCheckpointId!, step.id); }}><IconGraph /> Факты</button>}</footer>
+                    <footer><span>{step.answer?.status === "error" ? "Ошибка" : step.answer?.status === "streaming" ? "В работе" : "Готово"}</span>{step.graphCheckpointId && step.graphUnitCount > 0 && <button type="button" onClick={(event) => { event.stopPropagation(); onSelectStep(step.branchId, step); onOpenGraph(step.graphCheckpointId!, step.id); }}><IconGraph /> Данные</button>}</footer>
                   </article>
                 </div>
               );
@@ -362,10 +365,24 @@ export function ResearchMapPane({
               const lane = model.branchOrder.get(branch.id) || 0;
               const row = (model.rowByStep.get(parent.id) || 0) + 1;
               const color = BRANCH_COLORS[lane % BRANCH_COLORS.length];
+              const isSelected = activeBranchId === branch.id && !selectedStepId;
+              const label = visibleBranchName(branch, lane);
               return (
-                <div key={branch.id} className="research-empty-grid-cell" style={{ left: `${CANVAS_LEFT + lane * COLUMN_PITCH}px`, top: `${CANVAS_TOP + row * ROW_PITCH}px`, "--branch-color": color, "--step-card-width": `${CARD_WIDTH}px` } as CSSProperties}>
-                  <div className="research-grid-branch-label"><i /><span>{visibleBranchName(branch, lane)}</span><small>{branch.mode === "staged" ? "с планом" : "сразу"}</small></div>
-                  <div className="research-empty-node">Вариант создан — сообщений пока нет</div>
+                <div key={branch.id} className={`research-empty-grid-cell ${isSelected ? "is-selected" : ""}`} style={{ left: `${CANVAS_LEFT + lane * COLUMN_PITCH}px`, top: `${CANVAS_TOP + row * ROW_PITCH}px`, "--branch-color": color, "--step-card-width": `${CARD_WIDTH}px` } as CSSProperties}>
+                  <div className="research-grid-branch-label"><i /><span>{label}</span><small>{MODE_LABELS[branch.mode]}</small></div>
+                  <article
+                    className="research-empty-node"
+                    tabIndex={0}
+                    role="treeitem"
+                    aria-current={isSelected ? "step" : undefined}
+                    aria-label={`Открыть вариант «${label}»: сообщений пока нет`}
+                    onClick={() => onSelectEmptyBranch(branch)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      onSelectEmptyBranch(branch);
+                    }}
+                  >Вариант создан — сообщений пока нет</article>
                 </div>
               );
             })}

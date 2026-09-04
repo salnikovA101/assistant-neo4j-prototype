@@ -45,14 +45,14 @@ export function AgendaDrawer({
         title={locked ? "Дождитесь окончания ответа" : "Изменить статус исследовательского вопроса"}
       >
         <option value="not_closed">Не закрыт</option>
-        <option value="partial">Частично</option>
+        <option value="partial">Закрыт частично</option>
         <option value="closed">Закрыт</option>
       </select>
       <div>
         <strong>Пункт {directionNo(item, index + 1)}</strong>
         <p>{item.text}</p>
-        <span>{item.unitCount === 1 ? "1 цепочка" : `${item.unitCount} цепочек`}</span>
-        <span className={`agenda-coverage is-${item.status}`}>{item.status === "closed" ? "Закрыт" : item.status === "partial" ? "Закрыт частично" : "Не закрыт"}</span>
+        <span className="agenda-chain-count">{item.unitCount === 1 ? "1 цепочка" : `${item.unitCount} цепочек`}</span>
+        <span className={`agenda-coverage is-${item.status}`}><i aria-hidden="true">{item.status === "closed" ? "✓" : item.status === "partial" ? "◐" : "○"}</i>{item.status === "closed" ? "Закрыт" : item.status === "partial" ? "Закрыт частично" : "Не закрыт"}</span>
         {item.statusReason && <span className="agenda-reason">{item.statusReason}</span>}
         <span className="agenda-origin">{item.statusOrigin === "assistant" ? "Оценил ассистент" : item.statusOrigin === "user" ? "Изменено вами" : "Исходный статус"}</span>
         {item.reviewRecommended && item.status !== "closed" && <em>Пора уточнить</em>}

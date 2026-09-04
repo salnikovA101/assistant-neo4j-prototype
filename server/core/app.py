@@ -43,6 +43,7 @@ from server.core.http_api import (
     login_attempt_limiter,
     session_id_from_request,
     set_account_session_cookie,
+    ui_cache_control_middleware,
     ui_auth_middleware,
 )
 from server.core.pipeline import ServerPipeline
@@ -850,6 +851,7 @@ app = FastAPI(title="Voice Assistant Server", lifespan=lifespan)
 # Last added middleware runs first. Auth inner, CORS outer so 401 gets CORS headers.
 app.add_middleware(BaseHTTPMiddleware, dispatch=ui_auth_middleware)
 app.add_middleware(BaseHTTPMiddleware, dispatch=_feature_flag_middleware)
+app.add_middleware(BaseHTTPMiddleware, dispatch=ui_cache_control_middleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=CORS_ORIGIN_RE,

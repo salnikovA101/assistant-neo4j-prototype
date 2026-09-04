@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GraphCollectionItem, GraphFacetItem, GraphFacets, GraphFilters, GraphPayload } from "../types";
 import { fetchGraphExpand, fetchGraphExplore, fetchGraphFacets, fetchGraphSchema } from "../api";
 import { GraphCanvas, type GraphAppendEvent, type GraphExpansionUi } from "./GraphCanvas";
-import { tripletCaption } from "../format";
+import { visibleTripletCaption } from "../uiLabels";
 
 const DEFAULT_LIMIT = 100;
 const MIN_LIMIT = 1;
@@ -38,14 +38,14 @@ function collectionDraft(items: GraphCollectionItem[]): string {
     for (const item of nodes) lines.push(`- ${item.node.group}: ${item.node.caption || item.node.label || item.node.id}`);
   }
   if (edges.length) {
-    lines.push("", "Доказательные факты:");
+    lines.push("", "Данные по связям:");
     for (const item of edges) {
       const edge = item.edge;
-      lines.push(`- ${tripletCaption(edge)}`);
+      lines.push(`- ${visibleTripletCaption(edge)}`);
       const evidence = String(edge.properties?.evidence || "").trim();
       const source = String(edge.properties?.source_file || "").trim();
       const confidence = edge.properties?.confidence;
-      if (evidence) lines.push(`  Evidence: ${evidence}`);
+      if (evidence) lines.push(`  Данные: ${evidence}`);
       if (source) lines.push(`  Источник: ${source}`);
       if (confidence != null && confidence !== "") lines.push(`  Уверенность экстракции: ${Number(confidence).toFixed(2)}`);
     }
@@ -60,11 +60,8 @@ export function Explorer({ onUseCollection }: { onUseCollection?: (draft: string
   const [payload, setPayload] = useState<GraphPayload | null>(null);
   const [facets, setFacets] = useState<GraphFacets | null>(null);
   const [schema, setSchema] = useState<{ nodeLabels: string[]; relationshipTypes: string[] }>({ nodeLabels: [], relationshipTypes: [] });
-  const [filtersOpen, setFiltersOpen] = useState(false);
   const [sourceQuery, setSourceQuery] = useState("");
   const [sourceBusy, setSourceBusy] = useState(false);
-  const [focusEdgeId, setFocusEdgeId] = useState("");
-  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [layoutRevision, setLayoutRevision] = useState(0);
@@ -93,7 +90,6 @@ export function Explorer({ onUseCollection }: { onUseCollection?: (draft: string
     const timer = window.setTimeout(() => {
       if (!q.trim() && !hasFilters(filters)) {
         setPayload(null);
-        setFocusEdgeId("");
         setExpansionByNode({});
         setAppendEvent(null);
         setLayoutRevision((value) => value + 1);
@@ -105,7 +101,6 @@ export function Explorer({ onUseCollection }: { onUseCollection?: (draft: string
       void fetchGraphExplore(q, limit, "all", "", filters).then((next) => {
         if (!alive) return;
         setPayload(next);
-        setFocusEdgeId("");
         setExpansionByNode({});
         setAppendEvent(null);
         setLayoutRevision((value) => value + 1);
@@ -114,9 +109,6 @@ export function Explorer({ onUseCollection }: { onUseCollection?: (draft: string
     }, 280);
     return () => { alive = false; window.clearTimeout(timer); };
   }, [filters, limit, q]);
-
-  const suggestions = payload?.all.edges.slice(0, 12) || [];
-  const closeSuggestions = useCallback(() => setSuggestionsOpen(false), []);
 
   const expandNode = useCallback((nodeId: string, direction: "all" | "incoming" | "outgoing") => {
     const currentPayload = payload;
@@ -188,21 +180,13 @@ export function Explorer({ onUseCollection }: { onUseCollection?: (draft: string
       <div className="edge-search-wrap">
         <input
           value={q}
-          onChange={(event) => { setQ(event.target.value); setSuggestionsOpen(true); }}
-          onFocus={() => setSuggestionsOpen(true)}
-          onKeyDown={(event) => { if (event.key === "Escape") setSuggestionsOpen(false); }}
-          placeholder="Например: kefir, Lactobacillus, GABA, 37 °C"
+          onChange={(event) => setQ(event.target.value)}
+          placeholder="Search entities, relations, or evidence in English"
           aria-label="Поиск по всей базе по английским именам и evidence"
-          aria-describedby="explorer-search-lang-hint"
           autoFocus
         />
-        <p id="explorer-search-lang-hint" className="search-lang-hint">Имена в базе английские.</p>
-        {suggestionsOpen && q.trim() && suggestions.length > 0 && <div className="edge-suggestions" role="listbox" aria-label="Найденные связи">
-          {suggestions.map((edge) => <button key={edge.id} type="button" onClick={() => { setFocusEdgeId(edge.id); setSuggestionsOpen(false); }}><strong>{tripletCaption(edge)}</strong>{Boolean(edge.properties?.evidence) && <span>{String(edge.properties.evidence)}</span>}</button>)}
-        </div>}
       </div>
-      <button type="button" className={`explorer-filter-btn ${filtersOpen ? "is-on" : ""}`} onClick={() => setFiltersOpen((value) => !value)} aria-expanded={filtersOpen}>Фильтры{activeFilterCount ? ` ${activeFilterCount}` : ""}</button>
-      <label className="explorer-limit" title={`Сколько связей показать, от ${MIN_LIMIT} до ${MAX_LIMIT}`}><span>Связей</span><input type="number" min={MIN_LIMIT} max={MAX_LIMIT} step={1} inputMode="numeric" value={limitText} onChange={(event) => setLimitText(event.target.value)} onBlur={normalizeLimit} aria-label="Сколько связей показать" /></label>
+      <label className="explorer-limit" title={`Сколько связей показать, от ${MIN_LIMIT} до ${MAX_LIMIT}`}><span>Количество связей</span><input type="number" min={MIN_LIMIT} max={MAX_LIMIT} step={1} inputMode="numeric" value={limitText} onChange={(event) => setLimitText(event.target.value)} onBlur={normalizeLimit} aria-label="Сколько связей показать" /></label>
       {busy && <span className="search-spinner">поиск…</span>}
     </header>
     {activeFilterCount > 0 && <div className="active-filters">
@@ -215,31 +199,31 @@ export function Explorer({ onUseCollection }: { onUseCollection?: (draft: string
     {error && <p className="explorer-status is-error">{error}</p>}
     {(payload || facets) && !error && <p className="explorer-status">Показано связей: {payload?.all.edges.length || 0} из {facets?.matchingRelationships || 0} · сущностей: {facets?.matchingNodes || 0}</p>}
     <div className="explorer-content">
-      {filtersOpen && <aside className="graph-filter-panel">
-        <div className="filter-panel-head"><strong>Фильтры данных</strong><button type="button" onClick={() => setFiltersOpen(false)} aria-label="Закрыть фильтры">×</button></div>
-        <FacetSection title="Тип сущности" items={nodeFacets} selected={filters.node_labels} onToggle={(value) => setFilters((current) => ({ ...current, node_labels: toggleValue(current.node_labels, value) }))} />
-        <FacetSection title="Тип отношения" items={relationshipFacets} selected={filters.relationship_types} onToggle={(value) => setFilters((current) => ({ ...current, relationship_types: toggleValue(current.relationship_types, value) }))} />
-        <section className="facet-section"><h3>Источник</h3><input className="facet-search" value={sourceQuery} onChange={(event) => setSourceQuery(event.target.value)} placeholder="Найти статью" />
-          <FacetList items={facets?.sources.items || []} selected={filters.sources} onToggle={(value) => setFilters((current) => ({ ...current, sources: toggleValue(current.sources, value) }))} />
-          {facets?.sources.hasMore && <button type="button" className="facet-more" disabled={sourceBusy} onClick={loadMoreSources}>{sourceBusy ? "Загрузка…" : "Показать ещё"}</button>}
-        </section>
-        <section className="facet-section"><h3>Качество данных</h3>
-          <p className="facet-note">В выборку попадают только связи с evidence.</p>
-          <label className="confidence-field"><span>уверенность экстракции ≥</span><input type="number" min="0" max="1" step="0.05" value={filters.min_confidence ?? ""} placeholder="без ограничения" aria-label="уверенность экстракции ≥" onChange={(event) => { const value = event.target.value; setFilters((current) => ({ ...current, min_confidence: value === "" ? null : Math.max(0, Math.min(1, Number(value))) })); }} /></label>
-        </section>
-      </aside>}
       <GraphCanvas
         payload={payload}
         viewId="all"
-        emptyHint={q.trim() || hasFilters(filters) ? "По всей базе не найдено подходящих данных." : "Наберите английское имя, фрагмент evidence или выберите фильтр."}
+        emptyHint={q.trim() || hasFilters(filters) ? "По всей базе не найдено подходящих данных." : "Введите английское название, тип связи или фрагмент данных."}
         hideSearch
-        focusEdgeId={focusEdgeId}
         layoutKey={`explorer:${layoutRevision}`}
         appendEvent={appendEvent}
         expansionByNode={expansionByNode}
-        onCanvasInteraction={closeSuggestions}
         onExpandNode={expandNode}
         onUseCollection={onUseCollection ? (items) => onUseCollection(collectionDraft(items)) : undefined}
+        workspaceMode
+        resultEdges={payload?.all.edges || []}
+        activeFilterCount={activeFilterCount}
+        filtersContent={<>
+          <FacetSection title="Тип сущности" items={nodeFacets} selected={filters.node_labels} onToggle={(value) => setFilters((current) => ({ ...current, node_labels: toggleValue(current.node_labels, value) }))} />
+          <FacetSection title="Тип отношения" items={relationshipFacets} selected={filters.relationship_types} onToggle={(value) => setFilters((current) => ({ ...current, relationship_types: toggleValue(current.relationship_types, value) }))} />
+          <section className="facet-section"><h3>Источник</h3><input className="facet-search" value={sourceQuery} onChange={(event) => setSourceQuery(event.target.value)} placeholder="Найти статью" />
+            <FacetList items={facets?.sources.items || []} selected={filters.sources} onToggle={(value) => setFilters((current) => ({ ...current, sources: toggleValue(current.sources, value) }))} />
+            {facets?.sources.hasMore && <button type="button" className="facet-more" disabled={sourceBusy} onClick={loadMoreSources}>{sourceBusy ? "Загрузка…" : "Показать ещё"}</button>}
+          </section>
+          <section className="facet-section" title="Порог уверенности извлечения связи; это не оценка истинности данных"><h3>Минимальная уверенность экстракции</h3>
+            <label className="confidence-field"><input type="number" min="0" max="1" step="0.05" value={filters.min_confidence ?? ""} placeholder="Без ограничения" aria-label="Минимальная уверенность экстракции" onChange={(event) => { const value = event.target.value; setFilters((current) => ({ ...current, min_confidence: value === "" ? null : Math.max(0, Math.min(1, Number(value))) })); }} /></label>
+          </section>
+          {activeFilterCount > 0 && <button type="button" className="filter-reset" onClick={() => setFilters(EMPTY_FILTERS)}>Сбросить всё</button>}
+        </>}
       />
     </div>
   </div>;

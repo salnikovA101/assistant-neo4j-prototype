@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  archiveCard, archiveCardTemplate, attachCard, createCardTemplate,
+  archiveCard, archiveCardTemplate, createCardTemplate,
   createCardTemplateVersion, fetchCards, fetchCardTemplates, importCardDraft,
   reviseCard, saveCardDraft, updateCardDraft,
 } from "../api";
@@ -8,6 +8,7 @@ import { blankData, fallbackSchemaForData } from "../cardModel";
 import type { CardDraft, CardTemplate, SavedCard } from "../types";
 import { CardTemplateBuilder, type TemplateBuilderValue } from "./CardTemplateBuilder";
 import { CardVisual } from "./CardVisual";
+import { IconTrash } from "./Icons";
 
 function templateForVersion(templates: CardTemplate[], versionId: string): CardTemplate | undefined {
   return templates.find((item) => item.latestVersion.id === versionId);
@@ -87,12 +88,11 @@ function SavedCardEditor({ card, template, busy, onCancel, onSave }: {
 }
 
 export function CardsWorkspace({
-  checkpointId, branchId, onCheckpoint, onNotice, chatMode = false,
+  checkpointId, branchId, onNotice, chatMode = false,
   onGenerate, onInsert, onClose, initialTab = "templates",
 }: {
   checkpointId: string;
   branchId: string;
-  onCheckpoint: (id: string) => void;
   onNotice: (text: string) => void;
   chatMode?: boolean;
   onGenerate?: (templateVersionId: string) => void;
@@ -114,10 +114,17 @@ export function CardsWorkspace({
     const [nextTemplates, nextCards] = await Promise.all([fetchCardTemplates(), fetchCards()]);
     setTemplates(nextTemplates); setCards(nextCards);
     setSelectedTemplate((current) => current && nextTemplates.some((item) => item.latestVersion.id === current)
-      ? current : nextTemplates[0]?.latestVersion.id || "");
+      ? current : "");
   };
   useEffect(() => { void reload().catch((error: Error) => onNotice(error.message)); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setTab(initialTab); }, [initialTab]);
+  useEffect(() => {
+    // Keep the detail pane useful on first open.  Both the full workspace and
+    // the compact chat pane should show the first available template instead
+    // of an empty "Выберите шаблон" state; the user can still switch templates
+    // explicitly from the list.
+    if (!selectedTemplate && templates[0]) setSelectedTemplate(templates[0].latestVersion.id);
+  }, [selectedTemplate, tab, templates]);
   const template = useMemo(() => templateForVersion(templates, selectedTemplate), [templates, selectedTemplate]);
   const draftTemplate = draft ? templateForVersion(templates, draft.templateVersionId) : undefined;
 
@@ -167,12 +174,13 @@ export function CardsWorkspace({
                   <div className="template-actions">
                     {chatMode && onGenerate && <button type="button" className="primary-btn" disabled={busy} onClick={() => onGenerate(template.latestVersion.id)}>Создать</button>}
                     {!chatMode && <button type="button" className="ghost-btn" onClick={() => setEditor("edit")}>Изменить</button>}
-                    {!chatMode && <button className="ghost-btn danger-btn" disabled={busy} onClick={async () => {
+                    {!chatMode && !template.system && <button type="button" className="delete-icon-btn" aria-label="Удалить шаблон" title="Удалить шаблон" disabled={busy} onClick={async () => {
+                      if (!window.confirm(`Удалить шаблон «${template.name}»?`)) return;
                       setBusy(true);
                       try { await archiveCardTemplate(template.id); setSelectedTemplate(""); await reload(); onNotice("Шаблон удалён."); }
                       catch (error) { onNotice(error instanceof Error ? error.message : "Не удалось удалить шаблон"); }
                       finally { setBusy(false); }
-                    }}>Удалить</button>}
+                    }}><IconTrash /></button>}
                   </div>
                 </div>
                 <CardVisual templateName={template.name} version={template.latestVersion.version} schema={template.latestVersion.schema} ui={template.latestVersion.ui} data={blankData(template.latestVersion.schema)} status="Шаблон" />
@@ -186,14 +194,24 @@ export function CardsWorkspace({
                   finally { setBusy(false); }
                 }} />}
               </>
-            ) : <p className="muted">Выберите шаблон.</p>}
+            ) : <div className="cards-empty-state">{templates.length
+              ? <><strong>Выберите шаблон</strong><p>Слева находятся встроенные и личные шаблоны. Откройте нужный, чтобы посмотреть поля или начать заполнение.</p></>
+              : <><strong>Шаблонов пока нет</strong><p>{chatMode ? "Встроенные шаблоны появятся здесь, когда карточки будут доступны." : "Создайте личный шаблон кнопкой «+ Новый шаблон»."}</p></>
+            }</div>}
           </div>
         </div>
       ) : (
         <div className="library-shell">
           {!chatMode && <div className="library-tools">
             <label className="ghost-btn">Импорт JSON<input type="file" accept="application/json,.json" hidden onChange={async (event) => {
-              const file = event.target.files?.[0]; if (!file || !selectedTemplate) return; setBusy(true);
+              const file = event.target.files?.[0];
+              if (!file) return;
+              if (!selectedTemplate) {
+                onNotice("Сначала выберите шаблон на вкладке «Шаблоны».");
+                event.target.value = "";
+                return;
+              }
+              setBusy(true);
               try {
                 const parsed = JSON.parse(await file.text()); const objects = Array.isArray(parsed) ? parsed : [parsed];
                 if (!objects.length || objects.some((item) => !item || typeof item !== "object" || Array.isArray(item))) throw new Error("JSON должен содержать object или непустой array объектов");
@@ -204,7 +222,7 @@ export function CardsWorkspace({
             }} /></label>
           </div>}
           <div className="library-grid">
-            {cards.length === 0 && <p className="muted">Сохранённых карточек пока нет.</p>}
+            {cards.length === 0 && <div className="cards-empty-state"><strong>Сохранённых карточек пока нет</strong><p>Откройте диалог, нажмите <code>+</code> у поля сообщения и выберите «Открыть карточки».</p></div>}
             {cards.map((card) => {
               const cardTemplate = templateForVersion(templates, card.templateVersionId);
               if (editingCardId === card.id) return <SavedCardEditor key={card.id} card={card} template={cardTemplate} busy={busy} onCancel={() => setEditingCardId("")} onSave={async (data, editedFields, title) => {
@@ -216,13 +234,15 @@ export function CardsWorkspace({
               return <article key={card.id} className="library-card">
                 <CardVisual templateName={cardTemplate?.name || card.template?.name || "Карточка"} version={cardTemplate?.latestVersion.version || card.template?.version} schema={cardTemplate?.latestVersion.schema || card.template?.schema || fallbackSchemaForData(card.latestRevision.data)} ui={cardTemplate?.latestVersion.ui || card.template?.ui || {}} data={{ ...card.latestRevision.data, title: card.title }} provenance={card.latestRevision.provenance} status={`Правка ${card.latestRevision.revision}`} />
                 <footer>
-                  <button className="ghost-btn" disabled={!branchId || !checkpointId || busy} onClick={async () => {
-                    if (chatMode && onInsert) { onInsert(card); return; } setBusy(true);
-                    try { const result = await attachCard(branchId, checkpointId, card.latestRevision.id); onCheckpoint(result.checkpointId); onNotice("Карточка прикреплена к варианту."); }
-                    catch (error) { onNotice(error instanceof Error ? error.message : "Ошибка прикрепления"); } finally { setBusy(false); }
-                  }}>{chatMode ? "Вставить в диалог" : "Прикрепить к варианту"}</button>
+                  {chatMode && onInsert && <button className="primary-btn" disabled={!branchId || !checkpointId || busy} onClick={() => onInsert(card)}>Вставить в диалог</button>}
                   {!chatMode && <button className="ghost-btn" onClick={() => setEditingCardId(card.id)}>Изменить</button>}
-                  {!chatMode && <button className="ghost-btn danger-btn" onClick={async () => { await archiveCard(card.id); await reload(); }}>Убрать</button>}
+                  {!chatMode && <button type="button" className="ghost-btn danger-btn" disabled={busy} onClick={async () => {
+                    if (!window.confirm(`Убрать карточку «${card.title}» из библиотеки?`)) return;
+                    setBusy(true);
+                    try { await archiveCard(card.id); await reload(); onNotice("Карточка убрана из библиотеки."); }
+                    catch (error) { onNotice(error instanceof Error ? error.message : "Не удалось убрать карточку"); }
+                    finally { setBusy(false); }
+                  }}>Удалить</button>}
                 </footer>
               </article>;
             })}

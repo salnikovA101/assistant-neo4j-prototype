@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import RedirectResponse
+from starlette.responses import JSONResponse, RedirectResponse
 
 from server.core.http_api import (
     CORS_ORIGIN_RE,
@@ -28,6 +28,7 @@ from server.core.http_api import (
     request_is_ui_authenticated,
     session_token_ok,
     set_ui_session_cookie,
+    ui_cache_control_middleware,
     ui_auth_middleware,
     ui_basic_configured,
     ui_basic_ok,
@@ -420,6 +421,28 @@ def test_chat_html_uses_mobile_safe_viewport():
     assert "100dvh" in css
     assert "safe-area-inset-top" in css
     assert "safe-area-inset-bottom" in css
+
+
+def test_stable_ui_assets_are_not_cached_across_rebuilds():
+    app = FastAPI()
+    app.add_middleware(BaseHTTPMiddleware, dispatch=ui_cache_control_middleware)
+
+    @app.get("/ui/assets/index.js")
+    async def stable_script():
+        return JSONResponse({"ok": True})
+
+    @app.get("/ui/assets/font-hash.woff2")
+    async def hashed_font():
+        return JSONResponse({"ok": True})
+
+    @app.get("/api/example")
+    async def api_response():
+        return JSONResponse({"ok": True})
+
+    with TestClient(app) as client:
+        assert client.get("/ui/assets/index.js").headers["cache-control"] == "no-store"
+        assert "cache-control" not in client.get("/ui/assets/font-hash.woff2").headers
+        assert "cache-control" not in client.get("/api/example").headers
 
 
 def test_browser_ui_redirects_to_login():

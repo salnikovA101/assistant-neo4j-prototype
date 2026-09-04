@@ -53,6 +53,7 @@ import type {
   ConversationSummary,
   PendingApproval,
   ResearchStep,
+  ResearchBranch,
   SearchDepth,
   SavedCard,
   TurnFailure,
@@ -180,12 +181,14 @@ function PanelResizer({
   );
 }
 
+const GRAPH_PANEL_MIN = 380;
+
 export function App() {
   const [config, setConfig] = useState<UiConfig | null>(null);
   const [health, setHealth] = useState("…");
   const [collapsed, setCollapsed] = useState(() => window.innerWidth <= 680);
   const [sidebarWidth, setSidebarWidth] = useState(252);
-  const [graphWidth, setGraphWidth] = useState(520);
+  const [graphWidth, setGraphWidth] = useState(432);
   const [sessions, setSessions] = useState<ConversationSummary[]>([]);
   const [currentId, setCurrentId] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -222,6 +225,7 @@ export function App() {
   const [mode, setMode] = useState<"auto" | "staged">("staged");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [qwenKeyDraft, setQwenKeyDraft] = useState("");
+  const [qwenKeyInputUnlocked, setQwenKeyInputUnlocked] = useState(false);
   const [helpSection, setHelpSection] = useState("");
   const [hasUserKey, setHasUserKey] = useState(() => Boolean(getLlmKey()));
   const [recording, setRecording] = useState(false);
@@ -233,6 +237,10 @@ export function App() {
   const liveTurnRef = useRef(false);
   const mediaRef = useRef<MediaRecorder | null>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setQwenKeyInputUnlocked(false);
+  }, [settingsOpen]);
 
   const current = sessions.find((item) => item.id === currentId);
   const currentBranch = branches.find((item) => item.id === branchId);
@@ -251,7 +259,7 @@ export function App() {
   const effortOptions =
     model?.reasoning_effort_options || config?.reasoning_effort_options || [];
   const maxGraphWidth = Math.max(
-    360,
+    GRAPH_PANEL_MIN,
     window.innerWidth - (collapsed ? 64 : sidebarWidth) - 320
   );
 
@@ -498,7 +506,7 @@ export function App() {
     }
     const sourceBranch = branches.find((item) => item.id === activeBranchId);
     if (sourceBranch?.mode === "auto" && mode === "staged") {
-      setNotice("Режим с планом начинается в новом чате. Этот вариант остаётся консультацией.");
+      setNotice("Исследование начинается в новом чате. Этот вариант остаётся быстрым ответом.");
       return;
     }
     if (sourceBranch?.mode === "staged" && mode === "auto") {
@@ -516,7 +524,7 @@ export function App() {
         setHeadCheckpointId(baseCheckpointId);
         setRightPanel({ kind: "closed" });
       } catch (err) {
-        setNotice(err instanceof Error ? err.message : "Не удалось открыть вариант «Ответ сразу»");
+        setNotice(err instanceof Error ? err.message : "Не удалось открыть вариант «Быстрый ответ»");
         return;
       }
     }
@@ -967,7 +975,7 @@ export function App() {
   ) {
     if (!branchId || !headCheckpointId) return;
     if (activeBranchMode !== "staged") {
-      setNotice("Исследовательские вопросы доступны только в режиме «С планом».");
+      setNotice("Исследовательские вопросы доступны только в режиме «Исследование».");
       return;
     }
     if (pendingApproval) {
@@ -1115,6 +1123,23 @@ export function App() {
     if (currentId) setLastResearchTabs((tabs) => ({ ...tabs, [currentId]: nextTab }));
   }
 
+  function selectEmptyBranch(branch: ResearchBranch) {
+    const checkpointId = branch.headCheckpointId || branch.createdFromCheckpointId || "";
+    setSelectedResearchStep(null);
+    setRequestedCheckpointId("");
+    setBranchId(branch.id);
+    if (checkpointId) {
+      setHeadCheckpointId(checkpointId);
+      setViewCheckpointId(checkpointId);
+    }
+    if (branch.mode) {
+      setMode(branch.mode);
+      localStorage.setItem("retrieval_mode", branch.mode);
+    }
+    setComposerFocusKey((value) => value + 1);
+    if (window.innerWidth <= 900) setRightPanel({ kind: "closed" });
+  }
+
   function selectResearchStep(nextBranchId: string, step: ResearchStep) {
     const checkpointId = step.resumeCheckpointId || step.answerCheckpointId || "";
     if (!checkpointId) return;
@@ -1172,6 +1197,7 @@ export function App() {
         onSettings={() => setSettingsOpen((value) => !value)}
         onLogout={() => void logout()}
         keyWarning={!hasUserKey}
+        activeWorkspace={workspace}
       />
       {!collapsed && (
         <PanelResizer
@@ -1185,14 +1211,14 @@ export function App() {
       <div className="main-col">
         <header className="topbar">
           <div className="topbar-title">
-            <span>{workspace === "graph" ? "Вся база" : workspace === "library" ? "Статьи" : workspace === "help" ? "Справка" : workspace === "cards" ? "Карточки" : current?.title || "Новый чат"}</span>
+            <span>{workspace === "graph" ? "Вся база" : workspace === "library" ? "Статьи · Скоро" : workspace === "help" ? "Помощь" : workspace === "cards" ? "Карточки" : current?.title || "Новый чат"}</span>
             {workspace === "chat" && branches.length > 0 && (
               <BranchMenu
                 branches={branches}
                 activeId={branchId}
                 open={rightPanel.kind === "research"}
                 openDirections={stagedAgendaActive ? openDirectionCount : 0}
-                onOpen={() => rightPanel.kind === "research" ? setRightPanel({ kind: "closed" }) : openResearch()}
+                onOpen={() => rightPanel.kind === "research" ? setRightPanel({ kind: "closed" }) : openResearch("map")}
               />
             )}
           </div>
@@ -1228,6 +1254,12 @@ export function App() {
                 </button>
                 <span> — или спросите у ассистента, он сам расскажет</span>
               </p>
+            </div>
+          )}
+          {empty && !hasUserKey && (
+            <div className="demo-access" role="status">
+              <span>Используется демонстрационный доступ</span>
+              <button type="button" onClick={() => setSettingsOpen(true)}>Настроить</button>
             </div>
           )}
           {viewCheckpointId && headCheckpointId && viewCheckpointId !== headCheckpointId && selectedResearchStep && (
@@ -1277,8 +1309,7 @@ export function App() {
             branchMode={activeBranchMode}
             cardsEnabled={config?.cards_enabled !== false}
             cardActionsEnabled={Boolean(headCheckpointId && currentId && !pendingApproval && !busy)}
-            onOpenCardTemplates={() => setRightPanel({ kind: "cards", tab: "templates" })}
-            onOpenCardLibrary={() => setRightPanel({ kind: "cards", tab: "library" })}
+            onOpenCards={() => setRightPanel({ kind: "cards", tab: "templates" })}
             focusKey={composerFocusKey}
           />
           </div>
@@ -1295,7 +1326,7 @@ export function App() {
             <LibraryWorkspace />
           </Suspense>
         ) : workspace === "help" ? (
-          <Suspense fallback={<p className="explorer-status">Загрузка справки…</p>}>
+          <Suspense fallback={<p className="explorer-status">Загрузка помощи…</p>}>
             <HelpWorkspace focusHeading={helpSection} />
           </Suspense>
         ) : (
@@ -1303,7 +1334,6 @@ export function App() {
             <CardsWorkspace
               checkpointId={headCheckpointId}
               branchId={branchId}
-              onCheckpoint={setHeadCheckpointId}
               onNotice={setNotice}
             />
           </Suspense>
@@ -1313,7 +1343,7 @@ export function App() {
         <PanelResizer
           side="graph"
           value={graphWidth}
-          min={360}
+          min={GRAPH_PANEL_MIN}
           max={maxGraphWidth}
           onChange={setGraphWidth}
         />
@@ -1337,6 +1367,7 @@ export function App() {
                 refreshKey={researchMapRefresh}
                 dataCheckpointId={rightPanel.checkpointId || lastGraphCheckpointId}
                 onSelectStep={selectResearchStep}
+                onSelectEmptyBranch={selectEmptyBranch}
                 onOpenGraph={(checkpointId) => openResearch("data", checkpointId)}
                 onOpenData={() => openResearch("data")}
                 onRenameBranch={handleRenameBranch}
@@ -1352,7 +1383,7 @@ export function App() {
               onStatus={(item, status) => mutateAgenda("set_status", { sq_ref: item.ref, status })}
             />
           ) : checkpointGraphId ? (
-            <Suspense fallback={<p className="explorer-status">Загрузка фактов…</p>}>
+            <Suspense fallback={<p className="explorer-status">Загрузка данных…</p>}>
               <GraphPane
                 checkpointId={checkpointGraphId}
                 onClose={() => setRightPanel({ kind: "closed" })}
@@ -1360,7 +1391,7 @@ export function App() {
                 embedded
               />
             </Suspense>
-          ) : <p className="explorer-status">В этом диалоге ещё нет фактов из базы.</p>}
+          ) : <p className="explorer-status">В этом диалоге ещё нет данных из базы.</p>}
         </ResearchPanelShell>
       )}
       {workspace === "chat" && rightPanel.kind === "cards" && (
@@ -1369,7 +1400,6 @@ export function App() {
             <CardsWorkspace
               checkpointId={headCheckpointId}
               branchId={branchId}
-              onCheckpoint={setHeadCheckpointId}
               onNotice={setNotice}
               chatMode
               initialTab={rightPanel.tab}
@@ -1395,9 +1425,23 @@ export function App() {
         <label className="key-field">
           <span>Qwen</span>
           <input
+            className="secure-key-input"
             type="password"
+            name="qwen-runtime-token"
+            autoComplete="new-password"
+            data-1p-ignore="true"
+            data-lpignore="true"
+            data-form-type="other"
+            spellCheck={false}
+            readOnly={!qwenKeyInputUnlocked}
+            onPointerDown={(event) => { event.currentTarget.readOnly = false; setQwenKeyInputUnlocked(true); }}
+            onKeyDown={(event) => { event.currentTarget.readOnly = false; setQwenKeyInputUnlocked(true); }}
+            onBlur={() => setQwenKeyInputUnlocked(false)}
             value={qwenKeyDraft}
-            onChange={(event) => setQwenKeyDraft(event.target.value)}
+            onChange={(event) => {
+              if (event.currentTarget.readOnly) { event.currentTarget.value = qwenKeyDraft; return; }
+              setQwenKeyDraft(event.target.value);
+            }}
             placeholder="из конфига сервера"
             aria-describedby={!hasUserKey ? "qwen-key-warning" : undefined}
           />

@@ -131,6 +131,73 @@ export function renderMarkdown(text: string, streaming = false): string {
   return DOMPurify.sanitize(raw);
 }
 
+export type AnswerMarkdownParts = {
+  bodyHtml: string;
+  sourcesHtml: string;
+  sourceCount: number;
+};
+
+function improveAnswerHtml(html: string): AnswerMarkdownParts {
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  const headings = Array.from(parsed.body.querySelectorAll<HTMLHeadingElement>("h1, h2, h3, h4, h5, h6"));
+
+  for (const heading of headings) {
+    if (heading.textContent?.trim().toUpperCase() === "GAPS") {
+      heading.textContent = "Пробелы в данных";
+    }
+  }
+
+  const sourcesHeading = headings.find((heading) => /^Источники(?:\s|$)/i.test(heading.textContent?.trim() || ""));
+  if (!sourcesHeading) return { bodyHtml: parsed.body.innerHTML, sourcesHtml: "", sourceCount: 0 };
+
+  const sourceNodes: ChildNode[] = [];
+  const sourcesLevel = Number(sourcesHeading.tagName.slice(1));
+  let next = sourcesHeading.nextSibling;
+  while (next) {
+    if (
+      next instanceof HTMLHeadingElement
+      && Number(next.tagName.slice(1)) <= sourcesLevel
+    ) {
+      break;
+    }
+    const current = next;
+    next = next.nextSibling;
+    sourceNodes.push(current);
+  }
+  if (!sourceNodes.some((node) => node.textContent?.trim())) {
+    return { bodyHtml: parsed.body.innerHTML, sourcesHtml: "", sourceCount: 0 };
+  }
+
+  const listItemCount = sourceNodes.reduce((count, node) => {
+    if (!(node instanceof Element)) return count;
+    return count + node.querySelectorAll("li").length;
+  }, 0);
+  const numberedSourceCount = sourceNodes.reduce(
+    (count, node) => count + (node.textContent?.match(/\[\d+\]/g)?.length || 0),
+    0,
+  );
+  const itemCount = listItemCount || numberedSourceCount;
+  const sources = parsed.createElement("div");
+  sources.append(...sourceNodes);
+  sourcesHeading.remove();
+  return {
+    bodyHtml: parsed.body.innerHTML,
+    sourcesHtml: sources.innerHTML,
+    sourceCount: itemCount,
+  };
+}
+
+export function renderAnswerMarkdown(text: string, streaming = false): AnswerMarkdownParts {
+  const rendered = renderMarkdown(text, streaming);
+  if (streaming) return { bodyHtml: rendered, sourcesHtml: "", sourceCount: 0 };
+  const improved = improveAnswerHtml(rendered);
+  return {
+    bodyHtml: DOMPurify.sanitize(improved.bodyHtml),
+    sourcesHtml: DOMPurify.sanitize(improved.sourcesHtml),
+    sourceCount: improved.sourceCount,
+  };
+}
+
 function unwrapMarkdownLikeFences(text: string): string {
   return text.replace(/```(?:markdown|md)?\s*\n([\s\S]*?)\n```/gi, (whole, body: string) => {
     const lines = body.split("\n");

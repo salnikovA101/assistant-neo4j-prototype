@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ConversationSummary } from "../types";
 import { formatRelativeTime } from "../format";
-import { IconCards, IconGraph, IconHelp, IconLibrary, IconLogout, IconPlus, IconSettings, IconSidebar } from "./Icons";
+import { IconCards, IconChat, IconGraph, IconHelp, IconLibrary, IconLogout, IconPlus, IconSettings, IconSidebar } from "./Icons";
 
 const RELATIVE_TICK_MS = 30_000;
 
@@ -23,6 +23,7 @@ export function Sidebar({
   onSettings,
   onLogout,
   keyWarning,
+  activeWorkspace,
 }: {
   collapsed: boolean;
   onToggle: () => void;
@@ -41,8 +42,17 @@ export function Sidebar({
   onSettings: () => void;
   onLogout: () => void;
   keyWarning: boolean;
+  activeWorkspace: "chat" | "graph" | "library" | "help" | "cards";
 }) {
   const [now, setNow] = useState(() => Date.now());
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historySearchUnlocked, setHistorySearchUnlocked] = useState(false);
+  const visibleSessions = useMemo(() => {
+    const query = historyQuery.trim().toLocaleLowerCase("ru-RU");
+    return query
+      ? sessions.filter((session) => session.title.toLocaleLowerCase("ru-RU").includes(query))
+      : sessions;
+  }, [historyQuery, sessions]);
   useEffect(() => {
     const tick = window.setInterval(() => setNow(Date.now()), RELATIVE_TICK_MS);
     return () => window.clearInterval(tick);
@@ -56,29 +66,49 @@ export function Sidebar({
         </button>
         {!collapsed && <span className="sidebar-brand">Neo4j Assistant</span>}
       </div>
-      <button type="button" className="sidebar-action sidebar-action-primary" onClick={onNewChat} title="Новый чат">
+      <button type="button" className={`sidebar-action sidebar-action-primary ${activeWorkspace === "chat" && !currentId ? "is-active" : ""}`} onClick={onNewChat} title="Новый чат">
         <IconPlus />
         {!collapsed && <span>Новый чат</span>}
       </button>
-      <button type="button" className="sidebar-action" onClick={onExplorer} title="Открыть всю базу">
+      <button type="button" className={`sidebar-action ${activeWorkspace === "graph" ? "is-active" : ""}`} onClick={onExplorer} title="Открыть всю базу">
         <IconGraph />
         {!collapsed && <span>Вся база</span>}
       </button>
-      <button type="button" className="sidebar-action" onClick={onLibrary} title="Открыть статьи">
+      <button type="button" className={`sidebar-action ${activeWorkspace === "library" ? "is-active" : ""}`} onClick={onLibrary} title="Открыть статьи">
         <IconLibrary />
-        {!collapsed && <span>Статьи</span>}
+        {!collapsed && <><span>Статьи</span><span className="sidebar-nav-badge">Скоро</span></>}
       </button>
-      {cardsEnabled && <button type="button" className="sidebar-action" onClick={onCards} title="Карточки">
+      {cardsEnabled && <button type="button" className={`sidebar-action ${activeWorkspace === "cards" ? "is-active" : ""}`} onClick={onCards} title="Карточки">
         <IconCards />
         {!collapsed && <span>Карточки</span>}
       </button>}
-      <button type="button" className="sidebar-action" onClick={onHelp} title="Открыть справку">
-        <IconHelp />
-        {!collapsed && <span>Справка</span>}
-      </button>
       <div className="sidebar-list" aria-label="История чатов">
+        {collapsed && sessions.length > 0 && <button type="button" className="sidebar-chat-launcher" onClick={onToggle} title="Показать чаты" aria-label="Показать чаты"><IconChat /></button>}
         {!collapsed && sessions.length > 0 && <p className="sidebar-section">Недавние</p>}
-        {sessions.map((session) => {
+        {!collapsed && (sessions.length > 6 || Boolean(historyQuery.trim())) && (
+          <input
+            className="sidebar-history-search"
+            type="search"
+            name="chat-history-filter"
+            autoComplete="off"
+            data-1p-ignore="true"
+            data-lpignore="true"
+            data-form-type="other"
+            spellCheck={false}
+            readOnly={!historySearchUnlocked}
+            onPointerDown={(event) => { event.currentTarget.readOnly = false; setHistorySearchUnlocked(true); }}
+            onKeyDown={(event) => { event.currentTarget.readOnly = false; setHistorySearchUnlocked(true); }}
+            onBlur={() => setHistorySearchUnlocked(false)}
+            value={historyQuery}
+            onChange={(event) => {
+              if (event.currentTarget.readOnly) { event.currentTarget.value = historyQuery; return; }
+              setHistoryQuery(event.target.value);
+            }}
+            placeholder="Поиск по чатам"
+            aria-label="Поиск по истории чатов"
+          />
+        )}
+        {!collapsed && visibleSessions.map((session) => {
           const relative = formatRelativeTime(session.updatedAt, now);
           return (
             <button
@@ -86,19 +116,20 @@ export function Sidebar({
               type="button"
               className={`sidebar-chat ${session.id === currentId ? "is-active" : ""}`}
               onClick={() => onOpenSession(session.id)}
-              title={collapsed ? `${session.title} · ${relative}` : session.title}
+              title={session.title}
             >
-              {collapsed ? (
-                <span className="chat-initial">{session.title.slice(0, 1)}</span>
-              ) : (
-                <>
-                  <span className="sidebar-chat-title">{session.title}</span>
-                  <span className="sidebar-chat-time">{relative}</span>
-                </>
-              )}
+              <span className="sidebar-chat-title">{session.title}</span>
+              <span className="sidebar-chat-time">{relative}</span>
             </button>
           );
         })}
+        {!collapsed && historyQuery && visibleSessions.length === 0 && <p className="sidebar-empty">Ничего не найдено</p>}
+      </div>
+      <div className="sidebar-bottom-nav">
+        <button type="button" className={`sidebar-action ${activeWorkspace === "help" ? "is-active" : ""}`} onClick={onHelp} title="Открыть помощь">
+          <IconHelp />
+          {!collapsed && <span>Помощь</span>}
+        </button>
       </div>
       <div className="sidebar-footer">
         {!collapsed && <span className="sidebar-user">{username}</span>}

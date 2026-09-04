@@ -3,6 +3,7 @@ import type { GraphPayload } from "../types";
 import { fetchCheckpointGraph } from "../api";
 import { GraphCanvas } from "./GraphCanvas";
 import { IconClose } from "./Icons";
+import { chainLabel } from "../uiLabels";
 
 export function GraphPane({
   checkpointId,
@@ -43,7 +44,7 @@ export function GraphPane({
   }, [checkpointId]);
 
   const views = payload?.views || [];
-  const title = payload?.mode === "staged" ? "Факты этого варианта" : "Факты этого ответа";
+  const title = payload?.mode === "staged" ? "Данные этого варианта" : "Данные этого ответа";
   const emptyHint = payload?.mode === "auto"
     ? "На этом шаге поиск ещё не выполнялся."
     : "В этом представлении нет связанных данных.";
@@ -63,7 +64,7 @@ export function GraphPane({
           <strong>{title}</strong>
           <span>{views.length ? `${views.length} ${views.length === 1 ? "цепочка" : "цепочек"}` : "связи этого шага"}</span>
         </div>
-        <div className="chain-nav" aria-label="Представление фактов">
+        <div className="chain-nav" aria-label="Представление данных">
           <button
             type="button"
             className={viewId === "all" ? "is-on" : ""}
@@ -77,16 +78,16 @@ export function GraphPane({
               type="button"
               className={`unit-tab ${viewId === view.id ? "is-on" : ""} ${view.is_new && payload?.mode === "staged" ? "has-new" : ""}`}
               onClick={() => setViewId(view.id)}
-              title={view.is_new && payload?.mode === "staged" ? "Новая цепочка этого шага" : view.label}
-              aria-label={view.is_new && payload?.mode === "staged" ? `${view.label}, новое` : view.label}
+              title={view.is_new && payload?.mode === "staged" ? "Новая цепочка этого шага" : chainLabel(view.label, view.unit_no)}
+              aria-label={view.is_new && payload?.mode === "staged" ? `${chainLabel(view.label, view.unit_no)}, новое` : chainLabel(view.label, view.unit_no)}
             >
-              <span>{view.label}</span>
+              <span>{chainLabel(view.label, view.unit_no)}</span>
               <small>{view.origin?.step_no ? `из вопроса ${view.origin.step_no}` : "источник не определён"}</small>
               {view.is_new && payload?.mode === "staged" && <span className="unit-new">новое</span>}
             </button>
           ))}
         </div>
-        {!embedded && <button type="button" className="icon-btn" onClick={onClose} aria-label="Скрыть факты"><IconClose /></button>}
+        {!embedded && <button type="button" className="icon-btn" onClick={onClose} aria-label="Скрыть данные"><IconClose /></button>}
       </header>
       {payload && views.length > 0 && (
         <div className="graph-origin-bar">
@@ -121,7 +122,7 @@ export function GraphPane({
         <button type="button" className="graph-back-map" onClick={onBackToMap}>← К карте хода</button>
       )}
       {error && <p className="explorer-status is-error">{error}</p>}
-      {!payload && !error && <p className="explorer-status">Загрузка фактов…</p>}
+      {!payload && !error && <p className="explorer-status">Загрузка данных…</p>}
       <GraphCanvas
         payload={payload}
         viewId={viewId}

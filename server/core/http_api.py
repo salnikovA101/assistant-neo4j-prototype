@@ -377,6 +377,18 @@ async def ui_auth_middleware(request: Request, call_next):
     return unauthenticated_response(request)
 
 
+async def ui_cache_control_middleware(request: Request, call_next):
+    """Force stable UI entry/chunk names to revalidate after a rebuild."""
+    response = await call_next(request)
+    path = request.url.path
+    stable_asset = path.startswith("/ui/assets/") and path.endswith((".js", ".css"))
+    if request.method in ("GET", "HEAD") and (
+        path in ("/ui", "/ui/") or stable_asset
+    ):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 async def build_health(pipeline: Any | None) -> tuple[int, dict[str, Any]]:
     """Neo4j connectivity + LLM object present. No live LLM roundtrip (UI polls)."""
     checks = {"pipeline": False, "llm": False, "neo4j": False}

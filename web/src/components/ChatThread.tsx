@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import type { AgendaItem, CardDraft, CardTemplate, ChatMessage, ChatStep, PendingApproval, TurnFailure } from "../types";
-import { prettyJson, renderMarkdown, renderReasoningMarkdown } from "../format";
+import { prettyJson, renderAnswerMarkdown, renderMarkdown, renderReasoningMarkdown } from "../format";
 import { blankData, fallbackSchemaForData } from "../cardModel";
 import { IconFork, IconGraph } from "./Icons";
 import { CardVisual } from "./CardVisual";
@@ -90,7 +90,7 @@ function streamLabel(msg: ChatMessage): string {
   const steps = stepsOf(msg);
   const runningTool = steps.find((step) => step.kind === "tool" && step.status === "running");
   if (runningTool?.kind === "tool" && runningTool.name === "get_service_guide") {
-    return "открывает справку…";
+    return "открывает помощь…";
   }
   if (runningTool) {
     return "поиск в базе…";
@@ -100,7 +100,7 @@ function streamLabel(msg: ChatMessage): string {
 }
 
 function toolLabel(name: string): string {
-  return name === "get_service_guide" ? "Справка сервиса" : "Поиск в базе";
+  return name === "get_service_guide" ? "Помощь сервиса" : "Поиск в базе";
 }
 
 function thinkIndex(steps: ChatStep[], index: number): number {
@@ -172,7 +172,7 @@ function TraceBundle({
               ) : (
                 step.status === "running" && (
                   <p className="muted">
-                    {step.name === "get_service_guide" ? "Загружаем справку…" : "Ждём данные из базы…"}
+                    {step.name === "get_service_guide" ? "Загружаем помощь…" : "Ждём данные из базы…"}
                   </p>
                 )
               )}
@@ -338,6 +338,7 @@ export function ChatThread({
   const threadRef = useRef<HTMLDivElement>(null);
   const followTailRef = useRef(true);
   const frameRef = useRef<number | null>(null);
+  const [openSourcesMessageId, setOpenSourcesMessageId] = useState<string | null>(null);
   const isStreaming = messages.some((message) => message.status === "streaming");
 
   useEffect(() => {
@@ -345,6 +346,14 @@ export function ChatThread({
     const target = document.getElementById(`message-${selectedMessageIds[selectedMessageIds.length - 1]}`);
     target?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [selectedMessageIds]);
+
+  useEffect(() => {
+    if (!openSourcesMessageId) return;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(`sources-${openSourcesMessageId}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [openSourcesMessageId]);
 
   useEffect(() => {
     const thread = threadRef.current;
@@ -405,6 +414,9 @@ export function ChatThread({
       ))}
       {messages.map((msg) => {
         const steps = stepsOf(msg);
+        const renderedAnswer = msg.role === "assistant" && msg.text
+          ? renderAnswerMarkdown(msg.text, msg.status === "streaming")
+          : null;
         return (
           <article
             id={`message-${msg.id}`}
@@ -455,7 +467,7 @@ export function ChatThread({
               <div
                 className="md"
                 dangerouslySetInnerHTML={{
-                  __html: renderMarkdown(msg.text, msg.status === "streaming"),
+                  __html: renderedAnswer?.bodyHtml || "",
                 }}
               />
             ) : (
@@ -467,33 +479,40 @@ export function ChatThread({
             {msg.cardDraft && (
               <InlineCardDraft draft={msg.cardDraft} template={templateForVersion(cardTemplates, msg.cardDraft.templateVersionId)} templateName={msg.cardTemplateName || "Карточка"} onSave={onSaveCard} />
             )}
-            {msg.role === "assistant" && msg.checkpointId && msg.status === "done" && (
-              <div className="assistant-message-actions">
-                {msg.graphChainCount && openGraphId !== msg.checkpointId && (
+            {msg.role === "assistant" && msg.status === "done" && (renderedAnswer?.sourcesHtml || msg.checkpointId) && (
+              <div className="assistant-message-actions" aria-label="Действия с ответом">
+                {renderedAnswer?.sourcesHtml && (
+                  <button
+                    type="button"
+                    className="source-action"
+                    aria-expanded={openSourcesMessageId === msg.id}
+                    onClick={() => setOpenSourcesMessageId((current) => current === msg.id ? null : msg.id)}
+                  >Источники{renderedAnswer.sourceCount ? ` · ${renderedAnswer.sourceCount}` : ""}</button>
+                )}
+                {msg.checkpointId && msg.graphChainCount && openGraphId !== msg.checkpointId && (
                   <button
                     type="button"
                     className="graph-open"
                     onClick={() => onOpenGraph(msg.checkpointId!)}
                   >
-                    <IconGraph /> Откуда данные
+                    <IconGraph /> Данные ответа
                     {msg.graphChainCount > 1 ? ` (${msg.graphChainCount})` : ""}
                   </button>
                 )}
-                <button
+                {msg.checkpointId && <button
                   type="button"
-                  className="fork-open desktop-fork-action"
+                  className="desktop-fork-action"
                   disabled={Boolean(forkingCheckpointId)}
-                  title="Продолжить иначе, начиная с этого ответа"
-                  aria-label="Другой вариант отсюда"
                   onClick={() => onFork(msg.checkpointId!)}
-                >
-                  <IconFork /><span>{forkingCheckpointId === msg.checkpointId ? "Создаю вариант" : "Другой вариант отсюда"}</span>
-                </button>
-                <details className="mobile-message-menu">
+                ><IconFork /> {forkingCheckpointId === msg.checkpointId ? "Создаю вариант" : "Новый вариант"}</button>}
+                {msg.checkpointId && <details className="mobile-message-menu">
                   <summary aria-label="Действия с ответом">•••</summary>
-                  <button type="button" disabled={Boolean(forkingCheckpointId)} onClick={() => onFork(msg.checkpointId!)}><IconFork /> Другой вариант отсюда</button>
-                </details>
+                  <button type="button" disabled={Boolean(forkingCheckpointId)} onClick={() => onFork(msg.checkpointId!)}><IconFork /> Новый вариант</button>
+                </details>}
               </div>
+            )}
+            {msg.role === "assistant" && renderedAnswer?.sourcesHtml && openSourcesMessageId === msg.id && (
+              <div id={`sources-${msg.id}`} className="answer-source-panel md" dangerouslySetInnerHTML={{ __html: renderedAnswer.sourcesHtml }} />
             )}
             {pendingApproval?.assistantMessageId === msg.id && pendingApproval.status === "pending" && (
               <ApprovalCard

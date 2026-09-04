@@ -85,10 +85,10 @@ export async function fetchMe(): Promise<Account> {
 export async function fetchServiceGuide(): Promise<string> {
   const payload = await json<{ markdown: string }>(
     await fetch("/api/service-guide"),
-    "Не удалось загрузить справку"
+    "Не удалось загрузить помощь"
   );
   const guide = String(payload.markdown || "").trim();
-  if (!guide) throw new Error("Справка пуста");
+  if (!guide) throw new Error("Раздел помощи пуст");
   return guide;
 }
 
@@ -214,7 +214,7 @@ export async function fetchGraphViz(runId: string): Promise<GraphPayload> {
       headers: withHeaders("", { "Content-Type": "application/json" }),
       body: JSON.stringify({ graph_run_id: runId }),
     }),
-    "Не удалось загрузить факты"
+    "Не удалось загрузить данные"
   );
 }
 
@@ -244,7 +244,7 @@ export async function fetchCheckpointGraph(
   if (unitId) params.set("unit_id", unitId);
   return json(
     await fetch(`/api/checkpoints/${encodeURIComponent(checkpointId)}/graph?${params}`),
-    "Не удалось загрузить факты"
+    "Не удалось загрузить данные"
   );
 }
 

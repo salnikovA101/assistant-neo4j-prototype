@@ -110,7 +110,7 @@ export function CardTemplateBuilder({ initial, busy, submitLabel, onSubmit, onCa
                   {field.widget === "number" && <label className="field-unit-control"><span>Единица</span><input value={field.unit} onChange={(event) => update(index, { unit: event.target.value })} placeholder="°C, %, г/л" /></label>}
                 </div>
                 {field.widget === "choice" && <label className="field-options"><span>Варианты ответа</span><textarea value={field.options.join("\n")} onChange={(event) => update(index, { options: event.target.value.split("\n") })} placeholder="Один вариант на строку" /></label>}
-                <div className="field-answer-example"><span>Пример ответа</span><em>Ответ ассистента появится здесь</em></div>
+                <label className="field-answer-example"><span>Пример ответа</span><input value="Ответ ассистента появится здесь" readOnly aria-readonly="true" /></label>
                 <label className="field-guidance"><span>Подсказка ассистенту</span><textarea value={field.description} onChange={(event) => update(index, { description: event.target.value })} placeholder="Что именно нужно указать в этом поле" aria-label={`Пояснение для ${field.label}`} /></label>
               </article>
             ))}

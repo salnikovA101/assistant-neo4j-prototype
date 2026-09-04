@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { SearchDepth, UiModel } from "../types";
 import { effortLabel } from "../format";
+import { MODE_LABELS } from "../uiLabels";
 import { IconCards, IconChevron, IconMic, IconPlus, IconSend, IconStop } from "./Icons";
 
 export function Composer({
@@ -27,8 +28,7 @@ export function Composer({
   branchMode,
   cardsEnabled,
   cardActionsEnabled,
-  onOpenCardTemplates,
-  onOpenCardLibrary,
+  onOpenCards,
   disabled = false,
   focusKey = 0,
 }: {
@@ -55,8 +55,7 @@ export function Composer({
   branchMode?: "auto" | "staged";
   cardsEnabled: boolean;
   cardActionsEnabled: boolean;
-  onOpenCardTemplates: () => void;
-  onOpenCardLibrary: () => void;
+  onOpenCards: () => void;
   disabled?: boolean;
   focusKey?: number;
 }) {
@@ -128,11 +127,8 @@ export function Composer({
             <summary title="Карточки" aria-label="Карточки"><IconPlus /></summary>
             <div className="composer-popover composer-action-popover">
               <p className="composer-popover-title">Карточки</p>
-              <button type="button" disabled={!cardActionsEnabled} onClick={(event) => { onOpenCardTemplates(); closeMenu(event.currentTarget); }}>
-                <IconCards /><span><strong>Заполнить по шаблону</strong><small>Сформировать карточку из текущего диалога</small></span>
-              </button>
-              <button type="button" disabled={!cardActionsEnabled} onClick={(event) => { onOpenCardLibrary(); closeMenu(event.currentTarget); }}>
-                <IconCards /><span><strong>Вставить карточку</strong><small>Добавить сохранённую карточку в контекст</small></span>
+              <button type="button" disabled={!cardActionsEnabled} onClick={(event) => { onOpenCards(); closeMenu(event.currentTarget); }}>
+                <IconCards /><span><strong>Открыть карточки</strong><small>Создать новую или вставить сохранённую</small></span>
               </button>
               {!cardActionsEnabled && <p className="popover-note">Доступно после первого ответа и вне активной генерации.</p>}
             </div>
@@ -156,12 +152,12 @@ export function Composer({
             if (menu !== event.currentTarget) (menu as HTMLDetailsElement).open = false;
           });
         }}>
-          <summary>{mode === "auto" ? "Ответ сразу" : "С планом"}<IconChevron /></summary>
+          <summary>{MODE_LABELS[mode]}<IconChevron /></summary>
           <div className="composer-popover">
             <p className="composer-popover-title">Режим работы</p>
-            {stagedEnabled && branchMode !== "auto" && <label><input type="radio" checked={mode === "staged"} onChange={(event) => { onMode("staged"); closeMenu(event.currentTarget); }} /><span><strong>С планом</strong><small>Разработка: вы видите, что искать, и подтверждаете новые пункты. Находки и план остаются в этой версии.</small></span></label>}
-            <label><input type="radio" checked={mode === "auto"} onChange={(event) => { onMode("auto"); closeMenu(event.currentTarget); }} /><span><strong>Ответ сразу</strong><small>{branchMode === "staged" ? "Этот вопрос уйдёт в отдельный вариант диалога. Текущий план и находки сохранятся." : "Консультация по одному вопросу: ассистент сам ищет в базе и сразу отвечает. Следующий вопрос — новый поиск, план не копится."}</small></span></label>
-            {branchMode === "auto" && <p className="popover-note">Режим с планом начинается в новом чате. Этот вариант остаётся консультацией.</p>}
+            {stagedEnabled && branchMode !== "auto" && <label><input type="radio" checked={mode === "staged"} onChange={(event) => { onMode("staged"); closeMenu(event.currentTarget); }} /><span><strong>Исследование</strong><small>Сохраняет исследовательские вопросы и найденные данные, чтобы продолжать работу по направлениям.</small></span></label>}
+            <label><input type="radio" checked={mode === "auto"} onChange={(event) => { onMode("auto"); closeMenu(event.currentTarget); }} /><span><strong>Быстрый ответ</strong><small>{branchMode === "staged" ? "Ответит на отдельный вопрос в новом варианте. Текущее исследование сохранится." : "Отвечает на один самостоятельный вопрос без накопления плана."}</small></span></label>
+            {branchMode === "auto" && <p className="popover-note">Исследование начинается в новом чате. Этот вариант остаётся быстрым ответом.</p>}
             {mode === "auto" ? (
               <div className="popover-setting"><span>Объём данных</span><div>
                 {(["low", "medium", "high"] as const).map((id) => <button key={id} type="button" className={depth === id ? "is-on" : ""} onClick={(event) => { onDepth(id); closeMenu(event.currentTarget); }}>{{ low: "Компактно", medium: "Обычно", high: "Расширенно" }[id]}</button>)}

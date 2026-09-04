@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { IconClose } from "./Icons";
+import { MODE_LABELS } from "../uiLabels";
 
 export type ResearchTab = "map" | "directions" | "data";
 
@@ -27,12 +28,12 @@ export function ResearchPanelShell({
       <header className="research-shell-header">
         <div className="panel-title">
           <strong>Ход работы</strong>
-          <span>{branchName}{staged ? " · с планом" : " · сразу"}</span>
+          <span>{branchName} · {staged ? MODE_LABELS.staged : MODE_LABELS.auto}</span>
         </div>
         <nav className="side-pane-tabs" aria-label="Раздел хода работы">
           <button type="button" className={tab === "map" ? "is-on" : ""} onClick={() => onTab("map")}>Карта</button>
           {staged && (
-            <button type="button" className={tab === "directions" ? "is-on" : ""} onClick={() => onTab("directions")}>
+            <button type="button" className={tab === "directions" ? "is-on" : ""} title="Исследовательские вопросы" aria-label="Исследовательские вопросы" onClick={() => onTab("directions")}>
               Вопросы{openDirections > 0 && <b>{openDirections}</b>}
             </button>
           )}
@@ -40,9 +41,9 @@ export function ResearchPanelShell({
             type="button"
             className={tab === "data" ? "is-on" : ""}
             disabled={!dataAvailable}
-            title={dataAvailable ? "Факты из базы" : "В этом диалоге ещё нет фактов из базы"}
+            title={dataAvailable ? "Данные из базы" : "В этом диалоге ещё нет данных из базы"}
             onClick={() => onTab("data")}
-          >Факты</button>
+          >Данные</button>
         </nav>
         <button type="button" className="icon-btn" onClick={onClose} aria-label="Закрыть ход работы"><IconClose /></button>
       </header>

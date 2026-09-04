@@ -6,17 +6,19 @@ from server.service_guide import load_service_guide
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web" / "src"
-SEARCH_PLACEHOLDER = 'placeholder="Например: kefir, Lactobacillus, GABA, 37 °C"'
-SEARCH_HINT = "Имена в базе английские."
+SEARCH_PLACEHOLDER = 'placeholder="Search entities, relations, or evidence in English"'
+SEARCH_HINT = "Введите название или термин на английском."
 
 
 def test_explorer_search_uses_english_graph_language():
     source = (WEB / "components" / "Explorer.tsx").read_text(encoding="utf-8")
     assert SEARCH_PLACEHOLDER in source
-    assert SEARCH_HINT in source
+    assert SEARCH_HINT not in source
     assert "по английским именам и evidence" in source
-    assert "Наберите английское имя, фрагмент evidence или выберите фильтр." in source
+    assert "Введите английское название, тип связи или фрагмент данных." in source
     assert "уверенность экстракции ≥" in source
+    assert "relationLabel" not in source
+    assert "showTechnical" not in source
     assert "Начните вводить запрос" not in source
     assert "по всему corpus" not in source
 
@@ -24,10 +26,27 @@ def test_explorer_search_uses_english_graph_language():
 def test_graph_canvas_local_search_uses_english_graph_language():
     source = (WEB / "components" / "GraphCanvas.tsx").read_text(encoding="utf-8")
     assert SEARCH_PLACEHOLDER in source
-    assert SEARCH_HINT in source
+    assert SEARCH_HINT not in source
     assert "по английским именам и evidence" in source
+    assert "label: edge.label" in source
+    assert "relationLabel" not in source
     assert "Копировать данные" in source
     assert "Найти ребро в этом графе" not in source
+
+
+def test_workspace_inspector_is_horizontally_resizable_from_current_default():
+    graph = (WEB / "components" / "GraphCanvas.tsx").read_text(encoding="utf-8")
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
+    assert "DEFAULT_WORKSPACE_INSPECTOR_WIDTH = 420" in graph
+    assert 'className="graph-inspector-resize-handle"' in graph
+    assert 'aria-label="Изменить ширину правой панели"' in graph
+    assert 'aria-orientation="vertical"' in graph
+    assert 'event.key === "ArrowLeft"' in graph
+    assert 'event.key === "ArrowRight"' in graph
+    assert "onDoubleClick" in graph
+    assert "--graph-inspector-width" in graph
+    desktop_workspace = styles.split("@media (min-width:901px) {", 1)[1].split("}", 1)[0]
+    assert "7px var(--graph-inspector-width,420px)" in desktop_workspace
 
 
 def test_service_guide_manual_search_is_english_names_not_chat():
@@ -41,12 +60,12 @@ def test_service_guide_manual_search_is_english_names_not_chat():
 
 def test_service_guide_distinguishes_auto_gaps_from_staged_sq_coverage():
     guide = load_service_guide(ROOT / "prompts")
-    assert "В режиме **Ответ сразу** ответ заканчивается разделом **GAPS**" in guide
-    assert "В режиме **С планом** вместо GAPS" in guide
+    assert "В режиме **Быстрый ответ** технический раздел **GAPS**" in guide
+    assert "В режиме **Исследование** вместо GAPS" in guide
     assert "**Состояние исследовательских вопросов**" in guide
     assert "**Не закрыт**, **Закрыт частично** или **Закрыт**" in guide
     assert "такой вопрос больше не участвует в следующем поиске" in guide
-    assert "Закрытие не удаляет связанные UNIT" in guide
+    assert "Закрытие не удаляет связанные цепочки" in guide
 
 
 def test_agenda_ui_exposes_three_editable_coverage_states():
@@ -55,7 +74,7 @@ def test_agenda_ui_exposes_three_editable_coverage_states():
     styles = (WEB / "styles.css").read_text(encoding="utf-8")
     assert '"not_closed" | "partial" | "closed"' in types
     assert '<option value="not_closed">Не закрыт</option>' in drawer
-    assert '<option value="partial">Частично</option>' in drawer
+    assert '<option value="partial">Закрыт частично</option>' in drawer
     assert '<option value="closed">Закрыт</option>' in drawer
     assert "Оценил ассистент" in drawer and "Изменено вами" in drawer
     assert ".agenda-coverage.is-closed" in styles
@@ -83,6 +102,71 @@ def test_recent_chats_use_relative_time_buckets():
     assert "min-height:38px" in styles
 
 
+def test_single_message_and_card_actions_are_direct():
+    chat = (WEB / "components" / "ChatThread.tsx").read_text(encoding="utf-8")
+    cards = (WEB / "components" / "CardsWorkspace.tsx").read_text(encoding="utf-8")
+    assert "desktop-message-menu" not in chat
+    assert 'className="source-action"' in chat
+    assert "Данные ответа" in chat
+    assert "Новый вариант" in chat
+    assert "answer-source-panel" in chat
+    assert "more-actions-menu" not in cards
+    assert "IconTrash" in cards
+    assert "Прикрепить к варианту" not in cards
+    assert "attachCard" not in cards
+    assert "Вставить в диалог" in cards
+    assert '{chatMode && onInsert && <button className="primary-btn"' in cards
+    assert 'className="ghost-btn danger-btn"' in cards
+    assert ">Удалить</button>" in cards
+
+
+def test_chat_has_one_cards_entry_and_compact_user_question():
+    app = (WEB / "App.tsx").read_text(encoding="utf-8")
+    composer = (WEB / "components" / "Composer.tsx").read_text(encoding="utf-8")
+    graph = (WEB / "components" / "GraphCanvas.tsx").read_text(encoding="utf-8")
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
+    assert "onOpenCardTemplates" not in app + composer
+    assert "onOpenCardLibrary" not in app + composer
+    assert composer.count("onOpenCards()") == 1
+    assert "Открыть карточки" in composer
+    assert 'openResearch("map")' in app
+    assert "GRAPH_PANEL_MIN" in app
+    assert "min={GRAPH_PANEL_MIN}" in app
+    assert graph.index(">Фильтры") < graph.index(">Результаты")
+    assert "current === \"filters\"" in graph
+    assert "RESULT_LIST_LIMIT" in graph
+    assert "chunk_id" not in graph
+    assert "Скрыть панель" in graph
+    assert "Показать панель" in graph
+    desktop = styles.split("@media (min-width:681px)", 1)[1].split("@media (max-width:680px)", 1)[0]
+    assert ".bubble-user { width:fit-content;" in desktop
+
+
+def test_collapsed_sidebar_does_not_render_chat_initials():
+    sidebar = (WEB / "components" / "Sidebar.tsx").read_text(encoding="utf-8")
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
+    assert "chat-initial" not in sidebar
+    assert "!collapsed && visibleSessions.map" in sidebar
+    assert "sidebar-chat-launcher" in sidebar
+    assert "Показать чаты" in sidebar
+    assert "sessions.length > 6 || Boolean(historyQuery.trim())" in sidebar
+    assert ".sidebar.is-collapsed { width:56px; min-width:56px; max-width:56px;" in styles
+
+
+def test_search_and_api_key_resist_credential_autofill():
+    app = (WEB / "App.tsx").read_text(encoding="utf-8")
+    sidebar = (WEB / "components" / "Sidebar.tsx").read_text(encoding="utf-8")
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
+    assert 'readOnly={!historySearchUnlocked}' in sidebar
+    assert 'data-1p-ignore="true"' in sidebar
+    assert 'name="chat-history-filter"' in sidebar
+    assert 'className="secure-key-input"' in app
+    assert 'type="password"' in app
+    assert 'autoComplete="new-password"' in app
+    assert 'readOnly={!qwenKeyInputUnlocked}' in app
+    assert "-webkit-text-security:disc" in styles
+
+
 def test_message_ids_work_on_plain_http_hosts():
     app = (WEB / "App.tsx").read_text(encoding="utf-8")
     uid = app.split("function uid()", 1)[1].split("\n}\n", 1)[0]
@@ -106,6 +190,18 @@ def test_empty_chat_welcome_is_short_help_not_suggestion_grid():
     assert welcome.count("<p>") == 1
 
 
+def test_empty_research_branch_placeholder_is_selectable():
+    app = (WEB / "App.tsx").read_text(encoding="utf-8")
+    pane = (WEB / "components" / "ResearchMapPane.tsx").read_text(encoding="utf-8")
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
+    assert "function selectEmptyBranch" in app
+    assert "onSelectEmptyBranch={selectEmptyBranch}" in app
+    assert "onSelectEmptyBranch(branch)" in pane
+    assert 'className="research-empty-node"' in pane
+    assert "role=\"treeitem\"" in pane
+    assert "cursor:pointer" in styles.split(".research-empty-node {", 1)[1].split("}", 1)[0]
+
+
 def test_stream_markdown_holds_incomplete_source_groups():
     from server.tools.source_registry import _SOURCE_GROUP_RE
 
@@ -117,6 +213,9 @@ def test_stream_markdown_holds_incomplete_source_groups():
     assert r"\(\s*source\b" in fmt
     assert r"\d+(?:\s*,\s*\d+)*" not in fmt
     assert r"\d+(?:\s*;\s*source\s*:?\s*\d+)*" not in fmt
+    assert "function improveAnswerHtml" in fmt
+    assert "HTMLHeadingElement" in fmt
+    assert "Пробелы в данных" in fmt
 
 
 def test_journal_shows_full_thinking():
