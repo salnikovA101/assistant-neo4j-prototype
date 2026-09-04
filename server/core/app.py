@@ -749,11 +749,11 @@ async def _checkpoint_prompt_context(
 
         active_lines = [_sq_line(item) for item in active] or ["- none"]
         lines = [
-            "CURRENT SQ AGENDA (assess only these refs in SQ_STATUS_JSON):",
+            "CURRENT RESEARCH QUESTIONS (assess only these refs in SQ_STATUS_JSON):",
             *active_lines,
         ]
         if closed:
-            lines.append("CLOSED SQ (do not assess, do not include in SQ_STATUS_JSON):")
+            lines.append("CLOSED RESEARCH QUESTIONS (do not assess, do not include in SQ_STATUS_JSON):")
             lines.extend(_sq_line(item) for item in closed)
         blocks.append("\n".join(lines))
     if units and (purpose == "card" or mode == "staged"):

@@ -166,7 +166,7 @@ export function Composer({
               <div className="popover-setting"><span>Объём данных</span><div>
                 {(["low", "medium", "high"] as const).map((id) => <button key={id} type="button" className={depth === id ? "is-on" : ""} onClick={(event) => { onDepth(id); closeMenu(event.currentTarget); }}>{{ low: "Компактно", medium: "Обычно", high: "Расширенно" }[id]}</button>)}
               </div></div>
-            ) : <p className="popover-note">За один шаг — один поиск по выбранным пунктам плана.</p>}
+            ) : <p className="popover-note">За один шаг — один поиск по выбранным исследовательским вопросам.</p>}
           </div>
         </details>
         {models.length > 0 && (

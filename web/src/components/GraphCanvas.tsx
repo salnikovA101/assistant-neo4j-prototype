@@ -371,7 +371,7 @@ export function GraphCanvas({
             onChange={(event) => { setQuery(event.target.value); setSuggestionsOpen(true); }}
             onFocus={() => setSuggestionsOpen(true)}
             placeholder="Например: kefir, Lactobacillus, GABA, 37 °C"
-            aria-label="Поиск на схеме по английским именам и цитатам"
+            aria-label="Поиск на схеме по английским именам и evidence"
             aria-describedby="graph-search-lang-hint"
           />
           <p id="graph-search-lang-hint" className="search-lang-hint">Имена в базе английские.</p>
@@ -474,10 +474,10 @@ function EdgeCard({ edge, inCollection, onToggleCollection }: { edge: GraphEdge;
     <p className="inspector-kicker">{edge.label}</p>
     <h3>{edge.from_name || edge.from} → {edge.to_name || edge.to}</h3>
     {evidence && <blockquote className="inspector-quote">{evidence}</blockquote>}
-    <dl className="inspector-meta">{source && <><dt>Источник</dt><dd>{source}</dd></>}{confidence != null && confidence !== "" && <><dt>Уверенность</dt><dd>{Number(confidence).toFixed(2)}</dd></>}</dl>
+    <dl className="inspector-meta">{source && <><dt>Источник</dt><dd>{source}</dd></>}{confidence != null && confidence !== "" && <><dt>Уверенность экстракции</dt><dd>{Number(confidence).toFixed(2)}</dd></>}</dl>
     <div className="inspector-actions">
       <button type="button" className="primary-btn" onClick={onToggleCollection}>{inCollection ? "Убрать из подборки" : "В подборку"}</button>
-      {evidence && <button type="button" className="ghost-btn" onClick={() => copyText(evidence)}>Копировать цитату</button>}
+      {evidence && <button type="button" className="ghost-btn" onClick={() => copyText(evidence)}>Копировать данные</button>}
     </div>
   </div>;
 }

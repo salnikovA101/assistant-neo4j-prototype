@@ -45,9 +45,9 @@ function collectionDraft(items: GraphCollectionItem[]): string {
       const evidence = String(edge.properties?.evidence || "").trim();
       const source = String(edge.properties?.source_file || "").trim();
       const confidence = edge.properties?.confidence;
-      if (evidence) lines.push(`  Цитата: ${evidence}`);
+      if (evidence) lines.push(`  Evidence: ${evidence}`);
       if (source) lines.push(`  Источник: ${source}`);
-      if (confidence != null && confidence !== "") lines.push(`  Уверенность: ${Number(confidence).toFixed(2)}`);
+      if (confidence != null && confidence !== "") lines.push(`  Уверенность экстракции: ${Number(confidence).toFixed(2)}`);
     }
   }
   return lines.join("\n");
@@ -192,7 +192,7 @@ export function Explorer({ onUseCollection }: { onUseCollection?: (draft: string
           onFocus={() => setSuggestionsOpen(true)}
           onKeyDown={(event) => { if (event.key === "Escape") setSuggestionsOpen(false); }}
           placeholder="Например: kefir, Lactobacillus, GABA, 37 °C"
-          aria-label="Поиск по всей базе по английским именам и цитатам"
+          aria-label="Поиск по всей базе по английским именам и evidence"
           aria-describedby="explorer-search-lang-hint"
           autoFocus
         />
@@ -209,7 +209,7 @@ export function Explorer({ onUseCollection }: { onUseCollection?: (draft: string
       {filters.node_labels.map((value) => <button key={`node:${value}`} type="button" onClick={() => setFilters((current) => ({ ...current, node_labels: toggleValue(current.node_labels, value) }))}>{value} ×</button>)}
       {filters.relationship_types.map((value) => <button key={`rel:${value}`} type="button" onClick={() => setFilters((current) => ({ ...current, relationship_types: toggleValue(current.relationship_types, value) }))}>{value} ×</button>)}
       {filters.sources.map((value) => <button key={`source:${value}`} type="button" onClick={() => setFilters((current) => ({ ...current, sources: toggleValue(current.sources, value) }))}>{value} ×</button>)}
-      {filters.min_confidence != null && <button type="button" onClick={() => setFilters((current) => ({ ...current, min_confidence: null }))}>надёжность ≥ {filters.min_confidence} ×</button>}
+      {filters.min_confidence != null && <button type="button" onClick={() => setFilters((current) => ({ ...current, min_confidence: null }))}>уверенность экстракции ≥ {filters.min_confidence} ×</button>}
       <button type="button" className="active-filters-clear" onClick={() => setFilters(EMPTY_FILTERS)}>Сбросить всё</button>
     </div>}
     {error && <p className="explorer-status is-error">{error}</p>}
@@ -224,14 +224,14 @@ export function Explorer({ onUseCollection }: { onUseCollection?: (draft: string
           {facets?.sources.hasMore && <button type="button" className="facet-more" disabled={sourceBusy} onClick={loadMoreSources}>{sourceBusy ? "Загрузка…" : "Показать ещё"}</button>}
         </section>
         <section className="facet-section"><h3>Качество данных</h3>
-          <p className="facet-note">В выборку попадают только связи с цитатой.</p>
-          <label className="confidence-field"><span>надёжность ≥</span><input type="number" min="0" max="1" step="0.05" value={filters.min_confidence ?? ""} placeholder="без ограничения" aria-label="надёжность ≥" onChange={(event) => { const value = event.target.value; setFilters((current) => ({ ...current, min_confidence: value === "" ? null : Math.max(0, Math.min(1, Number(value))) })); }} /></label>
+          <p className="facet-note">В выборку попадают только связи с evidence.</p>
+          <label className="confidence-field"><span>уверенность экстракции ≥</span><input type="number" min="0" max="1" step="0.05" value={filters.min_confidence ?? ""} placeholder="без ограничения" aria-label="уверенность экстракции ≥" onChange={(event) => { const value = event.target.value; setFilters((current) => ({ ...current, min_confidence: value === "" ? null : Math.max(0, Math.min(1, Number(value))) })); }} /></label>
         </section>
       </aside>}
       <GraphCanvas
         payload={payload}
         viewId="all"
-        emptyHint={q.trim() || hasFilters(filters) ? "По всей базе не найдено подходящих данных." : "Наберите английское имя, фрагмент цитаты или выберите фильтр."}
+        emptyHint={q.trim() || hasFilters(filters) ? "По всей базе не найдено подходящих данных." : "Наберите английское имя, фрагмент evidence или выберите фильтр."}
         hideSearch
         focusEdgeId={focusEdgeId}
         layoutKey={`explorer:${layoutRevision}`}

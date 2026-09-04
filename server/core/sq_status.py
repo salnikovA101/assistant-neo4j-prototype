@@ -183,7 +183,7 @@ def parse_sq_status_response(
     if not ordered:
         return SqStatusParseResult(visible, [], "SQ status set does not match active agenda")
 
-    lines = ["### Состояние направлений", ""]
+    lines = ["### Состояние исследовательских вопросов", ""]
     for item in ordered:
         number = _SQ_REF_RE.fullmatch(item["ref"]).group(1)  # type: ignore[union-attr]
         reason = item["reason"].rstrip(". ") + "."

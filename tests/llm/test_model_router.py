@@ -146,7 +146,7 @@ async def test_staged_manager_hides_and_extracts_sq_status_block(monkeypatch):
     assert "SQ_STATUS_JSON" not in streamed
     done = next(event for event in events if event.type == "done")
     assert "SQ_STATUS_JSON" not in done.data["final_content"]
-    assert "### Состояние направлений" in done.data["final_content"]
+    assert "### Состояние исследовательских вопросов" in done.data["final_content"]
     assert done.data["_sq_assessments"][0]["status"] == "closed"
 
 

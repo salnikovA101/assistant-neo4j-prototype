@@ -49,7 +49,7 @@ def test_sq_status_parser_renders_complete_ordered_set() -> None:
     assert not result.error
     assert [item["ref"] for item in result.assessments] == ["subquestion:1", "subquestion:2"]
     assert SQ_STATUS_OPEN not in result.content
-    assert "### Состояние направлений" in result.content
+    assert "### Состояние исследовательских вопросов" in result.content
     assert "Пункт 1 — **закрыт частично**" in result.content
     assert "(source:1)" in result.content
 
@@ -168,7 +168,7 @@ def test_sq_status_parser_ignores_block_when_no_active_sqs() -> None:
     assert not result.error
     assert result.assessments == []
     assert SQ_STATUS_OPEN not in result.content
-    assert "### Состояние направлений" not in result.content
+    assert "### Состояние исследовательских вопросов" not in result.content
 
 
 def test_sq_status_parser_ignores_trailing_text_after_block() -> None:

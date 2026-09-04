@@ -42,7 +42,7 @@ export function AgendaDrawer({
           try { await onStatus(item, status); } finally { setBusy(false); }
         }}
         aria-label={`Статус пункта ${directionNo(item, index + 1)}`}
-        title={locked ? "Дождитесь окончания ответа" : "Изменить статус направления"}
+        title={locked ? "Дождитесь окончания ответа" : "Изменить статус исследовательского вопроса"}
       >
         <option value="not_closed">Не закрыт</option>
         <option value="partial">Частично</option>
@@ -64,10 +64,10 @@ export function AgendaDrawer({
     <section className={`agenda-drawer ${embedded ? "is-embedded" : ""}`}>
       <header>
         <div>
-          <strong>План поиска</strong>
+          <strong>Исследовательские вопросы</strong>
           <span>{notClosedCount} не закрыто · {partialCount} частично · {closedItems.length} закрыто</span>
         </div>
-        {!embedded && onClose && <button type="button" className="icon-btn" onClick={onClose} aria-label="Закрыть план"><IconClose /></button>}
+        {!embedded && onClose && <button type="button" className="icon-btn" onClick={onClose} aria-label="Закрыть исследовательские вопросы"><IconClose /></button>}
       </header>
       <div className="agenda-list">
         {agenda.length === 0 && <p className="muted">Пункты появятся после первого подтверждённого поиска.</p>}

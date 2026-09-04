@@ -967,15 +967,15 @@ export function App() {
   ) {
     if (!branchId || !headCheckpointId) return;
     if (activeBranchMode !== "staged") {
-      setNotice("План поиска доступен только в режиме «С планом».");
+      setNotice("Исследовательские вопросы доступны только в режиме «С планом».");
       return;
     }
     if (pendingApproval) {
-      setNotice("Сначала подтвердите или отклоните текущий план поиска.");
+      setNotice("Сначала подтвердите или отклоните текущий список исследовательских вопросов.");
       return;
     }
     if (busy) {
-      setNotice("Дождитесь окончания ответа, затем измените план.");
+      setNotice("Дождитесь окончания ответа, затем измените список вопросов.");
       return;
     }
     try {

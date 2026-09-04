@@ -33,7 +33,7 @@ export function ResearchPanelShell({
           <button type="button" className={tab === "map" ? "is-on" : ""} onClick={() => onTab("map")}>Карта</button>
           {staged && (
             <button type="button" className={tab === "directions" ? "is-on" : ""} onClick={() => onTab("directions")}>
-              План{openDirections > 0 && <b>{openDirections}</b>}
+              Вопросы{openDirections > 0 && <b>{openDirections}</b>}
             </button>
           )}
           <button

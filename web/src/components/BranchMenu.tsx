@@ -27,7 +27,7 @@ export function BranchMenu({
     <div className="branch-menu-wrap">
       <button type="button" className="branch-menu-trigger research-entry" onClick={onOpen} aria-expanded={open} aria-label={`Ход работы, текущий вариант: ${label}`}>
         <IconFork /><span>Ход работы · {label}</span>
-        {Boolean(openDirections) && <b aria-label={`Открытых пунктов плана: ${openDirections}`}>{openDirections}</b>}
+        {Boolean(openDirections) && <b aria-label={`Открытых исследовательских вопросов: ${openDirections}`}>{openDirections}</b>}
         <IconChevron />
       </button>
     </div>

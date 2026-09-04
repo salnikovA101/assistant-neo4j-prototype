@@ -164,7 +164,7 @@ class Tools:
                         "description": (
                             "Start or continue staged graph search for food technology "
                             "(starter cultures, freshness indicators, smart packaging). "
-                            "Empty agenda: put the first 1–5 English declarative SQ in "
+                            "Empty research-question list: put the first 1–5 English declarative SQ in "
                             "`new_subquestions` and send `open_sq_refs` as []. "
                             "Existing open items: pass their `subquestion:N` refs. "
                             "New search directions also go in `new_subquestions` and need "
@@ -181,8 +181,8 @@ class Tools:
                                     "items": {"type": "string", "pattern": "^subquestion:[1-9][0-9]*$"},
                                     "maxItems": 5,
                                     "description": (
-                                        "Open SQ refs exactly as listed in CURRENT SQ AGENDA. "
-                                        "Empty array or omit when starting a new agenda."
+                                        "Open SQ refs exactly as listed in CURRENT RESEARCH QUESTIONS. "
+                                        "Empty array or omit when starting a new research-question list."
                                     ),
                                 },
                                 "new_subquestions": {
@@ -191,7 +191,7 @@ class Tools:
                                     "maxItems": 5,
                                     "description": (
                                         "New English declarative SQ, no '?' and no Russian. "
-                                        "Required when the agenda is empty or does not cover "
+                                        "Required when the research-question list is empty or does not cover "
                                         "a necessary search direction. Empty array or omit "
                                         "when only existing open refs are searched."
                                     ),
@@ -213,7 +213,7 @@ class Tools:
                         "Call it when the question names a product, substance, "
                         "culture, process, class or goal — including catalogs and "
                         "selection questions. Returns evidence UNITs: tours of "
-                        "cards, each card a triple plus its verbatim quote and "
+                        "cards, each card a triple plus its evidence text and "
                         "(source:N). Search depth is set in the UI, not here."
                     ),
                     "parameters": {
@@ -227,7 +227,7 @@ class Tools:
                                 "description": (
                                     "1–5 English declarative statements, no '?' and "
                                     "no Russian. Each one runs a separate search "
-                                    "over quotes, so each must cover a different "
+                                    "over evidence texts, so each must cover a different "
                                     "aspect of the question — paraphrases return "
                                     "the same evidence. "
                                     "GOOD: 'Lactic acid bacteria acidify milk during "

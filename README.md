@@ -6,7 +6,7 @@
 
 Предметная область базы данных: *food-science, микробиология, умная упаковка (smart packaging)*.
 
-**Ключевой принцип работы:** Ассистент опирается строго на данные из базы, всегда сопровождая ответ провенансом (цитатой `evidence`, файлом-источником и `confidence`).
+**Ключевой принцип работы:** Ассистент опирается строго на данные из базы, всегда сопровождая ответ провенансом (`evidence`, файлом-источником и `confidence`).
 
 Голосовой контур (STT/TTS) в коде сохранён, но по умолчанию выключен (`audio_enabled: false` в `server/config.yaml`). Основной путь — чат по SSE, не WAV.
 
@@ -69,7 +69,7 @@
 ### 3.1 `ask_subgraph` — поиск цепочек evidence
 Оркестратор вызывает tool `ask_subgraph` с английскими subquestions. Пайплайн
 (`server/algorithm/pipeline.py`) поднимает accepted chains (UNIT-туры в порядке
-обхода, `@Hub` на лучах хаба, `source_file` и `confidence` на строке цитаты).
+обхода, `@Hub` на лучах хаба, `source_file` и `confidence` на строке evidence).
 
 Стадии одной строкой: **S1** embed sq → **S2** ANN → **S2b** cross-encoder (если `rerank_enabled`) → **S3** графы на sq (якоря + мосты, один раз) → **S4** carousel hop-DP → **S5** дедуп по spine-evidence. Детали стадий — в `server/algorithm/README.md`.
 
@@ -109,7 +109,7 @@ ask_subgraph accepted chains
     │
     ▼ Web UI
         Правая панель vis-network: стрелки листают цепи,
-        инспектор показывает цитату, source и confidence.
+        инспектор показывает evidence, source и confidence.
 ```
 
 ---
@@ -126,7 +126,7 @@ ask_subgraph accepted chains
 Типы связей задаёт корпус и векторные индексы, а не фиксированный список из пяти имён в приложении.
 
 *   **Свойства связей (обязательный провенанс):**
-    *   `evidence`: дословная цитата из PDF.
+    *   `evidence`: подготовленный агентом фрагмент данных по файлу; он может быть структурированным обобщением содержимого PDF.
     *   `source_file`: имя файла-источника.
     *   `chunk_id`: идентификатор текстового фрагмента.
     *   `confidence`: уверенность при экстракции (0.0–1.0; отсутствие свойства не подменяется на 1.0).
@@ -177,7 +177,7 @@ ask_subgraph accepted chains
 | `GET/PATCH/DELETE` | `/api/conversations/{id}` | Открытие, переименование, удаление. |
 | `POST` | `/api/conversations/{id}/forks` | Ветка («версия») от `checkpoint_id`. |
 | `PATCH` | `/api/branches/{id}` | Переименование ветки. |
-| `POST` | `/api/branches/{id}/agenda-events` | Agenda subquestions: добавить / закрыть / переставить. |
+| `POST` | `/api/branches/{id}/agenda-events` | Исследовательские вопросы: добавить / закрыть / переставить. |
 | `POST` | `/api/tool-approvals/{id}/resolve` | Staged: `approve` / `revise` → SSE; `cancel` → JSON. |
 | `GET/POST` | `/api/card-templates` | Шаблоны карточек (JSON Schema). |
 | `GET` | `/api/cards` | Сохранённые карточки. |
@@ -205,7 +205,7 @@ ask_subgraph accepted chains
 *   Чаты, ветки, checkpoint и карточки хранятся в SQLite на сервере и изолированы по аккаунтам. В браузере остаются настройки UI (глубина, режим, ключи LLM).
 *   Композер: **Автоматически** vs **По этапам** (`staged_enabled`); глубина поиска; модель из `ui_profiles` (Авто + QwenCloud); reasoning effort скрыт для Авто. Микрофон только при `audio_enabled`.
 *   **По этапам:** стрим останавливается на `approval_required`; пользователь правит английские SQ и подтверждает. Один поиск на ответ, по одному новому UNIT на открытый SQ.
-*   **Версии диалога** — fork от checkpoint, переключение ветки, agenda SQ («Текущие SQ»).
+*   **Версии диалога** — fork от checkpoint, переключение ветки, список исследовательских вопросов SQ («Вопросы»).
 *   **Карточки** — шаблоны (JSON Schema), генерация из checkpoint, черновики, сохранение, вставка в ветку. Пункт сайдбара «Библиотека» / «Библиотека статей» — заглушка («В разработке»), это не корпус PDF и не библиотека карточек.
 *   Граф ответа: `vis-network`, физика `forceAtlas2Based`, инспектор evidence / source / confidence, фильтры «Все данные / Новые / Другие версии».
 *   Сайдбар «Граф знаний» — полноэкранный explorer: текстовый поиск, лимит 1–5000 (`POST /graph_explore`), раскрытие соседей (`POST /api/graph/expand`).

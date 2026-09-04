@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import aiosqlite
 
 from server.core.app import _checkpoint_prompt_context
 from server.core.app_store import AppStore
 from server.tools.registry import Tools
-from server.tools.subgraph_search import MAX_SUBQUESTIONS, normalize_subquestions
+from server.tools.subgraph_search import MAX_SUBQUESTIONS, _format_accepted_chains, normalize_subquestions
 from server.tools.graph_viz import build_chain_views
 from server.utils.config import AppConfig
 
@@ -66,16 +68,16 @@ async def test_staged_context_keeps_agenda_and_units_while_auto_hides_them(tmp_p
             mode="auto",
             purpose="card",
         )
-        assert "CURRENT SQ AGENDA" in staged
+        assert "CURRENT RESEARCH QUESTIONS" in staged
         assert "assess only these refs" in staged
         assert sq_ref in staged
         assert sq_id not in staged
         assert "UNIT U1 (" not in staged
         assert "paths=2, review recommended" in staged
         assert "EVIDENCE UNITs" in staged
-        assert "CURRENT SQ AGENDA" not in auto
+        assert "CURRENT RESEARCH QUESTIONS" not in auto
         assert "EVIDENCE UNITs" not in auto
-        assert "CURRENT SQ AGENDA" not in card
+        assert "CURRENT RESEARCH QUESTIONS" not in card
         assert "EVIDENCE UNITs" in card
 
         closed = await store.finish_turn(
@@ -92,7 +94,7 @@ async def test_staged_context_keeps_agenda_and_units_while_auto_hides_them(tmp_p
             }],
         )
         after_close = await _checkpoint_prompt_context(store, user.id, closed, mode="staged")
-        assert "CLOSED SQ (do not assess" in after_close
+        assert "CLOSED RESEARCH QUESTIONS (do not assess" in after_close
         assert sq_ref in after_close
         assert "[closed]" in after_close
         assert "- none" in after_close
@@ -132,7 +134,7 @@ def test_mode_tools_have_distinct_contracts_and_five_sq_limit():
     assert auto["parameters"]["properties"]["subquestions"]["maxItems"] == 5
     assert staged["name"] == "advance_research"
     assert "required" not in staged["parameters"]
-    assert "Empty agenda" in staged["description"]
+    assert "Empty research-question list" in staged["description"]
     refs = staged["parameters"]["properties"]["open_sq_refs"]
     assert refs["maxItems"] == 5
     assert refs["items"]["pattern"] == "^subquestion:[1-9][0-9]*$"
@@ -141,6 +143,25 @@ def test_mode_tools_have_distinct_contracts_and_five_sq_limit():
     )
     assert len(clean) == MAX_SUBQUESTIONS == 5
     assert problems
+
+
+def test_model_contract_uses_research_questions_and_evidence_language():
+    prompt_root = Path(__file__).resolve().parents[1] / "prompts"
+    prompt_text = "\n".join(
+        (prompt_root / name).read_text(encoding="utf-8")
+        for name in ("assistant_logic.md", "assistant_staged.md", "card_generation.md")
+    )
+    staged_tool = Tools(AppConfig()).get_openai_tools("staged")[0]["function"]
+    formatted = _format_accepted_chains([{"text": "UNIT 1\nThing —REL→ Other\n  Evidence (paper.pdf; conf=1)"}])
+
+    assert "CURRENT RESEARCH QUESTIONS" in prompt_text
+    assert "CURRENT SQ AGENDA" not in prompt_text
+    assert "дословная цитата" not in prompt_text
+    assert "точным текстом evidence" in prompt_text
+    assert "research-question list" in staged_tool["description"]
+    assert "agenda" not in staged_tool["description"].lower()
+    assert "evidence text" in formatted
+    assert "verbatim quote" not in formatted
 
 
 @pytest.mark.asyncio

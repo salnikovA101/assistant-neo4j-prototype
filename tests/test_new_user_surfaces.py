@@ -14,8 +14,9 @@ def test_explorer_search_uses_english_graph_language():
     source = (WEB / "components" / "Explorer.tsx").read_text(encoding="utf-8")
     assert SEARCH_PLACEHOLDER in source
     assert SEARCH_HINT in source
-    assert "по английским именам и цитатам" in source
-    assert "Наберите английское имя, фрагмент цитаты или выберите фильтр." in source
+    assert "по английским именам и evidence" in source
+    assert "Наберите английское имя, фрагмент evidence или выберите фильтр." in source
+    assert "уверенность экстракции ≥" in source
     assert "Начните вводить запрос" not in source
     assert "по всему corpus" not in source
 
@@ -24,7 +25,8 @@ def test_graph_canvas_local_search_uses_english_graph_language():
     source = (WEB / "components" / "GraphCanvas.tsx").read_text(encoding="utf-8")
     assert SEARCH_PLACEHOLDER in source
     assert SEARCH_HINT in source
-    assert "по английским именам и цитатам" in source
+    assert "по английским именам и evidence" in source
+    assert "Копировать данные" in source
     assert "Найти ребро в этом графе" not in source
 
 
@@ -41,8 +43,9 @@ def test_service_guide_distinguishes_auto_gaps_from_staged_sq_coverage():
     guide = load_service_guide(ROOT / "prompts")
     assert "В режиме **Ответ сразу** ответ заканчивается разделом **GAPS**" in guide
     assert "В режиме **С планом** вместо GAPS" in guide
+    assert "**Состояние исследовательских вопросов**" in guide
     assert "**Не закрыт**, **Закрыт частично** или **Закрыт**" in guide
-    assert "такой пункт больше не участвует в следующем поиске" in guide
+    assert "такой вопрос больше не участвует в следующем поиске" in guide
     assert "Закрытие не удаляет связанные UNIT" in guide
 
 
@@ -60,6 +63,7 @@ def test_agenda_ui_exposes_three_editable_coverage_states():
     assert "locked = false" in drawer
     assert "disabled={busy || locked}" in drawer
     assert ".sq-status-warning" in styles
+    assert "Исследовательские вопросы" in drawer
 
 
 def test_recent_chats_use_relative_time_buckets():

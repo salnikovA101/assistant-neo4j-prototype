@@ -12,7 +12,7 @@ def test_prompt_loader_routes_auto_staged_and_card() -> None:
     assert "Максимум 2 вызова" in auto
     assert "не подмешиваются" in auto
     assert "продолжающийся процесс разработки" in staged
-    assert "Чеклист пуст" in staged
+    assert "Список исследовательских вопросов пуст" in staged
     assert "open_sq_refs: []" in staged
     assert "Revise" in staged
     assert "### GAPS" in auto

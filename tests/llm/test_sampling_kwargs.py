@@ -210,13 +210,16 @@ def test_resolve_request_profile_ui_allowlist():
 
 def test_provider_for_caches_ui_profiles():
     from server.llm.manager import LLMManager
-    from server.utils.config import load_config
+    from server.utils.config import boot_profile_name, load_config
 
-    mgr = LLMManager(load_config())
+    config = load_config()
+    mgr = LLMManager(config)
     flash = mgr.provider_for("qwen38_flash")
     assert flash is mgr.provider_for("qwen38_flash")
     assert flash.profile.model == "qwen3.8-flash"
-    assert mgr.provider_for("auto") is flash
+    assert mgr.provider_for("auto") is mgr.provider_for(
+        boot_profile_name(config.llm)
+    )
     qwen = mgr.provider_for("qwen_cloud")
     assert qwen is mgr.provider_for("qwen_cloud")
     assert qwen.profile.model == "qwen3.8-27b"

@@ -89,12 +89,12 @@ def _format_accepted_chains(
         "Format only (behaviour rules are in the system prompt):",
         "UNIT = one tour in walk order; consecutive cards share a vertex "
         "(A-B, then B-C).",
-        "Card = `Label: A —REL→ Label: B`, next line = the verbatim quote with "
+        "Card = `Label: A —REL→ Label: B`, next line = the evidence text with "
         "(source:N; conf=0-1 or None).",
         "@Hub = still at that vertex (a sibling edge), not the next process step.",
-        "A quote may name more entities than the node labels do.",
+        "Evidence text may name more entities than the node labels do.",
         "conf and UNIT numbers are service fields; source:N is copied from the "
-        "quote line.",
+        "evidence line.",
         "",
     ]
     units: list[str] = []
@@ -224,7 +224,7 @@ class SubgraphSearchAgent:
                     and by_key[turn.store.canonical_subquestion(text)]["id"] in open_ids
                 ]
                 if not payload:
-                    return f"{NO_RESULTS}: all selected subquestions are closed in the current agenda."
+                    return f"{NO_RESULTS}: all selected subquestions are closed in the current research-question list."
                 retrieval = dict(turn.retrieval_state or {})
                 master = dict(retrieval.get("s3Bundle") or {})
                 master_graphs = dict(master.get("graphs") or {})
