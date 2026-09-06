@@ -9,11 +9,11 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import { fetchResearchMap } from "../api";
+import { branchColor } from "../branchVisuals";
 import type { ResearchBranch, ResearchMap, ResearchStep } from "../types";
 import { IconClose, IconEdit, IconGraph } from "./Icons";
 import { MODE_LABELS } from "../uiLabels";
 
-const BRANCH_COLORS = ["#6ea8ff", "#8bd5ca", "#c6a0f6", "#f5bde6", "#eed49f", "#91d7e3"];
 const COLUMN_PITCH = 256;
 const ROW_PITCH = 236;
 const CARD_WIDTH = 216;
@@ -300,7 +300,7 @@ export function ResearchMapPane({
                 if (!parent) return null;
                 const target = model.cardPosition(step);
                 const lane = model.branchOrder.get(step.branchId) || 0;
-                return <path key={step.id} d={connectionPath(parent, target.x, target.y)} stroke={BRANCH_COLORS[lane % BRANCH_COLORS.length]} />;
+                return <path key={step.id} d={connectionPath(parent, target.x, target.y)} stroke={branchColor(lane)} />;
               })}
               {model.emptyBranches.map((branch) => {
                 const parent = branch.originStepId ? model.stepById.get(branch.originStepId) : undefined;
@@ -309,7 +309,7 @@ export function ResearchMapPane({
                 const row = (model.rowByStep.get(parent.id) || 0) + 1;
                 const targetX = CANVAS_LEFT + lane * COLUMN_PITCH;
                 const targetY = CANVAS_TOP + row * ROW_PITCH + BRANCH_LABEL_HEIGHT;
-                return <path key={branch.id} d={connectionPath(parent, targetX, targetY)} stroke={BRANCH_COLORS[lane % BRANCH_COLORS.length]} />;
+                return <path key={branch.id} d={connectionPath(parent, targetX, targetY)} stroke={branchColor(lane)} />;
               })}
             </svg>
 
@@ -318,7 +318,7 @@ export function ResearchMapPane({
               if (!branch) return null;
               const position = model.cardPosition(step);
               const lane = position.lane;
-              const color = BRANCH_COLORS[lane % BRANCH_COLORS.length];
+              const color = branchColor(lane);
               const showBranchLabel = model.firstStepByBranch.get(step.branchId) === step.id;
               const isSelected = selectedStepId === step.id;
               return (
@@ -364,7 +364,7 @@ export function ResearchMapPane({
               if (!parent) return null;
               const lane = model.branchOrder.get(branch.id) || 0;
               const row = (model.rowByStep.get(parent.id) || 0) + 1;
-              const color = BRANCH_COLORS[lane % BRANCH_COLORS.length];
+              const color = branchColor(lane);
               const isSelected = activeBranchId === branch.id && !selectedStepId;
               const label = visibleBranchName(branch, lane);
               return (

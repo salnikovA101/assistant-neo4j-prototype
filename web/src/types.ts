@@ -135,6 +135,7 @@ export type ChatMessage = {
   status?: "streaming" | "waiting_approval" | "done" | "error" | "aborted" | "cancelled";
   elapsedSec?: number;
   checkpointId?: string;
+  branchId?: string;
   modelId?: string;
   modelLabel?: string;
   sqStatusWarning?: string;

@@ -217,6 +217,11 @@ async def test_research_map_historical_view_and_atomic_auto_fork(tmp_path):
             "Используйте молочнокислую культуру.",
             "А если использовать дрожжи?",
         ]
+        assert [message["branchId"] for message in fork_detail["messages"]] == [
+            branch_id,
+            branch_id,
+            forked["branchId"],
+        ]
         assert len(await store.list_branches(user.id, conv["id"])) == 2
 
         with pytest.raises(RuntimeError, match="invalid_fork_checkpoint"):

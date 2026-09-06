@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChangeEvent } from "react";
+import type { ChangeEvent, CSSProperties } from "react";
 import type { AgendaItem, CardDraft, CardTemplate, ChatMessage, ChatStep, PendingApproval, TurnFailure } from "../types";
 import { prettyJson, renderAnswerMarkdown, renderMarkdown, renderReasoningMarkdown } from "../format";
 import { blankData, fallbackSchemaForData } from "../cardModel";
@@ -315,6 +315,9 @@ export function ChatThread({
   onSaveCard,
   onFork,
   forkingCheckpointId = "",
+  branchVisuals = {},
+  activeBranchId = "",
+  showBranchHighlights = false,
 }: {
   messages: ChatMessage[];
   cardTemplates: CardTemplate[];
@@ -334,12 +337,21 @@ export function ChatThread({
   onSaveCard: (draftId: string, title: string, data: Record<string, unknown>, provenance: Record<string, unknown>, gaps: unknown[]) => void;
   onFork: (checkpointId: string) => void;
   forkingCheckpointId?: string;
+  branchVisuals?: Record<string, { color: string; label: string }>;
+  activeBranchId?: string;
+  showBranchHighlights?: boolean;
 }) {
   const threadRef = useRef<HTMLDivElement>(null);
   const followTailRef = useRef(true);
   const frameRef = useRef<number | null>(null);
   const [openSourcesMessageId, setOpenSourcesMessageId] = useState<string | null>(null);
   const isStreaming = messages.some((message) => message.status === "streaming");
+  const activeBranchVisual = branchVisuals[activeBranchId];
+  const branchStartsAfterHistory = Boolean(
+    activeBranchVisual
+    && messages.length
+    && messages[messages.length - 1].branchId !== activeBranchId
+  );
 
   useEffect(() => {
     if (!selectedMessageIds.length) return;
@@ -414,6 +426,7 @@ export function ChatThread({
       ))}
       {messages.map((msg) => {
         const steps = stepsOf(msg);
+        const branchVisual = msg.branchId ? branchVisuals[msg.branchId] : undefined;
         const renderedAnswer = msg.role === "assistant" && msg.text
           ? renderAnswerMarkdown(msg.text, msg.status === "streaming")
           : null;
@@ -421,7 +434,9 @@ export function ChatThread({
           <article
             id={`message-${msg.id}`}
             key={msg.id}
-            className={`bubble bubble-${msg.role} ${selectedMessageIds.includes(msg.id) ? "is-context-step" : ""}`}
+            className={`bubble bubble-${msg.role} ${showBranchHighlights && branchVisual ? "has-branch-origin" : ""} ${selectedMessageIds.includes(msg.id) ? "is-context-step" : ""}`}
+            style={branchVisual ? { "--message-branch-color": branchVisual.color } as CSSProperties : undefined}
+            data-branch-label={branchVisual?.label}
           >
             {msg.role === "assistant" && (
               <div className="bubble-kicker">
@@ -534,6 +549,15 @@ export function ChatThread({
             onResolve={onResolveApproval}
           />
         </article>
+      )}
+      {branchStartsAfterHistory && (
+        <div
+          className="branch-start-marker"
+          style={{ "--message-branch-color": activeBranchVisual.color } as CSSProperties}
+        >
+          <i />
+          <span>{activeBranchVisual.label} начинается здесь</span>
+        </div>
       )}
     </div>
   );

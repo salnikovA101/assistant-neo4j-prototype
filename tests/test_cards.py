@@ -215,6 +215,9 @@ async def test_card_draft_is_a_checkpointed_chat_message_and_save_updates_it(tmp
                 "objective": "Confirmed in source:1",
                 "product_or_matrix": None,
             },
+            provenance={
+                "/objective": [{"verification": "assistant-generated/unverified"}],
+            },
         )
         message = await store.append_card_draft_message(
             user.id, checkpoint_id, draft, template_name=template["name"]
@@ -240,6 +243,8 @@ async def test_card_draft_is_a_checkpointed_chat_message_and_save_updates_it(tmp
         assert '"title":"Trial"' in model_context[-1]["content"]
         assert "source:1" in model_context[-1]["content"]
         assert "PMC12345_paper.pdf" not in model_context[-1]["content"]
+        assert '"provenance"' not in model_context[-1]["content"]
+        assert "assistant-generated/unverified" not in model_context[-1]["content"]
 
         edited_data = {**draft["data"], "objective": "Technologist correction"}
         edited_provenance = {"/objective": [{"verification": "user-edited"}]}
@@ -293,6 +298,8 @@ async def test_card_draft_is_a_checkpointed_chat_message_and_save_updates_it(tmp
         assert model_context is not None
         assert "INSERTED CARD DATA" in model_context[-1]["content"]
         assert model_context[-1]["role"] == "user"
+        assert '"provenance"' not in model_context[-1]["content"]
+        assert "user-edited" not in model_context[-1]["content"]
     finally:
         await store.close()
 

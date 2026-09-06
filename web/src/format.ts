@@ -124,11 +124,23 @@ function holdIncompleteCitation(text: string): string {
   return text.slice(0, last);
 }
 
+function wrapMarkdownTables(html: string): string {
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  for (const table of parsed.body.querySelectorAll("table")) {
+    if (table.parentElement?.classList.contains("md-table-scroll")) continue;
+    const wrapper = parsed.createElement("div");
+    wrapper.className = "md-table-scroll";
+    table.parentNode?.insertBefore(wrapper, table);
+    wrapper.appendChild(table);
+  }
+  return parsed.body.innerHTML;
+}
+
 export function renderMarkdown(text: string, streaming = false): string {
   const prepared = streaming ? holdIncompleteCitation(holdIncompleteFence(text)) : text;
   const src = renderLatex(densifyCitations(prepared));
   const raw = marked.parse(src) as string;
-  return DOMPurify.sanitize(raw);
+  return wrapMarkdownTables(DOMPurify.sanitize(raw));
 }
 
 export type AnswerMarkdownParts = {

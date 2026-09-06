@@ -35,6 +35,7 @@ import {
   updateCardDraft,
   withHeaders,
 } from "./api";
+import { branchColor } from "./branchVisuals";
 import { ChatThread } from "./components/ChatThread";
 import { Composer } from "./components/Composer";
 import { AgendaDrawer } from "./components/AgendaDrawer";
@@ -245,6 +246,7 @@ export function App() {
   const current = sessions.find((item) => item.id === currentId);
   const currentBranch = branches.find((item) => item.id === branchId);
   const currentBranchIndex = Math.max(0, branches.findIndex((item) => item.id === branchId));
+  const activeBranchColor = branchColor(currentBranchIndex);
   const activeBranchLabel = currentBranchIndex === 0 && currentBranch?.name.trim().toLowerCase() === "main"
     ? "Основной вариант"
     : (currentBranch ? branchNameOverrides[currentBranch.id] || currentBranch.name : "Основной вариант");
@@ -370,7 +372,11 @@ export function App() {
         setSettingsOpen(false);
         return;
       }
-      if (rightPanelOpen) setRightPanel({ kind: "closed" });
+      if (rightPanelOpen) {
+        setRightPanel({ kind: "closed" });
+        setSelectedResearchStep(null);
+        setRequestedCheckpointId("");
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -532,6 +538,7 @@ export function App() {
       id: uid(),
       role: "user",
       text: value,
+      branchId: activeBranchId || undefined,
       cardRequest: card ? {
         templateVersionId: card.templateVersionId,
         templateName: card.templateName,
@@ -550,6 +557,7 @@ export function App() {
       tools: [],
       steps: [],
       status: "streaming",
+      branchId: activeBranchId || undefined,
     };
     const started = Date.now();
     const next = [...messages, user, assistant];
@@ -653,6 +661,11 @@ export function App() {
           const resolved = data.branch as Branch | undefined;
           if (resolved?.id) {
             activeBranchId = resolved.id;
+            setMessages((items) => items.map((message) =>
+              message.id === user.id || message.id === assistantId
+                ? { ...message, branchId: resolved.id }
+                : message
+            ));
             setBranches((items) => {
               const exists = items.some((item) => item.id === resolved.id);
               return exists
@@ -1123,6 +1136,12 @@ export function App() {
     if (currentId) setLastResearchTabs((tabs) => ({ ...tabs, [currentId]: nextTab }));
   }
 
+  function closeResearch() {
+    setRightPanel({ kind: "closed" });
+    setSelectedResearchStep(null);
+    setRequestedCheckpointId("");
+  }
+
   function selectEmptyBranch(branch: ResearchBranch) {
     const checkpointId = branch.headCheckpointId || branch.createdFromCheckpointId || "";
     setSelectedResearchStep(null);
@@ -1176,6 +1195,7 @@ export function App() {
         {
           "--sidebar-width": `${sidebarWidth}px`,
           "--graph-width": `${graphWidth}px`,
+          "--active-branch-color": activeBranchColor,
         } as CSSProperties
       }
     >
@@ -1218,7 +1238,7 @@ export function App() {
                 activeId={branchId}
                 open={rightPanel.kind === "research"}
                 openDirections={stagedAgendaActive ? openDirectionCount : 0}
-                onOpen={() => rightPanel.kind === "research" ? setRightPanel({ kind: "closed" }) : openResearch("map")}
+                onOpen={() => rightPanel.kind === "research" ? closeResearch() : openResearch("map")}
               />
             )}
           </div>
@@ -1243,6 +1263,17 @@ export function App() {
             onSaveCard={(draftId, title, data, provenance, gaps) => void handleSaveCard(draftId, title, data, provenance, gaps)}
             onFork={(checkpointId) => void forkFromAnswer(checkpointId)}
             forkingCheckpointId={forkingCheckpointId}
+            branchVisuals={Object.fromEntries(branches.map((branch, index) => [
+              branch.id,
+              {
+                color: branchColor(index),
+                label: index === 0 && branch.name.trim().toLowerCase() === "main"
+                  ? "Основной вариант"
+                  : branchNameOverrides[branch.id] || branch.name,
+              },
+            ]))}
+            activeBranchId={branchId}
+            showBranchHighlights={rightPanel.kind === "research"}
           />
           )}
           <div className="composer-stack">
@@ -1356,7 +1387,7 @@ export function App() {
           openDirections={openDirectionCount}
           dataAvailable={Boolean(lastGraphCheckpointId || rightPanel.checkpointId)}
           onTab={(tab) => openResearch(tab)}
-          onClose={() => setRightPanel({ kind: "closed" })}
+          onClose={closeResearch}
         >
           {rightPanel.tab === "map" ? (
             <Suspense fallback={<p className="explorer-status">Загрузка карты…</p>}>
@@ -1371,7 +1402,7 @@ export function App() {
                 onOpenGraph={(checkpointId) => openResearch("data", checkpointId)}
                 onOpenData={() => openResearch("data")}
                 onRenameBranch={handleRenameBranch}
-                onClose={() => setRightPanel({ kind: "closed" })}
+                onClose={closeResearch}
                 embedded
               />
             </Suspense>
@@ -1386,7 +1417,7 @@ export function App() {
             <Suspense fallback={<p className="explorer-status">Загрузка данных…</p>}>
               <GraphPane
                 checkpointId={checkpointGraphId}
-                onClose={() => setRightPanel({ kind: "closed" })}
+                onClose={closeResearch}
                 onOpenStep={(stepId, originBranchId) => void openResearchStep(stepId, originBranchId)}
                 embedded
               />

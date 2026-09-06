@@ -5,26 +5,6 @@ function empty(value: unknown): boolean {
   return value == null || value === "" || (Array.isArray(value) && value.length === 0);
 }
 
-function fieldProvenance(
-  provenance: Record<string, unknown>,
-  key: string,
-): { label: string; tone: string } {
-  const pointer = `/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`;
-  const raw = provenance[pointer] ?? provenance["/"];
-  const refs = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? [raw] : [];
-  const states = refs.map((item) =>
-    item && typeof item === "object"
-      ? String((item as Record<string, unknown>).verification || "evidence")
-      : "legacy"
-  );
-  if (states.includes("user-edited")) return { label: "Изменено вручную", tone: "edited" };
-  if (states.includes("evidence")) return { label: "Источник", tone: "evidence" };
-  if (states.includes("user-provided/unverified")) return { label: "От пользователя", tone: "user" };
-  if (states.includes("assistant-derived/unverified")) return { label: "Из ответа", tone: "assistant" };
-  if (states.includes("assistant-generated/unverified")) return { label: "Не проверено", tone: "unverified" };
-  return { label: "Происхождение не указано", tone: "legacy" };
-}
-
 function dateText(value: unknown): string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return String(value || "");
   const [year, month, day] = value.split("-").map(Number);
@@ -77,7 +57,6 @@ export function CardVisual({
   schema,
   ui = {},
   data,
-  provenance = {},
   editable = false,
   status,
   onChange,
@@ -114,12 +93,10 @@ export function CardVisual({
       </header>
       <div className="visual-card-fields">
         {definition.fields.map((field) => {
-          const source = fieldProvenance(provenance, field.key);
           return <section key={field.key} className="visual-card-field">
             <div className="visual-card-label">
               <strong>{field.label}</strong>
               {field.description && <button type="button" className="card-info" title={field.description} aria-label={`Пояснение: ${field.description}`}>i</button>}
-              {!empty(data[field.key]) && <span className={`card-provenance is-${source.tone}`}>{source.label}</span>}
             </div>
             <div className="visual-card-answer">
               {editable ? (
