@@ -90,6 +90,25 @@ def test_build_chain_views_roles_and_merge_dedupe() -> None:
     assert merged_spine["role"] == "spine"
 
 
+def test_merge_views_unions_all_node_and_edge_labels() -> None:
+    first = _edge("5:1")
+    first["start_labels"] = ["Entity", "CustomClass"]
+    second = _edge("5:1")
+    second["start_labels"] = ["Entity", "AnotherClass"]
+
+    merged = merge_views(build_chain_views([
+        {"chain_id": "a1", "edges": [first], "fans": {}},
+        {"chain_id": "a2", "edges": [second], "fans": {}},
+    ]))
+
+    node = next(item for item in merged["nodes"] if item["id"] == "node-A")
+    edge = next(item for item in merged["edges"] if item["id"] == "5:1")
+    expected = ["AnotherClass", "CustomClass", "Entity"]
+    assert node["labels"] == expected
+    assert node["properties"]["labels"] == expected
+    assert edge["from_labels"] == expected
+
+
 def test_build_chain_views_uniquifies_duplicate_chain_ids() -> None:
     views = build_chain_views(
         [
@@ -215,8 +234,8 @@ def test_edge_without_element_id_keeps_stable_id() -> None:
     assert views[0]["edges"][0]["id"] == "ek:key-5:1"
     assert views[0]["edges"][0]["from_name"] == "A"
     assert views[0]["edges"][0]["to_name"] == "B"
-    assert views[0]["edges"][0]["from_group"] == "Microbe"
-    assert views[0]["edges"][0]["to_group"] == "Metabolite"
+    assert views[0]["edges"][0]["from_group"] == "Вершина"
+    assert views[0]["edges"][0]["to_group"] == "Вершина"
 
 
 def test_missing_confidence_stays_none() -> None:
@@ -226,7 +245,7 @@ def test_missing_confidence_stays_none() -> None:
     assert views[0]["edges"][0]["properties"]["confidence"] is None
     assert "edge_key" not in views[0]["edges"][0]["properties"]
     assert "hub_id" not in views[0]["edges"][0]["properties"]
-    assert "run_id" not in views[0]["edges"][0]["properties"]
+    assert views[0]["edges"][0]["properties"]["run_id"] == ""
 
 
 def test_hub_name_from_fan_hub_names() -> None:

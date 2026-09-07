@@ -266,6 +266,18 @@ export function App() {
   );
 
   function applyDetail(detail: ConversationDetail) {
+    setSessions((items) => items.map((item) => item.id === detail.id ? {
+      ...item,
+      title: detail.title,
+      updatedAt: detail.updatedAt,
+      activeBranchId: detail.activeBranchId,
+      headCheckpointId: detail.headCheckpointId,
+      mode: detail.mode,
+      runId: detail.runId,
+      accountRunId: detail.accountRunId,
+      readOnly: detail.readOnly,
+      readOnlyReason: detail.readOnlyReason,
+    } : item));
     if (!liveTurnRef.current) setMessages(detail.messages);
     setBranches((detail.branches || []).map((branch) => ({
       ...branch,
@@ -491,6 +503,10 @@ export function App() {
   ) {
     const value = text.trim();
     if (!value || busy) return;
+    if (current?.readOnly) {
+      setNotice("Этот чат относится к другой версии базы. Переключите аккаунт обратно на его run_id или создайте новый чат.");
+      return;
+    }
     let conversationId = currentId;
     let activeBranchId = branchId;
     let baseCheckpointId = viewCheckpointId || headCheckpointId;
@@ -837,6 +853,10 @@ export function App() {
     feedback = ""
   ) {
     if (!pendingApproval || approvalBusy) return;
+    if (current?.readOnly) {
+      setNotice("Нельзя изменить старый чат после переключения базы.");
+      return;
+    }
     const streaming = action !== "cancel";
     const controller = streaming ? new AbortController() : null;
     const approvalAssistantId = pendingApproval.assistantMessageId;
@@ -987,6 +1007,10 @@ export function App() {
     input: { sq_ref: string; status: AgendaItem["status"] }
   ) {
     if (!branchId || !headCheckpointId) return;
+    if (current?.readOnly) {
+      setNotice("Нельзя изменить план в чате от другой версии базы.");
+      return;
+    }
     if (activeBranchMode !== "staged") {
       setNotice("Исследовательские вопросы доступны только в режиме «Исследование».");
       return;
@@ -1011,7 +1035,7 @@ export function App() {
   }
 
   async function handleGenerateCard(templateVersionId: string) {
-    if (!headCheckpointId || !currentId || cardBusy || busy || pendingApproval) return;
+    if (!headCheckpointId || !currentId || cardBusy || busy || pendingApproval || current?.readOnly) return;
     const template = cardTemplates.find((item) => item.latestVersion.id === templateVersionId);
     if (!template) return;
     setCardBusy(true);
@@ -1038,6 +1062,10 @@ export function App() {
     provenance?: Record<string, unknown>,
     gaps?: unknown[]
   ) {
+    if (current?.readOnly) {
+      setNotice("Нельзя сохранить новую карточку из чата от другой версии базы.");
+      return;
+    }
     try {
       if (data && provenance) await updateCardDraft(draftId, { data, provenance, gaps });
       await saveCardDraft(draftId, title);
@@ -1049,7 +1077,7 @@ export function App() {
   }
 
   async function handleInsertCard(card: SavedCard) {
-    if (!branchId || !headCheckpointId || busy || pendingApproval) return;
+    if (!branchId || !headCheckpointId || busy || pendingApproval || current?.readOnly) return;
     try {
       const result = await insertCardMessage(
         branchId,
@@ -1093,7 +1121,7 @@ export function App() {
   }
 
   async function forkFromAnswer(checkpointId: string) {
-    if (!currentId || !branchId || !checkpointId || busy || forkingCheckpointId) return;
+    if (!currentId || !branchId || !checkpointId || busy || forkingCheckpointId || current?.readOnly) return;
     const sourceBranch = branches.find((item) => item.id === branchId);
     setForkingCheckpointId(checkpointId);
     try {
@@ -1274,6 +1302,7 @@ export function App() {
             ]))}
             activeBranchId={branchId}
             showBranchHighlights={rightPanel.kind === "research"}
+            readOnly={Boolean(current?.readOnly)}
           />
           )}
           <div className="composer-stack">
@@ -1300,6 +1329,14 @@ export function App() {
                 setSelectedResearchStep(null);
                 setRequestedCheckpointId("");
               }}>К последнему шагу</button>
+            </div>
+          )}
+          {current?.readOnly && (
+            <div className="context-continuation" role="status">
+              <span>
+                <b>Только чтение:</b> чат создан для run_id <code>{current.runId}</code>,
+                а аккаунт сейчас использует <code>{current.accountRunId || config?.run_id || "—"}</code>.
+              </span>
             </div>
           )}
           <Composer
@@ -1339,8 +1376,9 @@ export function App() {
             stagedEnabled={config?.staged_enabled !== false}
             branchMode={activeBranchMode}
             cardsEnabled={config?.cards_enabled !== false}
-            cardActionsEnabled={Boolean(headCheckpointId && currentId && !pendingApproval && !busy)}
+            cardActionsEnabled={Boolean(headCheckpointId && currentId && !pendingApproval && !busy && !current?.readOnly)}
             onOpenCards={() => setRightPanel({ kind: "cards", tab: "templates" })}
+            disabled={Boolean(current?.readOnly)}
             focusKey={composerFocusKey}
           />
           </div>
@@ -1437,6 +1475,7 @@ export function App() {
               onGenerate={(templateVersionId) => void handleGenerateCard(templateVersionId)}
               onInsert={(card) => void handleInsertCard(card)}
               onClose={() => setRightPanel({ kind: "closed" })}
+              readOnly={Boolean(current?.readOnly)}
             />
           </aside>
         </Suspense>

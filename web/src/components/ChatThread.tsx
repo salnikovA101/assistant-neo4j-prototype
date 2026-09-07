@@ -44,11 +44,12 @@ function GrowingTextarea({
   );
 }
 
-function InlineCardDraft({ draft, template, templateName, onSave }: {
+function InlineCardDraft({ draft, template, templateName, onSave, readOnly = false }: {
   draft: CardDraft;
   template?: CardTemplate;
   templateName: string;
   onSave: (draftId: string, title: string, data: Record<string, unknown>, provenance: Record<string, unknown>, gaps: unknown[]) => void;
+  readOnly?: boolean;
 }) {
   const [data, setData] = useState(draft.data);
   const [provenance, setProvenance] = useState(draft.provenance);
@@ -65,14 +66,14 @@ function InlineCardDraft({ draft, template, templateName, onSave }: {
         ui={template?.latestVersion.ui || {}}
         data={data}
         provenance={provenance}
-        editable={!saved}
+        editable={!saved && !readOnly}
         status={saved ? "Сохранено" : "Черновик"}
         onChange={(key, value) => {
           setData((current) => ({ ...current, [key]: value }));
           setProvenance((current) => userEditedProvenance(current, key));
         }}
       />
-      {!saved && <div className="chat-card-save"><span>{title ? "Проверьте ответы перед сохранением" : "Добавьте название карточки"}</span><button type="button" className="primary-btn" disabled={!title} onClick={() => onSave(draft.id, title, data, provenance, draft.gaps)}>Сохранить</button></div>}
+      {!saved && !readOnly && <div className="chat-card-save"><span>{title ? "Проверьте ответы перед сохранением" : "Добавьте название карточки"}</span><button type="button" className="primary-btn" disabled={!title} onClick={() => onSave(draft.id, title, data, provenance, draft.gaps)}>Сохранить</button></div>}
     </section>
   );
 }
@@ -318,6 +319,7 @@ export function ChatThread({
   branchVisuals = {},
   activeBranchId = "",
   showBranchHighlights = false,
+  readOnly = false,
 }: {
   messages: ChatMessage[];
   cardTemplates: CardTemplate[];
@@ -340,6 +342,7 @@ export function ChatThread({
   branchVisuals?: Record<string, { color: string; label: string }>;
   activeBranchId?: string;
   showBranchHighlights?: boolean;
+  readOnly?: boolean;
 }) {
   const threadRef = useRef<HTMLDivElement>(null);
   const followTailRef = useRef(true);
@@ -492,7 +495,7 @@ export function ChatThread({
               <p className="sq-status-warning">{msg.sqStatusWarning}</p>
             )}
             {msg.cardDraft && (
-              <InlineCardDraft draft={msg.cardDraft} template={templateForVersion(cardTemplates, msg.cardDraft.templateVersionId)} templateName={msg.cardTemplateName || "Карточка"} onSave={onSaveCard} />
+              <InlineCardDraft draft={msg.cardDraft} template={templateForVersion(cardTemplates, msg.cardDraft.templateVersionId)} templateName={msg.cardTemplateName || "Карточка"} onSave={onSaveCard} readOnly={readOnly} />
             )}
             {msg.role === "assistant" && msg.status === "done" && (renderedAnswer?.sourcesHtml || msg.checkpointId) && (
               <div className="assistant-message-actions" aria-label="Действия с ответом">
@@ -517,19 +520,19 @@ export function ChatThread({
                 {msg.checkpointId && <button
                   type="button"
                   className="desktop-fork-action"
-                  disabled={Boolean(forkingCheckpointId)}
+                  disabled={readOnly || Boolean(forkingCheckpointId)}
                   onClick={() => onFork(msg.checkpointId!)}
                 ><IconFork /> {forkingCheckpointId === msg.checkpointId ? "Создаю вариант" : "Новый вариант"}</button>}
                 {msg.checkpointId && <details className="mobile-message-menu">
                   <summary aria-label="Действия с ответом">•••</summary>
-                  <button type="button" disabled={Boolean(forkingCheckpointId)} onClick={() => onFork(msg.checkpointId!)}><IconFork /> Новый вариант</button>
+                  <button type="button" disabled={readOnly || Boolean(forkingCheckpointId)} onClick={() => onFork(msg.checkpointId!)}><IconFork /> Новый вариант</button>
                 </details>}
               </div>
             )}
             {msg.role === "assistant" && renderedAnswer?.sourcesHtml && openSourcesMessageId === msg.id && (
               <div id={`sources-${msg.id}`} className="answer-source-panel md" dangerouslySetInnerHTML={{ __html: renderedAnswer.sourcesHtml }} />
             )}
-            {pendingApproval?.assistantMessageId === msg.id && pendingApproval.status === "pending" && (
+            {!readOnly && pendingApproval?.assistantMessageId === msg.id && pendingApproval.status === "pending" && (
               <ApprovalCard
                 approval={pendingApproval}
                 agenda={agenda}
@@ -540,7 +543,7 @@ export function ChatThread({
           </article>
         );
       })}
-      {pendingApproval?.status === "pending" && !messages.some((msg) => msg.id === pendingApproval.assistantMessageId) && (
+      {!readOnly && pendingApproval?.status === "pending" && !messages.some((msg) => msg.id === pendingApproval.assistantMessageId) && (
         <article className="bubble bubble-assistant">
           <ApprovalCard
             approval={pendingApproval}

@@ -29,9 +29,9 @@ def _incident(e: EdgeRecord, hub_id: str) -> bool:
 def _hub_name(hub_id: str, edges: list[EdgeRecord]) -> str:
     for e in edges:
         if e.start_id == hub_id and e.start_name:
-            return format_node_ref(e.start_label, e.start_name, hub_id)
+            return format_node_ref(e.start_labels, e.start_name, hub_id)
         if e.end_id == hub_id and e.end_name:
-            return format_node_ref(e.end_label, e.end_name, hub_id)
+            return format_node_ref(e.end_labels, e.end_name, hub_id)
     return hub_id
 
 
@@ -40,12 +40,15 @@ def hub_display_name(
     edges: list[EdgeRecord],
     names: dict[str, str] | None = None,
 ) -> str:
-    """Prefer reshape `fan_hub_names`, else `Label: name` from an incident edge."""
+    """Prefer the current node name; persisted hub text is only a fallback."""
+    current = _hub_name(hub_id, edges)
+    if current != hub_id:
+        return current
     if names:
         got = (names.get(hub_id) or "").strip()
         if got:
             return got
-    return _hub_name(hub_id, edges)
+    return current
 
 
 def linger_hubs(path_edges: list[EdgeRecord]) -> list[str]:

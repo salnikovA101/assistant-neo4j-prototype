@@ -14,11 +14,12 @@ assistant gets the full S5 pool (`accepted` = `accepted_all`).
 It comes from the UI search-depth control (`server/core/turn_state.py`),
 not from the assistant model. Defaults live in `Params`.
 
-S2/S3 optionally restrict to one relationship `run_id` from `server/config.yaml`
-(`Params.run_id`). Non-empty: Cypher 25 `SEARCH … WHERE r.run_id = $run_id`
-inside the existing per-type vector indexes (same L / L_raw_max). Indexes must
-include `WITH [r.run_id]` — `python scripts/vectorize_edges.py --recreate-indexes`.
-Empty `run_id`: unfiltered ANN (legacy `queryRelationships`) and a startup warning.
+S2/S3 require one relationship `run_id` (`Params.run_id`). Production turns take
+it from the conversation snapshot; `server/config.yaml` is only the account
+bootstrap/default. Cypher 25 runs `SEARCH … WHERE r.run_id = $run_id` inside the
+per-type vector index before `LIMIT` (same L / L_raw_max). Runtime discovery
+accepts only indexes containing both `evidence_embedding` and the filter property
+added by `WITH [r.run_id]`. Empty or unscoped retrieval fails closed.
 `rerank_enabled` in `server/config.yaml` (default for deploy: false) is passed into
 `Params`; false skips Ettin and keeps ANN sim order.
 
@@ -53,11 +54,10 @@ kept. The assistant sees
 the whole S5 pool in carousel order.
 
 Unit = hop-DP tour in walk order (not spine-then-FANS dump). Each edge prints
-as a card: `Label: A —REL→ Label: B` and the verbatim quote with
+as a card: `A —REL→ B` (node names only) and the verbatim quote with
 `(source; conf)` on the quote line. `@Hub` on a triple means still at that
-vertex (sibling incidents, not the next process step). Endpoints use primary
-Neo4j labels from
-`Microbe|Metabolite|StarterCulture|EnvironmentCondition` (extra labels dropped).
+vertex (sibling incidents, not the next process step). Neo4j labels are kept
+only as optional graph metadata; they do not affect endpoint identity or text.
 Evidence may not repeat inside one unit.
 
 ANN/CE/bridges run once per question. Eval headline recall is on the full

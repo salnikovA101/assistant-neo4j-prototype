@@ -847,7 +847,9 @@ async def eval_one(
     if not gold_ev_direct:
         need_resolve |= set(gold_keys)
 
-    key_to_ev = await fetch_evidences_for_edge_keys(driver, need_resolve)
+    key_to_ev = await fetch_evidences_for_edge_keys(
+        driver, need_resolve, run_id=params.run_id
+    )
     if gold_ev_direct:
         gold_ev = gold_ev_direct
         missing_gold: list[str] = []

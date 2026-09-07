@@ -76,14 +76,18 @@ def test_graph_filters_and_facets_contract() -> None:
 
     for query in (_FETCH_TRIPLETS, _EXPAND_TRIPLETS):
         assert "$node_labels" in query
+        assert "OR any(l IN labels(a) WHERE l IN $node_labels)" in query
+        assert "OR any(l IN labels(b) WHERE l IN $node_labels)" in query
         assert "$relationship_types" in query
         assert "$sources" in query
         assert "trim(coalesce(r.evidence, '')) <> ''" in query
         assert "$min_confidence" in query
+        assert "r.run_id = $run_id" in query
     assert "$exclude_edge_ids" in _EXPAND_TRIPLETS
     assert "$direction" in _EXPAND_TRIPLETS
     assert "ORDER BY evidence_rank DESC" in _EXPAND_TRIPLETS
     assert "count(DISTINCT n)" in _FACET_NODE_LABELS
+    assert "UNWIND labels(n) AS value" in _FACET_NODE_LABELS
     assert "count(DISTINCT r)" in _FACET_RELATIONSHIPS
     assert "ORDER BY count DESC, value" in _FACET_SOURCES
 
@@ -110,20 +114,22 @@ def test_nodes_come_from_triplet_endpoints() -> None:
                 "to_id": "4:2",
                 "from_name": "L. plantarum",
                 "to_name": "lactic acid",
-                "from_label": "Microbe",
-                "to_label": "Metabolite",
+                "from_labels": ["Microbe", "BiologicalObject", "Microbe"],
+                "to_labels": [],
             }
         ]
     )
     assert {n["id"] for n in nodes} == {"4:1", "4:2"}
     assert {n["name"] for n in nodes} == {"L. plantarum", "lactic acid"}
+    assert next(n for n in nodes if n["id"] == "4:1")["labels"] == ["BiologicalObject", "Microbe"]
+    assert next(n for n in nodes if n["id"] == "4:2")["labels"] == []
 
 
 def test_rows_to_explore_payload_shape_and_no_embedding() -> None:
     payload = rows_to_explore_payload(
         [
-            {"id": "4:1", "name": "L. plantarum", "label": "Microbe"},
-            {"id": "4:2", "name": "lactic acid", "label": "Metabolite", "embedding": [1, 2]},
+            {"id": "4:1", "name": "L. plantarum", "labels": ["NewClass", "Entity"]},
+            {"id": "4:2", "name": "lactic acid", "labels": [], "embedding": [1, 2]},
         ],
         [
             {
@@ -133,8 +139,8 @@ def test_rows_to_explore_payload_shape_and_no_embedding() -> None:
                 "to_id": "4:2",
                 "from_name": "L. plantarum",
                 "to_name": "lactic acid",
-                "from_label": "Microbe",
-                "to_label": "Metabolite",
+                "from_labels": ["NewClass", "Entity"],
+                "to_labels": [],
                 "evidence": "produces lactic acid",
                 "chunk_id": "c1",
                 "source_file": "paper.pdf",
@@ -151,7 +157,9 @@ def test_rows_to_explore_payload_shape_and_no_embedding() -> None:
     edges = payload["all"]["edges"]
     assert {n["id"] for n in nodes} == {"4:1", "4:2"}
     assert nodes[0]["caption"] == "L. plantarum"
-    assert nodes[0]["group"] == "Microbe"
+    assert nodes[0]["group"] == "Вершина"
+    assert nodes[0]["labels"] == ["Entity", "NewClass"]
+    assert nodes[1]["labels"] == []
     assert "embedding" not in str(nodes)
     assert len(edges) == 1
     props = edges[0]["properties"]

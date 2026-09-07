@@ -48,14 +48,16 @@ def _copy_labeled(c: Chain, chain_id: str) -> Chain:
     )
 
 
-async def hydrate_chains(driver: AsyncDriver, chains: Sequence[Chain]) -> None:
+async def hydrate_chains(
+    driver: AsyncDriver, chains: Sequence[Chain], *, run_id: str
+) -> None:
     need: list[str] = []
     for c in chains:
         for e in c.all_edges():
             if e.element_id and not e.evidence:
                 need.append(e.element_id)
     if need:
-        rows = await fetch_edge_evidence(driver, need)
+        rows = await fetch_edge_evidence(driver, need, run_id=run_id)
         for c in chains:
             for e in c.all_edges():
                 row = rows.get(e.element_id)

@@ -1,6 +1,6 @@
 debug_mode: false
 audio_enabled: false
-# Corpus for ANN/bridges (relationship.run_id). Empty = whole vector index + warning.
+# Bootstrap/default corpus for accounts. Empty is forbidden; retrieval fails closed.
 run_id: "full_corpus_20260713"
 rerank_enabled: false
 staged_enabled: true

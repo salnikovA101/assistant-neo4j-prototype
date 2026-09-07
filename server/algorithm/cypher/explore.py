@@ -6,7 +6,7 @@ from typing import Any
 
 from neo4j import AsyncDriver
 
-from server.algorithm.models import PRIMARY_NODE_LABELS
+from server.algorithm.models import normalize_labels
 
 # Presets remain useful for callers that want a small/medium/large request,
 # but the explorer also accepts a custom limit within the guarded range.
@@ -14,10 +14,6 @@ EXPLORE_LIMITS: tuple[int, ...] = (10, 100, 1000)
 MIN_EXPLORE_LIMIT = 1
 MAX_EXPLORE_LIMIT = 5000
 EXPLORE_FIELDS: tuple[str, ...] = ("all", "name", "label", "rel", "evidence", "source")
-
-_PRIMARY_LABEL_CYPHER = "[" + ", ".join(repr(x) for x in PRIMARY_NODE_LABELS) + "]"
-_FROM_LABEL = f"[l IN labels(a) WHERE l IN {_PRIMARY_LABEL_CYPHER}][0]"
-_TO_LABEL = f"[l IN labels(b) WHERE l IN {_PRIMARY_LABEL_CYPHER}][0]"
 
 def _filter_predicates(*, skip: str = "") -> str:
     parts: list[str] = []
@@ -65,10 +61,8 @@ _QUERY_PREDICATE = """AND (
     )
   )"""
 
-_MATCH_BASE = f"""MATCH (a)-[r]->(b)
-WHERE any(l IN labels(a) WHERE l IN {_PRIMARY_LABEL_CYPHER})
-  AND any(l IN labels(b) WHERE l IN {_PRIMARY_LABEL_CYPHER})
-  AND ($run_id = '' OR r.run_id = $run_id)"""
+_MATCH_BASE = """MATCH (a)-[r]->(b)
+WHERE r.run_id = $run_id"""
 
 # Match relationships first (subject —rel→ object), then take their endpoints.
 _FETCH_TRIPLETS = f"""
@@ -96,8 +90,8 @@ RETURN
        elementId(b) AS to_id,
        coalesce(a.name, '') AS from_name,
        coalesce(b.name, '') AS to_name,
-       coalesce({_FROM_LABEL}, '') AS from_label,
-       coalesce({_TO_LABEL}, '') AS to_label,
+       labels(a) AS from_labels,
+       labels(b) AS to_labels,
        coalesce(r.evidence, '') AS evidence,
        coalesce(r.chunk_id, '') AS chunk_id,
        coalesce(r.source_file, '') AS source_file,
@@ -111,9 +105,7 @@ _EXPAND_TRIPLETS = f"""
 MATCH (anchor)-[r]-(neighbor)
 WITH anchor, r, startNode(r) AS a, endNode(r) AS b
 WHERE elementId(anchor) = $node_id
-  AND any(l IN labels(a) WHERE l IN {_PRIMARY_LABEL_CYPHER})
-  AND any(l IN labels(b) WHERE l IN {_PRIMARY_LABEL_CYPHER})
-  AND ($run_id = '' OR r.run_id = $run_id)
+  AND r.run_id = $run_id
   AND NOT elementId(r) IN $exclude_edge_ids
   AND (
     $direction = 'all'
@@ -131,8 +123,8 @@ RETURN
        elementId(b) AS to_id,
        coalesce(a.name, '') AS from_name,
        coalesce(b.name, '') AS to_name,
-       coalesce([l IN labels(a) WHERE l IN {_PRIMARY_LABEL_CYPHER}][0], '') AS from_label,
-       coalesce([l IN labels(b) WHERE l IN {_PRIMARY_LABEL_CYPHER}][0], '') AS to_label,
+       labels(a) AS from_labels,
+       labels(b) AS to_labels,
        coalesce(r.evidence, '') AS evidence,
        coalesce(r.chunk_id, '') AS chunk_id,
        coalesce(r.source_file, '') AS source_file,
@@ -146,9 +138,7 @@ _EXPAND_TOTAL = f"""
 MATCH (anchor)-[r]-(neighbor)
 WITH anchor, r, startNode(r) AS a, endNode(r) AS b
 WHERE elementId(anchor) = $node_id
-  AND any(l IN labels(a) WHERE l IN {_PRIMARY_LABEL_CYPHER})
-  AND any(l IN labels(b) WHERE l IN {_PRIMARY_LABEL_CYPHER})
-  AND ($run_id = '' OR r.run_id = $run_id)
+  AND r.run_id = $run_id
   AND (
     $direction = 'all'
     OR ($direction = 'outgoing' AND elementId(a) = $node_id)
@@ -173,7 +163,7 @@ _FACET_NODE_LABELS = f"""
   {_QUERY_PREDICATE}
 WITH collect(DISTINCT a) + collect(DISTINCT b) AS endpoints
 UNWIND endpoints AS n
-UNWIND [label IN labels(n) WHERE label IN {_PRIMARY_LABEL_CYPHER}] AS value
+UNWIND labels(n) AS value
 RETURN value, count(DISTINCT n) AS count
 ORDER BY count DESC, value
 """
@@ -255,10 +245,13 @@ def graph_filters_active(filters: dict[str, Any] | None) -> bool:
 
 def _query_params(*, q: str, field: str, run_id: str, filters: dict[str, Any] | None) -> dict[str, Any]:
     normalized = normalize_graph_filters(filters)
+    corpus_run_id = (run_id or "").strip()
+    if not corpus_run_id:
+        raise ValueError("run_id is required for graph exploration")
     return {
         "q": (q or "").strip().lower(),
         "field": clamp_explore_field(field),
-        "run_id": (run_id or "").strip(),
+        "run_id": corpus_run_id,
         **normalized,
     }
 
@@ -272,13 +265,13 @@ def nodes_from_triplet_rows(edges: list[dict[str, Any]]) -> list[dict[str, Any]]
             by_id[fid] = {
                 "id": fid,
                 "name": str(row.get("from_name") or ""),
-                "label": str(row.get("from_label") or ""),
+                "labels": normalize_labels(row.get("from_labels")),
             }
         if tid and tid not in by_id:
             by_id[tid] = {
                 "id": tid,
                 "name": str(row.get("to_name") or ""),
-                "label": str(row.get("to_label") or ""),
+                "labels": normalize_labels(row.get("to_labels")),
             }
     return list(by_id.values())
 

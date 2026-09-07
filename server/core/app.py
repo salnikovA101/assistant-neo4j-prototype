@@ -27,7 +27,11 @@ from server.utils.config import (
     validate_runtime_config,
 )
 from server.core.db import get_driver
-from server.core.app_store import AccountUser, AppStore
+from server.core.app_store import (
+    AccountUser,
+    AppStore,
+    ConversationRunMismatchError,
+)
 from server.core.card_schema import blank_card, validate_card_data, validate_template_schema
 from server.core.http_api import (
     CORS_ORIGIN_RE,
@@ -47,7 +51,6 @@ from server.core.http_api import (
     ui_auth_middleware,
 )
 from server.core.pipeline import ServerPipeline
-from server.algorithm.models import PRIMARY_NODE_LABELS
 from server.core.sessions import session_store
 from server.core.turn_state import (
     DEFAULT_SEARCH_DEPTH,
@@ -614,6 +617,10 @@ async def _normalize_card_data_sources(
     """Resolve imported filenames to aliases and allocate aliases when needed."""
     if not checkpoint_id:
         return value, []
+    try:
+        await store.require_checkpoint_writable(user_id, checkpoint_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Checkpoint not found") from exc
     snapshot = await store.checkpoint_source_snapshot(user_id, checkpoint_id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="Checkpoint not found")
@@ -696,7 +703,9 @@ async def _owned_session(request: Request) -> tuple[AccountUser, str, str]:
     user = _current_user(request)
     conversation_id = session_id_from_request(request)
     store: AppStore = request.app.state.app_store
-    if not await store.conversation_owned(user.id, conversation_id):
+    try:
+        await store.require_conversation_writable(user.id, conversation_id)
+    except KeyError:
         raise HTTPException(status_code=404, detail="Conversation not found")
     session_key = _conversation_session_key(user.id, conversation_id)
     return user, conversation_id, session_key
@@ -778,7 +787,7 @@ async def lifespan(app: FastAPI):
     config = load_config()
     validate_runtime_config(config)
 
-    app_store = AppStore(config.app_db_path)
+    app_store = AppStore(config.app_db_path, default_run_id=config.run_id)
     await app_store.open()
     app.state.app_store = app_store
     app.state.auth_cookie_secure = bool(config.auth_cookie_secure)
@@ -799,12 +808,7 @@ async def lifespan(app: FastAPI):
             logging.getLogger(name).setLevel(logging.ERROR)
 
     rid = (config.run_id or "").strip()
-    if not rid:
-        logger.warning(
-            "run_id is empty: ANN/bridges search the full vector index"
-        )
-    else:
-        logger.info("corpus run_id=%s", rid)
+    logger.info("default account corpus run_id=%s", rid)
     if not config.rerank_enabled:
         logger.warning("rerank_enabled=false: S2b keeps ANN order by sim")
     else:
@@ -847,6 +851,21 @@ async def _feature_flag_middleware(request: Request, call_next):
 
 
 app = FastAPI(title="Voice Assistant Server", lifespan=lifespan)
+
+
+@app.exception_handler(ConversationRunMismatchError)
+async def conversation_run_mismatch_handler(
+    _request: Request, exc: ConversationRunMismatchError
+):
+    return JSONResponse(
+        {
+            "error": "conversation_run_mismatch",
+            "message": "Этот чат относится к другому корпусу и доступен только для чтения.",
+            "conversationRunId": exc.conversation_run_id,
+            "accountRunId": exc.account_run_id,
+        },
+        status_code=409,
+    )
 
 # Last added middleware runs first. Auth inner, CORS outer so 401 gets CORS headers.
 app.add_middleware(BaseHTTPMiddleware, dispatch=ui_auth_middleware)
@@ -1245,6 +1264,7 @@ async def _persistent_stream(
             "tools": tools,
             "steps": steps,
             "elapsedSec": max(1, round(time.monotonic() - started)),
+            "retrievalRunId": user.run_id,
         }
         if graph_run_id:
             payload["graphRunId"] = graph_run_id
@@ -1304,6 +1324,7 @@ async def _persistent_stream(
             profile_name=profile_name,
             turn_context={
                 "user_id": user.id,
+                "run_id": user.run_id,
                 "conversation_id": conversation_id,
                 "branch_id": branch_id,
                 "checkpoint_id": user_checkpoint_id,
@@ -1656,6 +1677,7 @@ async def _approved_stream(
             "tools": tools,
             "steps": steps,
             "elapsedSec": max(1, round(time.monotonic() - started)),
+            "retrievalRunId": user.run_id,
         }
         if graph_run_id:
             payload["graphRunId"] = graph_run_id
@@ -1702,6 +1724,7 @@ async def _approved_stream(
             profile_name=profile_name,
             turn_context={
                 "user_id": user.id,
+                "run_id": user.run_id,
                 "conversation_id": conversation_id,
                 "branch_id": branch_id,
                 "checkpoint_id": checkpoint_id,
@@ -2017,7 +2040,15 @@ async def process_audio(request: Request):
     await _hydrate_session(
         store, user, conversation_id, session_key, pipeline.config.llm.history_len
     )
-    recognized, answer = await pipeline.process_audio(wav_bytes, session_id=session_key)
+    recognized, answer = await pipeline.process_audio(
+        wav_bytes,
+        session_id=session_key,
+        turn_context={
+            "user_id": user.id,
+            "run_id": user.run_id,
+            "conversation_id": conversation_id,
+        },
+    )
 
     if not recognized:
         return JSONResponse({"error": "Речь не распознана"}, status_code=422)
@@ -2426,14 +2457,16 @@ async def ui_config(request: Request):
     """Defaults for the web UI (reasoning effort, search depth, audio)."""
     pipeline: ServerPipeline = request.app.state.pipeline
     payload = build_ui_config(pipeline)
-    payload["username"] = _current_user(request).username
+    user = _current_user(request)
+    payload["username"] = user.username
+    payload["run_id"] = user.run_id
     return payload
 
 
 @app.get("/api/me")
 async def account_me(request: Request):
     user = _current_user(request)
-    return {"id": user.id, "username": user.username}
+    return {"id": user.id, "username": user.username, "runId": user.run_id}
 
 
 @app.get("/api/service-guide")
@@ -2583,6 +2616,9 @@ async def tool_approval_resolve(request: Request, approval_id: str, body: Approv
     pending = await store.pending_approval(user.id, approval_id)
     if pending is None:
         raise HTTPException(status_code=404, detail="Approval not found")
+    await store.require_conversation_writable(
+        user.id, str(pending["conversationId"])
+    )
     if body.action != "cancel":
         # Do not consume a pending approval when the key cannot start a model call.
         llm_api_key_from_request(request)
@@ -2984,6 +3020,10 @@ async def card_draft_generate(request: Request, body: CardGenerateBody):
     user = _current_user(request)
     store: AppStore = request.app.state.app_store
     pipeline: ServerPipeline = request.app.state.pipeline
+    try:
+        await store.require_checkpoint_writable(user.id, body.checkpoint_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Checkpoint not found") from exc
     template = await store.template_version_for_user(user.id, body.template_version_id)
     if template is None:
         raise HTTPException(status_code=404, detail="Template version not found")
@@ -3130,8 +3170,13 @@ async def get_graph_viz(request: Request, body: GraphVizBody):
             {"error": "Graph run not found"},
             status_code=404,
         )
+    corpus_run_id = await store.graph_run_corpus_id(user.id, body.graph_run_id)
+    if corpus_run_id is None:
+        return JSONResponse({"error": "Graph run not found"}, status_code=404)
 
-    payload = await build_graph_viz_payload(get_driver(), chains)
+    payload = await build_graph_viz_payload(
+        get_driver(), chains, run_id=corpus_run_id
+    )
     return JSONResponse(payload)
 
 
@@ -3156,7 +3201,9 @@ async def checkpoint_graph(
     )
     if chains is None:
         raise HTTPException(status_code=404, detail="Checkpoint not found")
-    payload = await build_graph_viz_payload(get_driver(), chains)
+    payload = await build_graph_viz_payload(
+        get_driver(), chains, run_id=str(checkpoint["runId"])
+    )
     payload["mode"] = mode
     payload["effectiveScope"] = effective_scope
     return JSONResponse(payload)
@@ -3175,7 +3222,7 @@ async def checkpoint_audit_export(request: Request, checkpoint_id: str):
 @app.post("/graph_explore")
 async def graph_explore(request: Request, body: GraphExploreBody):
     """Text search + limit over the corpus graph. No Cypher from the client, no LLM."""
-    pipeline: ServerPipeline = request.app.state.pipeline
+    user = _current_user(request)
     payload = await build_graph_explore_payload(
         get_driver(),
         q=body.q,
@@ -3183,7 +3230,7 @@ async def graph_explore(request: Request, body: GraphExploreBody):
         field=body.field,
         cursor=body.cursor,
         filters=body.filters.model_dump(),
-        run_id=(pipeline.config.run_id or "").strip(),
+        run_id=user.run_id,
     )
     return JSONResponse(payload)
 
@@ -3195,7 +3242,7 @@ async def graph_search(request: Request, body: GraphExploreBody):
 
 @app.post("/api/graph/expand")
 async def graph_expand(request: Request, body: GraphExpandBody):
-    pipeline: ServerPipeline = request.app.state.pipeline
+    user = _current_user(request)
     return JSONResponse(
         await build_graph_expand_payload(
             get_driver(),
@@ -3204,14 +3251,14 @@ async def graph_expand(request: Request, body: GraphExpandBody):
             exclude_edge_ids=body.exclude_edge_ids,
             direction=body.direction,
             filters=body.filters.model_dump(),
-            run_id=(pipeline.config.run_id or "").strip(),
+            run_id=user.run_id,
         )
     )
 
 
 @app.post("/api/graph/facets")
 async def graph_facets(request: Request, body: GraphFacetsBody):
-    pipeline: ServerPipeline = request.app.state.pipeline
+    user = _current_user(request)
     return JSONResponse(
         await build_graph_facets_payload(
             get_driver(),
@@ -3221,28 +3268,37 @@ async def graph_facets(request: Request, body: GraphFacetsBody):
             source_query=body.source_query,
             source_cursor=body.source_cursor,
             source_limit=body.source_limit,
-            run_id=(pipeline.config.run_id or "").strip(),
+            run_id=user.run_id,
         )
     )
 
 
 @app.get("/api/graph/schema")
 async def graph_schema(request: Request):
-    pipeline: ServerPipeline = request.app.state.pipeline
+    user = _current_user(request)
+    run_id = user.run_id
     driver = get_driver()
     async with driver.session() as session:
         labels = [
             str(row["label"])
             async for row in await session.run(
-                "CALL db.labels() YIELD label "
-                "WHERE label IN $primary_labels RETURN label ORDER BY label",
-                primary_labels=list(PRIMARY_NODE_LABELS),
+                """MATCH (n)-[r]-()
+                   WHERE r.run_id = $run_id
+                     AND trim(coalesce(toString(r.evidence), '')) <> ''
+                   UNWIND labels(n) AS label
+                   RETURN DISTINCT label ORDER BY label""",
+                run_id=run_id,
             )
         ]
         rels = [str(row["relationshipType"]) async for row in await session.run(
-            "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType ORDER BY relationshipType"
+            """MATCH ()-[r]->()
+               WHERE r.run_id = $run_id
+                 AND trim(coalesce(toString(r.evidence), '')) <> ''
+               RETURN DISTINCT type(r) AS relationshipType
+               ORDER BY relationshipType""",
+            run_id=run_id,
         )]
-    return {"nodeLabels": labels, "relationshipTypes": rels, "runId": (pipeline.config.run_id or "").strip()}
+    return {"nodeLabels": labels, "relationshipTypes": rels, "runId": run_id}
 
 
 @app.get("/login")

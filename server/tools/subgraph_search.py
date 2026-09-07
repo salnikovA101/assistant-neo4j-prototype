@@ -89,10 +89,10 @@ def _format_accepted_chains(
         "Format only (behaviour rules are in the system prompt):",
         "UNIT = one tour in walk order; consecutive cards share a vertex "
         "(A-B, then B-C).",
-        "Card = `Label: A —REL→ Label: B`, next line = the evidence text with "
+        "Card = `A —REL→ B` (node names only), next line = the evidence text with "
         "(source:N; conf=0-1 or None).",
         "@Hub = still at that vertex (a sibling edge), not the next process step.",
-        "Evidence text may name more entities than the node labels do.",
+        "Evidence text may name more entities than the graph endpoints do.",
         "conf and UNIT numbers are service fields; source:N is copied from the "
         "evidence line.",
         "",
@@ -187,7 +187,18 @@ class SubgraphSearchAgent:
 
             driver = get_driver()
             turn = current_turn()
-            params = merge_params(retrieval_param_overrides(load_config()))
+            config = load_config()
+            effective_run_id = (
+                (turn.run_id if turn is not None else config.run_id) or ""
+            ).strip()
+            if not effective_run_id:
+                return f"{TOOL_ERROR}: run_id is required for corpus search"
+            params = merge_params(
+                {
+                    **retrieval_param_overrides(config),
+                    "run_id": effective_run_id,
+                }
+            )
             persistent = bool(
                 turn
                 and turn.store is not None
@@ -226,6 +237,14 @@ class SubgraphSearchAgent:
                 if not payload:
                     return f"{NO_RESULTS}: all selected subquestions are closed in the current research-question list."
                 retrieval = dict(turn.retrieval_state or {})
+                if str(retrieval.get("corpusRevision") or "") != effective_run_id:
+                    retrieval = {
+                        "algorithmVersion": RETRIEVAL_STATE_VERSION,
+                        "s3Bundle": {},
+                        "carousel": {},
+                        "priorSignatures": [],
+                        "corpusRevision": effective_run_id,
+                    }
                 master = dict(retrieval.get("s3Bundle") or {})
                 master_graphs = dict(master.get("graphs") or {})
                 missing = [item for item in payload if item["id"] not in master_graphs]
@@ -312,7 +331,7 @@ class SubgraphSearchAgent:
                                     separators=(",", ":"),
                                 ).encode("utf-8")
                             ).hexdigest(),
-                            "corpusRevision": str(params.run_id or "all"),
+                            "corpusRevision": effective_run_id,
                             "s3Hashes": {
                                 key: hashlib.sha256(
                                     json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")

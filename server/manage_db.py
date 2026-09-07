@@ -10,10 +10,15 @@ import time
 from pathlib import Path
 
 from server.core.app_store import AppStore
+from server.utils.config import load_config
 
 
 async def _backup(destination: str) -> None:
-    store = AppStore(os.getenv("APP_DB_PATH", "data/assistant.db"))
+    config = load_config()
+    store = AppStore(
+        os.getenv("APP_DB_PATH", config.app_db_path),
+        default_run_id=config.run_id,
+    )
     await store.open()
     try:
         await store.backup(destination)

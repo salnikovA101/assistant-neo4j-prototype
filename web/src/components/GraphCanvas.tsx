@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import { DataSet, Network } from "vis-network/standalone";
 import "vis-network/styles/vis-network.min.css";
 import type { GraphCollectionItem, GraphEdge, GraphNode, GraphPayload } from "../types";
-import { visibleTripletCaption } from "../uiLabels";
+import { colorForLabels, DEFAULT_GRAPH_NODE_COLOR } from "../graphColors";
+import { normalizedLabels, visibleNodeRef, visibleTripletCaption } from "../uiLabels";
 import { IconClose, IconSidebar } from "./Icons";
 
 type Selected = { kind: "node"; node: GraphNode } | { kind: "edge"; edge: GraphEdge } | null;
@@ -60,15 +61,16 @@ function fitVisibleGraph(network: Network, nodeCount: number): void {
   });
 }
 
-function captionOf(node: GraphNode): string { return (node.caption || "").trim() || node.group || node.id; }
+function captionOf(node: GraphNode): string { return (node.caption || "").trim() || node.id; }
 function nodeKey(node: GraphNode): string { return `node:${node.id}`; }
 function edgeKey(edge: GraphEdge): string { return `edge:${edge.id}`; }
 
 function collectionNode(edge: GraphEdge, side: "from" | "to"): GraphNode {
   const id = side === "from" ? edge.from : edge.to;
   const caption = side === "from" ? edge.from_name || id : edge.to_name || id;
-  const group = side === "from" ? edge.from_group || "Сущность" : edge.to_group || "Сущность";
-  return { id, label: caption, caption, group, color: side === "from" ? "#6ea8fe" : "#b48ad8", properties: {} };
+  const labels = normalizedLabels(side === "from" ? edge.from_labels : edge.to_labels);
+  const group = "Вершина";
+  return { id, label: group, caption, labels, group, color: colorForLabels(labels), properties: { labels } };
 }
 
 async function copyText(text: string): Promise<void> {
@@ -210,18 +212,21 @@ export function GraphCanvas({
   const collectedNodeIds = useMemo(() => new Set(collection.filter((item) => item.kind === "node").map((item) => (item as Extract<GraphCollectionItem, { kind: "node" }>).node.id)), [collection]);
   const collectedEdgeIds = useMemo(() => new Set(collection.filter((item) => item.kind === "edge").map((item) => (item as Extract<GraphCollectionItem, { kind: "edge" }>).edge.id)), [collection]);
 
-  const nodeVis = (node: GraphNode, position?: { x: number; y: number }) => ({
-    id: node.id,
-    label: captionOf(node),
-    color: {
-      background: node.color || "#a5abb6",
-      border: collectedNodeIds.has(node.id) ? "#8ab4ff" : node.color || "#a5abb6",
-      highlight: { background: node.color || "#a5abb6", border: "#ececec" },
-    },
-    borderWidth: collectedNodeIds.has(node.id) ? 3 : 0,
-    title: `${node.group}: ${captionOf(node)}`,
-    ...(position || {}),
-  });
+  const nodeVis = (node: GraphNode, position?: { x: number; y: number }) => {
+    const nodeColor = colorForLabels(node.labels, node.color || DEFAULT_GRAPH_NODE_COLOR);
+    return {
+      id: node.id,
+      label: captionOf(node),
+      color: {
+        background: nodeColor,
+        border: collectedNodeIds.has(node.id) ? "#8ab4ff" : nodeColor,
+        highlight: { background: nodeColor, border: "#ececec" },
+      },
+      borderWidth: collectedNodeIds.has(node.id) ? 3 : 0,
+      title: visibleNodeRef(node.labels, captionOf(node)),
+      ...(position || {}),
+    };
+  };
   const edgeVis = (edge: GraphEdge) => ({
     id: edge.id,
     from: edge.from,
@@ -371,12 +376,6 @@ export function GraphCanvas({
     if (network) { network.selectEdges([edge.id]); network.focus(edge.from, { animation: false, scale: 1.08 }); }
   }, [focusEdgeId, filtered.edges]);
 
-  const legend = useMemo(() => {
-    const seen = new Map<string, string>();
-    for (const node of filtered.nodes) if (!seen.has(node.group)) seen.set(node.group, node.color);
-    return [...seen.entries()];
-  }, [filtered.nodes]);
-
   const pickTriplet = (edge: GraphEdge) => {
     setSelected({ kind: "edge", edge });
     setSuggestionsOpen(false);
@@ -441,7 +440,6 @@ export function GraphCanvas({
           <div className="graph-canvas-wrap">
             {filtered.nodes.length ? <>
               <div ref={hostRef} className="graph-canvas" />
-              <div className="graph-legend">{legend.map(([group, color]) => <span key={group} className="graph-legend-item"><i style={{ background: color }} />{group}</span>)}</div>
             </> : <div className="graph-empty">{emptyHint}</div>}
             {workspaceMode && !inspectorOpen && <button type="button" className="inspector-reopen" onClick={() => setInspectorOpen(true)}><IconSidebar /> Показать панель</button>}
           </div>
@@ -532,8 +530,8 @@ export function GraphCanvas({
             </div> : inspectorMode === "filters" ? <div className="graph-filter-content">{filtersContent}</div> : inspectorMode === "detail" ? <>
               {!selected && <p className="muted">Выберите сущность или связь. Найденный контекст останется на схеме.</p>}
               {selected?.kind === "node" && <div>
-                <p className="inspector-kicker">{selected.node.group}</p>
                 <h3>{captionOf(selected.node)}</h3>
+                <NodeClasses labels={selected.node.labels} />
                 <p className="muted">Загружено связей: {selectedExpansion?.loaded ?? selectedLoadedEdges}{selectedExpansion?.total ? ` из ${selectedExpansion.total}` : ""}.</p>
                 <div className="inspector-actions"><button type="button" className="primary-btn" onClick={() => toggleNode(selected.node)}>{collectedNodeIds.has(selected.node.id) ? "Убрать из подборки" : "В подборку"}</button></div>
                 {onExpandNode && graph.nodes.some((item) => item.id === selected.node.id) && <div className="node-expansion-controls">
@@ -549,7 +547,7 @@ export function GraphCanvas({
             </> : <div className="evidence-collection">
               {!collection.length && <p className="muted">Добавляйте сущности и доказательные связи, чтобы собрать контекст разработки.</p>}
               {collection.some((item) => item.kind === "node") && <p className="collection-section-title">Сущности</p>}
-              {collection.filter((item): item is Extract<GraphCollectionItem, { kind: "node" }> => item.kind === "node").map((item) => <button key={item.key} type="button" onClick={() => pickNode(item.node)}><strong>{captionOf(item.node)}</strong><span>{item.node.group}</span></button>)}
+              {collection.filter((item): item is Extract<GraphCollectionItem, { kind: "node" }> => item.kind === "node").map((item) => <button key={item.key} type="button" onClick={() => pickNode(item.node)}><strong>{captionOf(item.node)}</strong></button>)}
               {collection.some((item) => item.kind === "edge") && <p className="collection-section-title">Данные</p>}
               {collection.filter((item): item is Extract<GraphCollectionItem, { kind: "edge" }> => item.kind === "edge").map((item) => <button key={item.key} type="button" onClick={() => pickTriplet(item.edge)}><strong>{visibleTripletCaption(item.edge)}</strong><span>{String(item.edge.properties?.source_file || "Источник не указан")}</span></button>)}
               {collection.length > 0 && <div className="collection-footer">
@@ -562,6 +560,16 @@ export function GraphCanvas({
       )}
     </div>
   );
+}
+
+function NodeClasses({ labels }: { labels: string[] | undefined }) {
+  const classes = normalizedLabels(labels);
+  return <div className="node-classes">
+    <p className="inspector-kicker">Классы</p>
+    {classes.length
+      ? <div className="node-class-chips">{classes.map((label) => <span key={label} className="node-class-chip">{label}</span>)}</div>
+      : <p className="muted node-classes-empty">Классы не указаны</p>}
+  </div>;
 }
 
 function EdgeCard({ edge, inCollection, onToggleCollection }: { edge: GraphEdge; inCollection: boolean; onToggleCollection: () => void }) {

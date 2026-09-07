@@ -120,7 +120,10 @@ class ServerPipeline:
         logger.info("История разговора и контекст сброшены")
 
     async def process_audio(
-        self, wav_bytes: bytes, session_id: Optional[str] = None
+        self,
+        wav_bytes: bytes,
+        session_id: Optional[str] = None,
+        turn_context: Optional[dict] = None,
     ) -> Tuple[Optional[str], str]:
         """
         Обрабатывает аудио: STT → LLM.
@@ -143,7 +146,10 @@ class ServerPipeline:
             logger.info(f"STT: {text}")
 
             answer = await asyncio.wait_for(
-                self.llm.generate_response(user_text=text),
+                self.llm.generate_response(
+                    user_text=text,
+                    turn_context=turn_context,
+                ),
                 timeout=self.config.server.llm_timeout,
             )
             display_answer = answer.strip()
@@ -158,6 +164,7 @@ class ServerPipeline:
         search_depth: Optional[str] = None,
         api_key: Optional[str] = None,
         profile_name: Optional[str] = None,
+        turn_context: Optional[dict] = None,
     ) -> str:
         """
         Обрабатывает текстовый ввод: LLM (без STT).
@@ -188,6 +195,7 @@ class ServerPipeline:
                     search_depth=search_depth,
                     api_key=api_key,
                     profile_name=profile_name,
+                    turn_context=turn_context,
                 ),
                 timeout=self.config.server.llm_timeout,
             )

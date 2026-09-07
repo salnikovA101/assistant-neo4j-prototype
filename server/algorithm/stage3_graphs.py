@@ -77,14 +77,15 @@ def _row_to_bridge(b: dict) -> EdgeRecord:
         end_id=b.get("end_id") or "",
         start_name=start_name,
         end_name=end_name,
-        start_label=b.get("start_label") or "",
-        end_label=b.get("end_label") or "",
+        start_labels=b.get("start_labels") or [],
+        end_labels=b.get("end_labels") or [],
         sim=float(b.get("score") or 0.0),
         chunk_id=chunk_id,
         evidence=evidence,
         source_file=b.get("source_file") or "",
         source="bridge",
         confidence=parse_confidence(b.get("confidence")),
+        run_id=str(b.get("run_id") or ""),
     )
 
 
@@ -105,16 +106,21 @@ async def _add_bridges(
         if e.end_id:
             nodes.add(e.end_id)
     exclude = [e.element_id for e in anchors.values() if e.element_id]
+    run_id = (params.run_id or "").strip()
+    if not run_id:
+        raise ValueError("run_id is required for induced bridges")
     rows = await fetch_induced_bridges_by_sim(
         driver,
         nodes,
         sq_vec,
         exclude_ids=exclude,
         limit=params.bridge_top,
-        run_id=(params.run_id or "").strip(),
+        run_id=run_id,
     )
     out: dict[str, EdgeRecord] = {}
     for b in rows:
+        if str(b.get("run_id") or "").strip() != run_id:
+            raise ValueError("induced bridge crossed the requested run_id")
         e = _row_to_bridge(b)
         if e.edge_key in anchors:
             continue

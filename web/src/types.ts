@@ -21,6 +21,7 @@ export type UiConfig = {
   current_profile: string;
   llm_key_configured: boolean;
   username: string;
+  run_id: string;
   models: UiModel[];
 };
 
@@ -28,6 +29,7 @@ export type GraphNode = {
   id: string;
   label: string;
   caption: string;
+  labels: string[];
   group: string;
   color: string;
   properties: Record<string, unknown>;
@@ -44,6 +46,8 @@ export type GraphEdge = {
   to_name?: string;
   from_group?: string;
   to_group?: string;
+  from_labels?: string[];
+  to_labels?: string[];
   hub_name?: string;
   properties: Record<string, unknown>;
 };
@@ -106,6 +110,7 @@ export type GraphPayload = {
   effectiveScope?: "context" | "new_in_answer" | "unit" | "all_branches";
   page?: { nextCursor?: string | null; hasMore: boolean };
   expansion?: GraphExpansion;
+  runId?: string;
 };
 
 export type ChatRole = "user" | "assistant";
@@ -138,6 +143,7 @@ export type ChatMessage = {
   branchId?: string;
   modelId?: string;
   modelLabel?: string;
+  retrievalRunId?: string;
   sqStatusWarning?: string;
   cardDraft?: CardDraft;
   cardTemplateName?: string;
@@ -241,6 +247,10 @@ export type ConversationSummary = {
   activeBranchId?: string;
   headCheckpointId?: string | null;
   mode?: "auto" | "staged";
+  runId: string;
+  accountRunId: string;
+  readOnly: boolean;
+  readOnlyReason?: "run_id_changed" | null;
 };
 
 export type TurnFailure = {
@@ -308,4 +318,4 @@ export type SavedCard = {
   };
 };
 
-export type Account = { id: string; username: string };
+export type Account = { id: string; username: string; runId: string };

@@ -44,6 +44,7 @@ class TurnState:
     searches_used: int = 0
     seen_subquestions: set[str] = field(default_factory=set)
     user_id: str = ""
+    run_id: str = ""
     conversation_id: str = ""
     branch_id: str = ""
     checkpoint_id: str = ""
@@ -119,6 +120,7 @@ def bind_turn(
         max_searches=max(1, int(max_searches or DEFAULT_MAX_SEARCHES)),
         searches_used=max(0, int(ctx.get("searches_used") or 0)),
         user_id=str(ctx.get("user_id") or ""),
+        run_id=str(ctx.get("run_id") or "").strip(),
         conversation_id=str(ctx.get("conversation_id") or ""),
         branch_id=str(ctx.get("branch_id") or ""),
         checkpoint_id=str(ctx.get("checkpoint_id") or ""),

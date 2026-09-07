@@ -609,8 +609,8 @@ def test_format_edge_appends_source_file():
     assert '  "xy"  (source:None; conf=None)' in bare_text
 
 
-def test_format_spine_with_node_labels():
-    """Primary Neo4j labels appear as `Label: name` on spine and fans."""
+def test_format_spine_uses_names_not_node_labels():
+    """Neo4j labels never leak into the assistant's edge cards."""
     e = EdgeRecord(
         "e1",
         "id-e1",
@@ -643,22 +643,20 @@ def test_format_spine_with_node_labels():
         fans={"met1": [ray]},
         fan_hub_names={"met1": "Metabolite: L-lactic acid"},
     ).format_unit()
-    assert (
-        "Microbe: Lactobacillus —PRODUCES→ Metabolite: L-lactic acid"
-        in text
-    )
+    assert "Lactobacillus —PRODUCES→ L-lactic acid" in text
+    assert "Metabolite:" not in text
     assert '  "makes acid"' in text
     assert "FANS" not in text
-    assert "Metabolite: L-lactic acid —INHIBITS→ Microbe: E. coli" in text
+    assert "L-lactic acid —INHIBITS→ E. coli" in text
     assert '  "kills"' in text
 
 
-def test_pick_primary_label_whitelist():
-    from server.algorithm.models import pick_primary_label
+def test_labels_are_unbounded_metadata_but_node_ref_is_name_only():
+    from server.algorithm.models import format_node_ref, normalize_labels
 
-    assert pick_primary_label(["Entity", "Microbe", "Thing"]) == "Microbe"
-    assert pick_primary_label(["Foo", "Bar"]) == ""
-    assert pick_primary_label(None) == ""
+    assert normalize_labels(["Thing", "Entity", "Thing"]) == ["Entity", "Thing"]
+    assert normalize_labels(None) == []
+    assert format_node_ref(["NewClass", "AnotherClass"], "Node name") == "Node name"
 
 
 def test_format_spine_arrows_forward():
@@ -924,10 +922,10 @@ def test_format_unit_card_layout_walk_and_quote_meta():
     ).format_unit()
     assert text == (
         "UNIT c1\n"
-        "Metabolite: Ph-sensitive dyes —REQUIRES→ EnvironmentCondition: pH\n"
+        "Ph-sensitive dyes —REQUIRES→ pH\n"
         '  "Colorimetric indicators, such as pH-sensitive dyes"'
         "  (a.pdf; conf=1.00)\n"
-        "Metabolite: Alizarin —REQUIRES→ EnvironmentCondition: pH\n"
+        "Alizarin —REQUIRES→ pH\n"
         '  "plant-based natural pigments, such as anthocyanins, curcumin, '
         'and alizarin"  (b.pdf; conf=1.00)'
     )
@@ -1123,6 +1121,7 @@ def test_run_from_graph_cache_skips_s1_s3():
     g = _finalize_graph("sq1", {"e1": e1, "e2": e2}, branch_cap=20)
     sqs = [{"id": "sq1", "text": "Declarative statement about pathways."}]
     params = Params(
+        run_id="test-run",
         effort="low",
         min_path_len=2,
         max_hops=3,
@@ -1155,7 +1154,8 @@ def test_run_from_graph_cache_skips_s1_s3():
         call_counts["s3"] += 1
         raise AssertionError("s3 should not run on cache hit")
 
-    async def fake_hydrate(driver, chains):
+    async def fake_hydrate(driver, chains, *, run_id):
+        assert run_id == "test-run"
         for c in chains:
             c.text = c.format_unit(c.chain_id)
 
@@ -1313,6 +1313,7 @@ def test_run_embed_failure_sets_error():
                 driver=None,  # type: ignore[arg-type]
                 subquestions=[{"id": "sq1", "text": "q"}],
                 effort="low",
+                params=Params(run_id="test-run"),
             )
 
     result = asyncio.run(_run())
@@ -1424,6 +1425,7 @@ def test_pipeline_rerank_failure_sets_error():
                 driver=None,  # type: ignore[arg-type]
                 subquestions=[{"id": "sq1", "text": "q"}],
                 effort="low",
+                params=Params(run_id="test-run"),
             )
 
     result = asyncio.run(_run())

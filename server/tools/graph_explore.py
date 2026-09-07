@@ -9,7 +9,8 @@ from typing import Any
 from neo4j import AsyncDriver
 
 from server.algorithm.cypher.explore import fetch_expand_rows, fetch_explore_rows, fetch_graph_facets
-from server.tools.graph_viz import DEFAULT_NODE_COLOR, NODE_COLORS
+from server.algorithm.models import normalize_labels
+from server.tools.graph_viz import node_color
 
 
 _SKIP_PROP_KEYS = frozenset({"embedding", "evidence_embedding"})
@@ -35,19 +36,21 @@ def rows_to_explore_payload(
         node_id = str(row.get("id") or "")
         if not node_id:
             continue
-        group = str(row.get("label") or "").strip() or "Unknown"
+        labels = normalize_labels(row.get("labels"))
+        group = "Вершина"
         caption = str(row.get("name") or "").strip()
         nodes.append(
             {
                 "id": node_id,
                 "label": group,
                 "caption": caption,
+                "labels": labels,
                 "group": group,
-                "color": NODE_COLORS.get(group, DEFAULT_NODE_COLOR),
+                "color": node_color(labels),
                 "properties": _clean_props(
                     {
                         "name": caption,
-                        "label": group,
+                        "labels": labels,
                     }
                 ),
             }
@@ -61,8 +64,10 @@ def rows_to_explore_payload(
         if not edge_id or not from_id or not to_id:
             continue
         rel = str(row.get("type") or "RELATED")
-        from_group = str(row.get("from_label") or "").strip()
-        to_group = str(row.get("to_label") or "").strip()
+        from_labels = normalize_labels(row.get("from_labels"))
+        to_labels = normalize_labels(row.get("to_labels"))
+        from_group = "Вершина"
+        to_group = "Вершина"
         from_name = str(row.get("from_name") or "").strip()
         to_name = str(row.get("to_name") or "").strip()
         confidence = row.get("confidence")
@@ -82,6 +87,8 @@ def rows_to_explore_payload(
                 "to_name": to_name,
                 "from_group": from_group,
                 "to_group": to_group,
+                "from_labels": from_labels,
+                "to_labels": to_labels,
                 "properties": _clean_props(
                     {
                         "evidence": str(row.get("evidence") or ""),
@@ -113,6 +120,7 @@ async def build_graph_explore_payload(
         driver, q=q, limit=limit, run_id=run_id, field=field, cursor=cursor, filters=filters
     )
     payload = rows_to_explore_payload(node_rows, edge_rows)
+    payload["runId"] = run_id
     payload["page"] = {"nextCursor": next_cursor, "hasMore": bool(next_cursor)}
     return payload
 
@@ -137,6 +145,7 @@ async def build_graph_expand_payload(
         filters=filters,
     )
     payload = rows_to_explore_payload(node_rows, edge_rows)
+    payload["runId"] = run_id
     payload["expansion"] = {
         "anchorNodeId": node_id,
         "returned": len(edge_rows),
@@ -185,6 +194,7 @@ async def build_graph_facets_payload(
         source_cursor=source_cursor,
         source_limit=source_limit,
     )
+    payload["runId"] = run_id
     if len(_facet_cache) >= _FACET_CACHE_MAX:
         oldest = min(_facet_cache, key=lambda key: _facet_cache[key][0])
         _facet_cache.pop(oldest, None)

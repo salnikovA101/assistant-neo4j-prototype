@@ -111,7 +111,7 @@ def test_normalize_caps_at_six():
 @pytest.mark.asyncio
 async def test_query_rejects_unusable_input_without_spending_budget():
     agent = SubgraphSearchAgent()
-    with bind_turn("medium", max_searches=2):
+    with bind_turn("medium", max_searches=2, context={"run_id": "corpus-test"}):
         out = await agent.query(["закваски для творога"])
         assert out.startswith(TOOL_ERROR)
         assert "not English" in out
@@ -127,7 +127,7 @@ async def test_query_refuses_third_search_in_one_turn(monkeypatch):
     monkeypatch.setattr("server.tools.subgraph_search.get_driver", lambda: object())
 
     agent = SubgraphSearchAgent()
-    with bind_turn("medium", max_searches=2):
+    with bind_turn("medium", max_searches=2, context={"run_id": "corpus-test"}):
         first = await agent.query(["Lactic acid bacteria acidify milk."])
         second = await agent.query(["Anthocyanin films change colour."])
         third = await agent.query(["Chitosan films carry indicator dyes."])
@@ -150,10 +150,11 @@ async def test_query_passes_ui_depth_to_the_pipeline(monkeypatch):
     monkeypatch.setattr("server.tools.subgraph_search.get_driver", lambda: object())
 
     agent = SubgraphSearchAgent()
-    with bind_turn("high", max_searches=2):
+    with bind_turn("high", max_searches=2, context={"run_id": "corpus-test"}):
         await agent.query(["Lactic acid bacteria acidify milk."])
 
     assert seen["effort"] == "high"
     assert [sq["text"] for sq in seen["subquestions"]] == [
         "Lactic acid bacteria acidify milk."
     ]
+    assert seen["params"].run_id == "corpus-test"

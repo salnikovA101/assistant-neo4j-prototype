@@ -89,7 +89,7 @@ function SavedCardEditor({ card, template, busy, onCancel, onSave }: {
 
 export function CardsWorkspace({
   checkpointId, branchId, onNotice, chatMode = false,
-  onGenerate, onInsert, onClose, initialTab = "templates",
+  onGenerate, onInsert, onClose, initialTab = "templates", readOnly = false,
 }: {
   checkpointId: string;
   branchId: string;
@@ -99,6 +99,7 @@ export function CardsWorkspace({
   onInsert?: (card: SavedCard) => void;
   onClose?: () => void;
   initialTab?: "templates" | "library";
+  readOnly?: boolean;
 }) {
   const [tab, setTab] = useState<"templates" | "library">(initialTab);
   const [templates, setTemplates] = useState<CardTemplate[]>([]);
@@ -147,11 +148,42 @@ export function CardsWorkspace({
   return (
     <section className="cards-workspace">
       <header className="workspace-bar">
+        {!chatMode && <label className="ghost-btn card-import-control">Импорт JSON<input type="file" accept="application/json,.json" hidden onChange={async (event) => {
+          const file = event.target.files?.[0];
+          if (!file) return;
+          if (!selectedTemplate) {
+            onNotice("Сначала выберите шаблон на вкладке «Шаблоны».");
+            event.target.value = "";
+            return;
+          }
+          setBusy(true);
+          try {
+            const parsed = JSON.parse(await file.text()); const objects = Array.isArray(parsed) ? parsed : [parsed];
+            if (!objects.length || objects.some((item) => !item || typeof item !== "object" || Array.isArray(item))) throw new Error("JSON должен содержать object или непустой array объектов");
+            const imported = await importCardDraft(selectedTemplate, Array.isArray(parsed) ? objects : objects[0], checkpointId || undefined);
+            setDraft(imported[0] || null); setDraftQueue(imported.slice(1)); setTab("templates"); onNotice(`Импортировано черновиков: ${imported.length}. Проверьте их перед сохранением.`);
+          } catch (error) { onNotice(error instanceof Error ? error.message : "Ошибка импорта"); }
+          finally { setBusy(false); event.target.value = ""; }
+        }} /></label>}
         <nav><button className={tab === "templates" ? "is-on" : ""} onClick={() => setTab("templates")}>Шаблоны</button><button className={tab === "library" ? "is-on" : ""} onClick={() => setTab("library")}>Библиотека</button></nav>
         {onClose && <button type="button" className="icon-btn" aria-label="Закрыть карточки" title="Закрыть" onClick={onClose}>×</button>}
       </header>
 
       {tab === "templates" ? (
+        chatMode ? (
+          <div className="library-shell chat-template-shell">
+            <div className="library-grid chat-template-grid">
+              {templates.length === 0 && <div className="cards-empty-state"><strong>Шаблонов пока нет</strong><p>Встроенные шаблоны появятся здесь, когда карточки будут доступны.</p></div>}
+              {templates.map((item) => <article key={item.id} className="library-card chat-template-card">
+                <div className="chat-template-card-head">
+                  <div><span className="chat-template-kind">{item.system ? "Встроенный" : "Личный"}</span><h2>{item.name}</h2><p>{item.description}</p></div>
+                </div>
+                <CardVisual templateName={item.name} version={item.latestVersion.version} schema={item.latestVersion.schema} ui={item.latestVersion.ui} data={blankData(item.latestVersion.schema)} status="Шаблон" />
+                {onGenerate && <footer><button type="button" className="primary-btn" disabled={busy || readOnly} onClick={() => onGenerate(item.latestVersion.id)}>Создать</button></footer>}
+              </article>)}
+            </div>
+          </div>
+        ) : (
         <div className="cards-grid">
           <div className="cards-list-panel">
             {templates.map((item) => <button type="button" key={item.id} className={selectedTemplate === item.latestVersion.id ? "is-active" : ""} onClick={() => { setSelectedTemplate(item.latestVersion.id); setEditor(null); }}><strong>{item.name}</strong><span>{item.system ? "Встроенный" : "Личный"}</span><p>{item.description}</p></button>)}
@@ -172,7 +204,7 @@ export function CardsWorkspace({
                 <div className="card-detail-head">
                   <div><h2>{template.name}</h2><p>{template.description}</p></div>
                   <div className="template-actions">
-                    {chatMode && onGenerate && <button type="button" className="primary-btn" disabled={busy} onClick={() => onGenerate(template.latestVersion.id)}>Создать</button>}
+                    {chatMode && onGenerate && <button type="button" className="primary-btn" disabled={busy || readOnly} onClick={() => onGenerate(template.latestVersion.id)}>Создать</button>}
                     {!chatMode && <button type="button" className="ghost-btn" onClick={() => setEditor("edit")}>Изменить</button>}
                     {!chatMode && !template.system && <button type="button" className="delete-icon-btn" aria-label="Удалить шаблон" title="Удалить шаблон" disabled={busy} onClick={async () => {
                       if (!window.confirm(`Удалить шаблон «${template.name}»?`)) return;
@@ -200,27 +232,9 @@ export function CardsWorkspace({
             }</div>}
           </div>
         </div>
+        )
       ) : (
         <div className="library-shell">
-          {!chatMode && <div className="library-tools">
-            <label className="ghost-btn">Импорт JSON<input type="file" accept="application/json,.json" hidden onChange={async (event) => {
-              const file = event.target.files?.[0];
-              if (!file) return;
-              if (!selectedTemplate) {
-                onNotice("Сначала выберите шаблон на вкладке «Шаблоны».");
-                event.target.value = "";
-                return;
-              }
-              setBusy(true);
-              try {
-                const parsed = JSON.parse(await file.text()); const objects = Array.isArray(parsed) ? parsed : [parsed];
-                if (!objects.length || objects.some((item) => !item || typeof item !== "object" || Array.isArray(item))) throw new Error("JSON должен содержать object или непустой array объектов");
-                const imported = await importCardDraft(selectedTemplate, Array.isArray(parsed) ? objects : objects[0], checkpointId || undefined);
-                setDraft(imported[0] || null); setDraftQueue(imported.slice(1)); setTab("templates"); onNotice(`Импортировано черновиков: ${imported.length}. Проверьте их перед сохранением.`);
-              } catch (error) { onNotice(error instanceof Error ? error.message : "Ошибка импорта"); }
-              finally { setBusy(false); event.target.value = ""; }
-            }} /></label>
-          </div>}
           <div className="library-grid">
             {cards.length === 0 && <div className="cards-empty-state"><strong>Сохранённых карточек пока нет</strong><p>Откройте диалог, нажмите <code>+</code> у поля сообщения и выберите «Открыть карточки».</p></div>}
             {cards.map((card) => {
@@ -231,10 +245,10 @@ export function CardsWorkspace({
                 catch (error) { onNotice(error instanceof Error ? error.message : "Не удалось сохранить правку"); }
                 finally { setBusy(false); }
               }} />;
-              return <article key={card.id} className="library-card">
+              return <article key={card.id} className={chatMode ? "library-card chat-library-card" : "library-card"}>
                 <CardVisual templateName={cardTemplate?.name || card.template?.name || "Карточка"} version={cardTemplate?.latestVersion.version || card.template?.version} schema={cardTemplate?.latestVersion.schema || card.template?.schema || fallbackSchemaForData(card.latestRevision.data)} ui={cardTemplate?.latestVersion.ui || card.template?.ui || {}} data={{ ...card.latestRevision.data, title: card.title }} provenance={card.latestRevision.provenance} status={`Правка ${card.latestRevision.revision}`} />
                 <footer>
-                  {chatMode && onInsert && <button className="primary-btn" disabled={!branchId || !checkpointId || busy} onClick={() => onInsert(card)}>Вставить в диалог</button>}
+                  {chatMode && onInsert && <button className="primary-btn" disabled={!branchId || !checkpointId || busy || readOnly} onClick={() => onInsert(card)}>Вставить в диалог</button>}
                   {!chatMode && <button className="ghost-btn" onClick={() => setEditingCardId(card.id)}>Изменить</button>}
                   {!chatMode && <button type="button" className="ghost-btn danger-btn" disabled={busy} onClick={async () => {
                     if (!window.confirm(`Убрать карточку «${card.title}» из библиотеки?`)) return;

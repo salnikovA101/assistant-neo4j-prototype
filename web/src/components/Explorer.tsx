@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GraphCollectionItem, GraphFacetItem, GraphFacets, GraphFilters, GraphPayload } from "../types";
 import { fetchGraphExpand, fetchGraphExplore, fetchGraphFacets, fetchGraphSchema } from "../api";
+import { colorForLabel } from "../graphColors";
 import { GraphCanvas, type GraphAppendEvent, type GraphExpansionUi } from "./GraphCanvas";
-import { visibleTripletCaption } from "../uiLabels";
+import { visibleNodeRef, visibleTripletCaption } from "../uiLabels";
 
 const DEFAULT_LIMIT = 100;
 const MIN_LIMIT = 1;
@@ -35,7 +36,7 @@ function collectionDraft(items: GraphCollectionItem[]): string {
   const lines = ["Используй эту подборку из базы знаний как данные для ответа."];
   if (nodes.length) {
     lines.push("", "Сущности:");
-    for (const item of nodes) lines.push(`- ${item.node.group}: ${item.node.caption || item.node.label || item.node.id}`);
+    for (const item of nodes) lines.push(`- ${visibleNodeRef(item.node.labels, item.node.caption || item.node.id)}`);
   }
   if (edges.length) {
     lines.push("", "Данные по связям:");
@@ -213,7 +214,7 @@ export function Explorer({ onUseCollection }: { onUseCollection?: (draft: string
         resultEdges={payload?.all.edges || []}
         activeFilterCount={activeFilterCount}
         filtersContent={<>
-          <FacetSection title="Тип сущности" items={nodeFacets} selected={filters.node_labels} onToggle={(value) => setFilters((current) => ({ ...current, node_labels: toggleValue(current.node_labels, value) }))} />
+          <FacetSection title="Тип сущности" items={nodeFacets} selected={filters.node_labels} onToggle={(value) => setFilters((current) => ({ ...current, node_labels: toggleValue(current.node_labels, value) }))} showColors />
           <FacetSection title="Тип отношения" items={relationshipFacets} selected={filters.relationship_types} onToggle={(value) => setFilters((current) => ({ ...current, relationship_types: toggleValue(current.relationship_types, value) }))} />
           <section className="facet-section"><h3>Источник</h3><input className="facet-search" value={sourceQuery} onChange={(event) => setSourceQuery(event.target.value)} placeholder="Найти статью" />
             <FacetList items={facets?.sources.items || []} selected={filters.sources} onToggle={(value) => setFilters((current) => ({ ...current, sources: toggleValue(current.sources, value) }))} />
@@ -229,10 +230,10 @@ export function Explorer({ onUseCollection }: { onUseCollection?: (draft: string
   </div>;
 }
 
-function FacetSection({ title, items, selected, onToggle }: { title: string; items: GraphFacetItem[]; selected: string[]; onToggle: (value: string) => void }) {
-  return <section className="facet-section"><h3>{title}</h3><FacetList items={items} selected={selected} onToggle={onToggle} /></section>;
+function FacetSection({ title, items, selected, onToggle, showColors = false }: { title: string; items: GraphFacetItem[]; selected: string[]; onToggle: (value: string) => void; showColors?: boolean }) {
+  return <section className="facet-section"><h3>{title}</h3><FacetList items={items} selected={selected} onToggle={onToggle} showColors={showColors} /></section>;
 }
 
-function FacetList({ items, selected, onToggle }: { items: GraphFacetItem[]; selected: string[]; onToggle: (value: string) => void }) {
-  return <div className="facet-list">{items.map((item) => <label key={item.value} className={item.count === 0 && !selected.includes(item.value) ? "is-disabled" : ""}><input type="checkbox" checked={selected.includes(item.value)} disabled={item.count === 0 && !selected.includes(item.value)} onChange={() => onToggle(item.value)} /><span title={item.value}>{item.value}</span><b>{item.count.toLocaleString("ru-RU")}</b></label>)}</div>;
+function FacetList({ items, selected, onToggle, showColors = false }: { items: GraphFacetItem[]; selected: string[]; onToggle: (value: string) => void; showColors?: boolean }) {
+  return <div className="facet-list">{items.map((item) => <label key={item.value} className={item.count === 0 && !selected.includes(item.value) ? "is-disabled" : ""}><input type="checkbox" checked={selected.includes(item.value)} disabled={item.count === 0 && !selected.includes(item.value)} onChange={() => onToggle(item.value)} /><span className="facet-value" title={item.value}>{showColors && <i className="facet-color-dot" style={{ backgroundColor: colorForLabel(item.value) }} aria-hidden="true" />}<span className="facet-value-text">{item.value}</span></span><b>{item.count.toLocaleString("ru-RU")}</b></label>)}</div>;
 }

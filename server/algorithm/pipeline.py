@@ -140,6 +140,13 @@ async def run(
 
     if not state.subquestions:
         return _empty_run_result(p, error="no_subquestions")
+    if not (p.run_id or "").strip():
+        return _empty_run_result(
+            p,
+            error="run_id_required",
+            subquestions=state.subquestions,
+            error_detail="Unscoped Neo4j retrieval is disabled",
+        )
 
     from_graph_cache = False
     s3_bundle_out: dict[str, Any] | None = None
@@ -150,6 +157,17 @@ async def run(
 
     if s3_bundle is not None:
         graphs = load_s3_bundle_graphs(s3_bundle, branch_cap=p.branch_cap)
+        for graph in graphs.values():
+            for edge in graph.edges.values():
+                if edge.run_id and edge.run_id != p.run_id:
+                    return _empty_run_result(
+                        p,
+                        error="cache_run_id_mismatch",
+                        subquestions=state.subquestions,
+                        error_detail="Cached graph belongs to another run_id",
+                    )
+                if not edge.run_id:
+                    edge.run_id = p.run_id
         ann_keys = {
             str(k): list(v) for k, v in (s3_bundle.get("ann_keys") or {}).items()
         }
@@ -251,7 +269,7 @@ async def run(
         logger.info("S5 empty batch; nothing to accept")
         stop_reason = "empty_batch"
     else:
-        await hydrate_chains(driver, batch)
+        await hydrate_chains(driver, batch, run_id=p.run_id)
         state.accepted = label_chains_for_assistant(list(batch))
         logger.info(
             "S5 accept %s chains (carousel order, budget=%s)",

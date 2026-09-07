@@ -142,7 +142,7 @@ class AppConfig(BaseSettings):
 
     debug_mode: bool = False
     audio_enabled: bool = True
-    # Neo4j relationship.run_id for ANN/bridges. Empty = no corpus filter.
+    # Bootstrap/default relationship.run_id for accounts; retrieval is fail-closed.
     run_id: str = ""
     # S2b cross-encoder. false skips Ettin (ANN sim order).
     rerank_enabled: bool = True
@@ -255,6 +255,10 @@ def resolve_request_profile(llm: LlmConfig, name: str | None) -> str:
 
 def validate_runtime_config(config: AppConfig) -> None:
     """Refuse to boot with placeholder Neo4j credentials or an empty LLM model."""
+    if not (config.run_id or "").strip():
+        raise ValueError(
+            "run_id must be non-empty; unscoped Neo4j retrieval is disabled"
+        )
     password = (config.neo4j.password or "").strip()
     if password in _PLACEHOLDER_NEO4J_PASSWORDS:
         raise ValueError(

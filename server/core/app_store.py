@@ -28,6 +28,7 @@ SESSION_TOKEN_BYTES = 32
 _PASSWORD_HASHER = PasswordHasher(memory_cost=19456, time_cost=2, parallelism=1)
 _DUMMY_PASSWORD_HASH = _PASSWORD_HASHER.hash("not-a-real-account-password")
 _SUBQUESTION_REF_RE = re.compile(r"^subquestion:([1-9][0-9]*)$")
+RUN_ID_MAX_LENGTH = 128
 
 
 def now_ms() -> int:
@@ -42,6 +43,18 @@ def normalize_username(value: str) -> str:
     if any(ch not in allowed for ch in username):
         raise ValueError("Логин может содержать a-z, 0-9, точку, дефис и подчёркивание")
     return username
+
+
+def normalize_run_id(value: str) -> str:
+    """Return one exact, non-empty corpus id safe for parameterized queries."""
+    run_id = str(value or "").strip()
+    if not run_id:
+        raise ValueError("run_id не может быть пустым")
+    if len(run_id) > RUN_ID_MAX_LENGTH:
+        raise ValueError(f"run_id не может быть длиннее {RUN_ID_MAX_LENGTH} символов")
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in run_id):
+        raise ValueError("run_id не может содержать управляющие символы")
+    return run_id
 
 
 def validate_password(password: str) -> None:
@@ -82,6 +95,15 @@ class CorruptStoreError(ValueError):
     """Stored JSON blob cannot be parsed."""
 
 
+class ConversationRunMismatchError(Exception):
+    """A conversation is pinned to a corpus other than the account corpus."""
+
+    def __init__(self, conversation_run_id: str, account_run_id: str) -> None:
+        super().__init__("conversation_run_mismatch")
+        self.conversation_run_id = conversation_run_id
+        self.account_run_id = account_run_id
+
+
 def _loads(value: str | None, fallback: Any) -> Any:
     if value is None or value == "":
         return fallback
@@ -96,6 +118,7 @@ class AccountUser:
     id: str
     username: str
     is_active: bool = True
+    run_id: str = ""
 
 
 SCHEMA = """
@@ -108,6 +131,7 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT NOT NULL COLLATE NOCASE UNIQUE,
     password_hash TEXT NOT NULL,
     is_active INTEGER NOT NULL DEFAULT 1,
+    run_id TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -128,6 +152,7 @@ CREATE TABLE IF NOT EXISTS conversations (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title TEXT NOT NULL DEFAULT 'Новый чат',
+    run_id TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -408,8 +433,15 @@ EXPERIMENT_TEMPLATE_SCHEMA: dict[str, Any] = {
 class AppStore:
     """Single-connection async repository. All ownership checks live here."""
 
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, *, default_run_id: str | None = None) -> None:
+        if default_run_id is None:
+            # Keep direct test/maintenance construction compatible while the
+            # server and CLIs pass the already-loaded config explicitly.
+            from server.utils.config import load_config
+
+            default_run_id = load_config().run_id
         self.path = str(Path(path).expanduser())
+        self.default_run_id = normalize_run_id(default_run_id)
         self.db: aiosqlite.Connection | None = None
         self._write_lock = asyncio.Lock()
 
@@ -457,6 +489,26 @@ class AppStore:
         """Add branch/checkpoint columns and backfill a main branch for linear transcripts."""
         conn = self._conn()
         await conn.executescript(STATE_SCHEMA)
+        user_columns = await self._table_columns("users")
+        if "run_id" not in user_columns:
+            await conn.execute("ALTER TABLE users ADD COLUMN run_id TEXT NOT NULL DEFAULT ''")
+        await conn.execute(
+            "UPDATE users SET run_id=? WHERE trim(COALESCE(run_id,''))=''",
+            (self.default_run_id,),
+        )
+        conversation_columns = await self._table_columns("conversations")
+        if "run_id" not in conversation_columns:
+            await conn.execute(
+                "ALTER TABLE conversations ADD COLUMN run_id TEXT NOT NULL DEFAULT ''"
+            )
+        await conn.execute(
+            """UPDATE conversations
+               SET run_id=COALESCE((
+                   SELECT u.run_id FROM users u WHERE u.id=conversations.user_id
+               ), ?)
+               WHERE trim(COALESCE(run_id,''))=''""",
+            (self.default_run_id,),
+        )
         columns = await self._table_columns("messages")
         additions = {
             "branch_id": "TEXT",
@@ -572,6 +624,10 @@ class AppStore:
         )
         await conn.execute(
             "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(8,?)",
+            (now_ms(),),
+        )
+        await conn.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(9,?)",
             (now_ms(),),
         )
         await conn.commit()
@@ -828,16 +884,23 @@ class AppStore:
         )).fetchone()
         return bool(row) and str(row["status"]) == "dead"
 
-    async def create_user(self, username: str, password: str) -> AccountUser:
+    async def create_user(
+        self, username: str, password: str, *, run_id: str | None = None
+    ) -> AccountUser:
         username = normalize_username(username)
         password_hash = hash_password(password)
-        user = AccountUser(str(uuid.uuid4()), username)
+        corpus_run_id = normalize_run_id(
+            self.default_run_id if run_id is None else run_id
+        )
+        user = AccountUser(str(uuid.uuid4()), username, True, corpus_run_id)
         ts = now_ms()
         async with self._write_lock:
             try:
                 await self._conn().execute(
-                    "INSERT INTO users(id,username,password_hash,is_active,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-                    (user.id, user.username, password_hash, 1, ts, ts),
+                    """INSERT INTO users
+                       (id,username,password_hash,is_active,run_id,created_at,updated_at)
+                       VALUES(?,?,?,?,?,?,?)""",
+                    (user.id, user.username, password_hash, 1, user.run_id, ts, ts),
                 )
                 await self._conn().commit()
             except aiosqlite.IntegrityError as exc:
@@ -847,9 +910,39 @@ class AppStore:
 
     async def list_users(self) -> list[dict[str, Any]]:
         rows = await (await self._conn().execute(
-            "SELECT id,username,is_active,created_at,updated_at FROM users ORDER BY username"
+            "SELECT id,username,is_active,run_id,created_at,updated_at FROM users ORDER BY username"
         )).fetchall()
         return [dict(row) for row in rows]
+
+    async def set_user_run_id(self, username: str, run_id: str) -> dict[str, Any] | None:
+        username = normalize_username(username)
+        next_run_id = normalize_run_id(run_id)
+        ts = now_ms()
+        async with self._write_lock:
+            row = await (await self._conn().execute(
+                "SELECT id,run_id FROM users WHERE username=? COLLATE NOCASE",
+                (username,),
+            )).fetchone()
+            if row is None:
+                return None
+            user_id = str(row["id"])
+            previous = str(row["run_id"] or "")
+            await self._conn().execute(
+                "UPDATE users SET run_id=?,updated_at=? WHERE id=?",
+                (next_run_id, ts, user_id),
+            )
+            stale_row = await (await self._conn().execute(
+                "SELECT COUNT(*) AS n FROM conversations WHERE user_id=? AND run_id<>?",
+                (user_id, next_run_id),
+            )).fetchone()
+            await self._conn().commit()
+        return {
+            "username": username,
+            "previousRunId": previous,
+            "runId": next_run_id,
+            "changed": previous != next_run_id,
+            "readOnlyConversations": int(stale_row["n"] if stale_row else 0),
+        }
 
     async def set_user_active(self, username: str, active: bool) -> bool:
         username = normalize_username(username)
@@ -900,7 +993,7 @@ class AppStore:
         except ValueError:
             return None
         row = await (await self._conn().execute(
-            "SELECT id,username,password_hash,is_active FROM users WHERE username=? COLLATE NOCASE",
+            "SELECT id,username,password_hash,is_active,run_id FROM users WHERE username=? COLLATE NOCASE",
             (username,),
         )).fetchone()
         candidate_hash = str(row["password_hash"]) if row is not None else _DUMMY_PASSWORD_HASH
@@ -909,7 +1002,9 @@ class AppStore:
             return None
         if not bool(row["is_active"]):
             return None
-        return AccountUser(str(row["id"]), str(row["username"]), True)
+        return AccountUser(
+            str(row["id"]), str(row["username"]), True, str(row["run_id"] or "")
+        )
 
     async def create_session(self, user_id: str, lifetime_days: int = 30) -> str:
         raw = secrets.token_urlsafe(SESSION_TOKEN_BYTES)
@@ -927,7 +1022,7 @@ class AppStore:
             return None
         ts = now_ms()
         row = await (await self._conn().execute(
-            """SELECT u.id,u.username,u.is_active,s.id AS session_id,s.last_seen_at
+            """SELECT u.id,u.username,u.is_active,u.run_id,s.id AS session_id,s.last_seen_at
                FROM auth_sessions s JOIN users u ON u.id=s.user_id
                WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>? AND u.is_active=1""",
             (token_digest(raw_token), ts),
@@ -940,7 +1035,9 @@ class AppStore:
                     "UPDATE auth_sessions SET last_seen_at=? WHERE id=?", (ts, row["session_id"])
                 )
                 await self._conn().commit()
-        return AccountUser(str(row["id"]), str(row["username"]), True)
+        return AccountUser(
+            str(row["id"]), str(row["username"]), True, str(row["run_id"] or "")
+        )
 
     async def revoke_session(self, raw_token: str | None) -> None:
         if not raw_token:
@@ -963,9 +1060,18 @@ class AppStore:
         branch_mode = "staged" if mode == "staged" else "auto"
         ts = now_ms()
         async with self._write_lock:
+            user_row = await (await self._conn().execute(
+                "SELECT run_id FROM users WHERE id=? AND is_active=1",
+                (user_id,),
+            )).fetchone()
+            if user_row is None:
+                raise KeyError(user_id)
+            run_id = normalize_run_id(str(user_row["run_id"] or ""))
             await self._conn().execute(
-                "INSERT INTO conversations(id,user_id,title,created_at,updated_at) VALUES(?,?,?,?,?)",
-                (cid, user_id, "Новый чат", ts, ts),
+                """INSERT INTO conversations
+                   (id,user_id,title,run_id,created_at,updated_at)
+                   VALUES(?,?,?,?,?,?)""",
+                (cid, user_id, "Новый чат", run_id, ts, ts),
             )
             branch_id = await self._ensure_conversation_tree(cid, branch_mode)
             await self._conn().commit()
@@ -976,6 +1082,10 @@ class AppStore:
             "updatedAt": ts,
             "activeBranchId": branch_id,
             "mode": branch_mode,
+            "runId": run_id,
+            "accountRunId": run_id,
+            "readOnly": False,
+            "readOnlyReason": None,
         }
 
     async def conversation_owned(self, user_id: str, conversation_id: str) -> bool:
@@ -983,6 +1093,65 @@ class AppStore:
             "SELECT 1 FROM conversations WHERE id=? AND user_id=?", (conversation_id, user_id)
         )).fetchone()
         return row is not None
+
+    async def conversation_run_access(
+        self, user_id: str, conversation_id: str
+    ) -> dict[str, Any] | None:
+        row = await (await self._conn().execute(
+            """SELECT c.run_id AS conversation_run_id,u.run_id AS account_run_id
+               FROM conversations c JOIN users u ON u.id=c.user_id
+               WHERE c.id=? AND c.user_id=?""",
+            (conversation_id, user_id),
+        )).fetchone()
+        if row is None:
+            return None
+        conversation_run_id = str(row["conversation_run_id"] or "")
+        account_run_id = str(row["account_run_id"] or "")
+        return {
+            "conversationRunId": conversation_run_id,
+            "accountRunId": account_run_id,
+            "readOnly": conversation_run_id != account_run_id,
+        }
+
+    async def require_conversation_writable(
+        self, user_id: str, conversation_id: str
+    ) -> str:
+        access = await self.conversation_run_access(user_id, conversation_id)
+        if access is None:
+            raise KeyError(conversation_id)
+        if access["readOnly"]:
+            raise ConversationRunMismatchError(
+                str(access["conversationRunId"]), str(access["accountRunId"])
+            )
+        return str(access["conversationRunId"])
+
+    async def require_branch_writable(self, user_id: str, branch_id: str) -> str:
+        row = await (await self._conn().execute(
+            """SELECT b.conversation_id FROM branches b
+               JOIN conversations c ON c.id=b.conversation_id
+               WHERE b.id=? AND c.user_id=?""",
+            (branch_id, user_id),
+        )).fetchone()
+        if row is None:
+            raise KeyError(branch_id)
+        return await self.require_conversation_writable(
+            user_id, str(row["conversation_id"])
+        )
+
+    async def require_checkpoint_writable(
+        self, user_id: str, checkpoint_id: str
+    ) -> str:
+        row = await (await self._conn().execute(
+            """SELECT cp.conversation_id FROM checkpoints cp
+               JOIN conversations c ON c.id=cp.conversation_id
+               WHERE cp.id=? AND c.user_id=?""",
+            (checkpoint_id, user_id),
+        )).fetchone()
+        if row is None:
+            raise KeyError(checkpoint_id)
+        return await self.require_conversation_writable(
+            user_id, str(row["conversation_id"])
+        )
 
     async def main_branch_id(self, conversation_id: str) -> str:
         return await self._ensure_conversation_tree(conversation_id)
@@ -1082,7 +1251,8 @@ class AppStore:
     async def checkpoint_state(self, user_id: str, checkpoint_id: str) -> dict[str, Any] | None:
         row = await (await self._conn().execute(
             """SELECT cp.id,cp.conversation_id,cp.branch_id,cp.parent_id,cp.message_id,
-                      cp.kind,cp.state_json,cp.created_at,b.mode AS branch_mode
+                      cp.kind,cp.state_json,cp.created_at,b.mode AS branch_mode,
+                      c.run_id AS conversation_run_id
                FROM checkpoints cp JOIN conversations c ON c.id=cp.conversation_id
                JOIN branches b ON b.id=cp.branch_id
                WHERE cp.id=? AND c.user_id=?""",
@@ -1099,6 +1269,7 @@ class AppStore:
             "messageId": row["message_id"],
             "kind": str(row["kind"]),
             "mode": str(row["branch_mode"] or "auto"),
+            "runId": str(row["conversation_run_id"] or ""),
             "state": _loads(row["state_json"], self._empty_checkpoint_state()),
             "agenda": agenda,
             "createdAt": int(row["created_at"]),
@@ -1113,8 +1284,7 @@ class AppStore:
         mode: str | None = None,
         source_branch_id: str | None = None,
     ) -> dict[str, Any]:
-        if not await self.conversation_owned(user_id, conversation_id):
-            raise KeyError(conversation_id)
+        await self.require_conversation_writable(user_id, conversation_id)
         cp = await (await self._conn().execute(
             """SELECT cp.id,b.mode FROM checkpoints cp
                JOIN branches b ON b.id=cp.branch_id
@@ -1365,24 +1535,41 @@ class AppStore:
     async def list_conversations(self, user_id: str, limit: int = 50, before: str | None = None) -> dict[str, Any]:
         limit = max(1, min(int(limit), 100))
         args: list[Any] = [user_id]
-        where = "user_id=?"
+        where = "c.user_id=?"
         if before:
             try:
                 cursor_time, cursor_id = before.split(":", 1)
                 cursor_ts = int(cursor_time)
             except (ValueError, TypeError) as exc:
                 raise ValueError("Invalid conversation cursor") from exc
-            where += " AND (updated_at<? OR (updated_at=? AND id<?))"
+            where += " AND (c.updated_at<? OR (c.updated_at=? AND c.id<?))"
             args.extend([cursor_ts, cursor_ts, cursor_id])
         args.append(limit + 1)
         rows = await (await self._conn().execute(
-            f"SELECT id,title,created_at,updated_at FROM conversations WHERE {where} ORDER BY updated_at DESC,id DESC LIMIT ?",
+            f"""SELECT c.id,c.title,c.run_id,c.created_at,c.updated_at,
+                       u.run_id AS account_run_id
+                FROM conversations c JOIN users u ON u.id=c.user_id
+                WHERE {where}
+                ORDER BY c.updated_at DESC,c.id DESC LIMIT ?""",
             args,
         )).fetchall()
         has_more = len(rows) > limit
         rows = rows[:limit]
         items = [
-            {"id": str(r["id"]), "title": str(r["title"]), "createdAt": int(r["created_at"]), "updatedAt": int(r["updated_at"])}
+            {
+                "id": str(r["id"]),
+                "title": str(r["title"]),
+                "createdAt": int(r["created_at"]),
+                "updatedAt": int(r["updated_at"]),
+                "runId": str(r["run_id"] or ""),
+                "accountRunId": str(r["account_run_id"] or ""),
+                "readOnly": str(r["run_id"] or "") != str(r["account_run_id"] or ""),
+                "readOnlyReason": (
+                    "run_id_changed"
+                    if str(r["run_id"] or "") != str(r["account_run_id"] or "")
+                    else None
+                ),
+            }
             for r in rows
         ]
         for item in items:
@@ -1411,7 +1598,10 @@ class AppStore:
         checkpoint_id: str | None = None,
     ) -> dict[str, Any] | None:
         conv = await (await self._conn().execute(
-            "SELECT id,title,created_at,updated_at FROM conversations WHERE id=? AND user_id=?",
+            """SELECT c.id,c.title,c.run_id,c.created_at,c.updated_at,
+                      u.run_id AS account_run_id
+               FROM conversations c JOIN users u ON u.id=c.user_id
+               WHERE c.id=? AND c.user_id=?""",
             (conversation_id, user_id),
         )).fetchone()
         if conv is None:
@@ -1497,6 +1687,14 @@ class AppStore:
         return {
             "id": str(conv["id"]), "title": str(conv["title"]),
             "createdAt": int(conv["created_at"]), "updatedAt": int(conv["updated_at"]),
+            "runId": str(conv["run_id"] or ""),
+            "accountRunId": str(conv["account_run_id"] or ""),
+            "readOnly": str(conv["run_id"] or "") != str(conv["account_run_id"] or ""),
+            "readOnlyReason": (
+                "run_id_changed"
+                if str(conv["run_id"] or "") != str(conv["account_run_id"] or "")
+                else None
+            ),
             "messages": messages,
             "branches": branches,
             "activeBranchId": branch_id,
@@ -1704,8 +1902,7 @@ class AppStore:
         turn_config: dict[str, Any] | None = None,
         user_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        if not await self.conversation_owned(user_id, conversation_id):
-            raise KeyError(conversation_id)
+        await self.require_conversation_writable(user_id, conversation_id)
         async with self._write_lock:
             await self._conn().execute("BEGIN IMMEDIATE")
             try:
@@ -2441,6 +2638,15 @@ class AppStore:
         )).fetchone()
         return _loads(row["chains_json"], []) if row is not None else None
 
+    async def graph_run_corpus_id(self, user_id: str, graph_run_id: str) -> str | None:
+        row = await (await self._conn().execute(
+            """SELECT c.run_id FROM graph_runs g
+               JOIN conversations c ON c.id=g.conversation_id
+               WHERE g.id=? AND c.user_id=?""",
+            (graph_run_id, user_id),
+        )).fetchone()
+        return str(row["run_id"] or "") if row is not None else None
+
     @staticmethod
     def canonical_subquestion(text: str) -> str:
         return " ".join((text or "").strip().casefold().rstrip("?.!").split())
@@ -2456,6 +2662,7 @@ class AppStore:
         text: str = "",
         ordered_refs: list[str] | None = None,
     ) -> dict[str, Any]:
+        await self.require_branch_writable(user_id, branch_id)
         branch = await self.branch_detail(user_id, branch_id)
         if branch is None:
             raise KeyError(branch_id)
@@ -3115,8 +3322,8 @@ class AppStore:
     ) -> dict[str, Any]:
         if await self.template_version_for_user(user_id, template_version_id) is None:
             raise KeyError(template_version_id)
-        if checkpoint_id and not await self.checkpoint_owned(user_id, checkpoint_id):
-            raise KeyError(checkpoint_id)
+        if checkpoint_id:
+            await self.require_checkpoint_writable(user_id, checkpoint_id)
         draft_id, ts = str(uuid.uuid4()), now_ms()
         async with self._write_lock:
             await self._conn().execute(
@@ -3147,6 +3354,7 @@ class AppStore:
         template_name: str,
     ) -> dict[str, Any]:
         """Persist a generated draft as an assistant message and immutable checkpoint."""
+        await self.require_checkpoint_writable(user_id, checkpoint_id)
         async with self._write_lock:
             await self._conn().execute("BEGIN IMMEDIATE")
             try:
@@ -3254,6 +3462,12 @@ class AppStore:
     async def update_card_draft(
         self, user_id: str, draft_id: str, *, data: dict[str, Any], provenance: dict[str, Any], gaps: list[Any]
     ) -> bool:
+        draft = await self.draft_for_user(user_id, draft_id)
+        if draft is None:
+            return False
+        origin_checkpoint_id = str(draft.get("originCheckpointId") or "")
+        if origin_checkpoint_id:
+            await self.require_checkpoint_writable(user_id, origin_checkpoint_id)
         async with self._write_lock:
             ts = now_ms()
             cur = await self._conn().execute(
@@ -3295,6 +3509,8 @@ class AppStore:
         if row is None:
             raise KeyError(draft_id)
         checkpoint_id = str(row["origin_checkpoint_id"] or "")
+        if checkpoint_id:
+            await self.require_checkpoint_writable(user_id, checkpoint_id)
         origin = await self.audit_export(user_id, checkpoint_id) if checkpoint_id else {"kind": "imported"}
         data = _loads(row["data_json"], {})
         clean_title = " ".join((title or str(data.get("title") or "Карточка")).strip().split())[:120] or "Карточка"
@@ -3561,6 +3777,7 @@ class AppStore:
         card_revision_id: str,
         attached: bool,
     ) -> dict[str, Any]:
+        await self.require_branch_writable(user_id, branch_id)
         branch = await self.branch_detail(user_id, branch_id)
         if branch is None:
             raise KeyError(branch_id)
@@ -3624,6 +3841,7 @@ class AppStore:
         card_revision_id: str,
     ) -> dict[str, Any]:
         """Insert a pinned saved-card revision as an ordinary user message."""
+        await self.require_branch_writable(user_id, branch_id)
         branch = await self.branch_detail(user_id, branch_id)
         if branch is None:
             raise KeyError(branch_id)
@@ -3727,6 +3945,7 @@ class AppStore:
         approval_id: str | None = None,
         revision: int = 1,
     ) -> dict[str, Any]:
+        await self.require_conversation_writable(user_id, conversation_id)
         if not await self.branch_owned(user_id, branch_id):
             raise KeyError(branch_id)
         aid, ts = approval_id or str(uuid.uuid4()), now_ms()
@@ -3816,6 +4035,12 @@ class AppStore:
     ) -> dict[str, Any] | None:
         if action not in {"approve", "revise", "cancel"}:
             raise ValueError("Unsupported approval action")
+        pending = await self.pending_approval(user_id, approval_id)
+        if pending is None:
+            return None
+        await self.require_conversation_writable(
+            user_id, str(pending["conversationId"])
+        )
         next_status = {"approve": "approved", "revise": "revising", "cancel": "cancelled"}[action]
         async with self._write_lock:
             await self._conn().execute("BEGIN IMMEDIATE")
