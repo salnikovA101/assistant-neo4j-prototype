@@ -22,6 +22,23 @@ const ACCOUNT_KEY = "neo4j-assistant.account-id";
 const LLM_KEY = "llm_api_key_override";
 const LLM_KEY_QWEN = "llm_api_key_override:qwen_cloud";
 
+export function getWorkspace(): string {
+  const match = window.location.pathname.match(/^\/ui\/([a-z0-9][a-z0-9_-]{0,63})(?:\/|$)/);
+  return match?.[1] || "packaging";
+}
+
+export function workspaceUiUrl(): string {
+  return `/ui/${getWorkspace()}/`;
+}
+
+export function workspaceLoginUrl(): string {
+  return `/ui/${getWorkspace()}/login`;
+}
+
+export function workspaceLogoutUrl(): string {
+  return `/ui/${getWorkspace()}/logout`;
+}
+
 export function getSessionId(): string {
   return sessionStorage.getItem(SESSION_KEY) || "";
 }
@@ -52,6 +69,7 @@ export function setLlmKey(_profile: string, value: string): void {
 
 export function withHeaders(_profile: string, extra?: HeadersInit): Headers {
   const headers = new Headers(extra);
+  headers.set("X-Workspace", getWorkspace());
   const sessionId = getSessionId();
   if (sessionId) headers.set("X-Session-Id", sessionId);
   const key = getLlmKey();
@@ -59,9 +77,13 @@ export function withHeaders(_profile: string, extra?: HeadersInit): Headers {
   return headers;
 }
 
+export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  return window.fetch(input, { ...init, headers: withHeaders("", init.headers) });
+}
+
 async function json<T>(res: Response, fallback: string): Promise<T> {
   if (res.status === 401) {
-    window.location.assign("/login");
+    window.location.assign(workspaceLoginUrl());
     throw new Error("Сессия истекла");
   }
   let payload: unknown;
@@ -79,12 +101,12 @@ async function json<T>(res: Response, fallback: string): Promise<T> {
 }
 
 export async function fetchMe(): Promise<Account> {
-  return json(await fetch("/api/me"), "Не удалось загрузить аккаунт");
+  return json(await apiFetch("/api/me"), "Не удалось загрузить аккаунт");
 }
 
 export async function fetchServiceGuide(): Promise<string> {
   const payload = await json<{ markdown: string }>(
-    await fetch("/api/service-guide"),
+    await apiFetch("/api/service-guide"),
     "Не удалось загрузить помощь"
   );
   const guide = String(payload.markdown || "").trim();
@@ -94,7 +116,7 @@ export async function fetchServiceGuide(): Promise<string> {
 
 export async function fetchConversations(): Promise<ConversationSummary[]> {
   const body = await json<{ items: ConversationSummary[] }>(
-    await fetch("/api/conversations?limit=100"),
+    await apiFetch("/api/conversations?limit=100"),
     "Не удалось загрузить историю"
   );
   return body.items;
@@ -102,7 +124,7 @@ export async function fetchConversations(): Promise<ConversationSummary[]> {
 
 export async function createConversation(mode: "auto" | "staged" = "staged"): Promise<ConversationSummary> {
   return json(
-    await fetch("/api/conversations", {
+    await apiFetch("/api/conversations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode }),
@@ -120,13 +142,13 @@ export async function fetchConversation(
   if (branchId) params.set("branch_id", branchId);
   if (checkpointId) params.set("checkpoint_id", checkpointId);
   const query = params.size ? `?${params.toString()}` : "";
-  return json(await fetch(`/api/conversations/${encodeURIComponent(id)}${query}`), "Не удалось открыть чат");
+  return json(await apiFetch(`/api/conversations/${encodeURIComponent(id)}${query}`), "Не удалось открыть чат");
 }
 
 export async function fetchResearchMap(id: string, branchId = ""): Promise<ResearchMap> {
   const query = branchId ? `?branch_id=${encodeURIComponent(branchId)}` : "";
   return json(
-    await fetch(`/api/conversations/${encodeURIComponent(id)}/research-map${query}`),
+    await apiFetch(`/api/conversations/${encodeURIComponent(id)}/research-map${query}`),
     "Не удалось загрузить карту хода"
   );
 }
@@ -138,7 +160,7 @@ export async function forkConversation(
   sourceBranchId?: string
 ): Promise<Branch> {
   return json(
-    await fetch(`/api/conversations/${encodeURIComponent(id)}/forks`, {
+    await apiFetch(`/api/conversations/${encodeURIComponent(id)}/forks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -153,7 +175,7 @@ export async function forkConversation(
 
 export async function renameBranch(branchId: string, name: string): Promise<Branch> {
   return json(
-    await fetch(`/api/branches/${encodeURIComponent(branchId)}`, {
+    await apiFetch(`/api/branches/${encodeURIComponent(branchId)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
@@ -169,7 +191,7 @@ export async function agendaEvent(
   input: { sq_ref?: string; text?: string; status?: AgendaItem["status"]; ordered_refs?: string[] } = {}
 ): Promise<{ checkpointId: string; agenda: AgendaItem[] }> {
   return json(
-    await fetch(`/api/branches/${encodeURIComponent(branchId)}/agenda-events`, {
+    await apiFetch(`/api/branches/${encodeURIComponent(branchId)}/agenda-events`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ base_checkpoint_id: baseCheckpointId, action, ...input }),
@@ -180,7 +202,7 @@ export async function agendaEvent(
 
 export async function deleteConversation(id: string): Promise<void> {
   await json(
-    await fetch(`/api/conversations/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    await apiFetch(`/api/conversations/${encodeURIComponent(id)}`, { method: "DELETE" }),
     "Не удалось удалить чат"
   );
 }
@@ -190,26 +212,26 @@ export async function logout(): Promise<void> {
   sessionStorage.removeItem(SESSION_KEY);
   sessionStorage.removeItem(LLM_KEY);
   sessionStorage.removeItem(LLM_KEY_QWEN);
-  await fetch("/logout", { method: "POST", redirect: "manual" });
-  window.location.assign("/login");
+  await apiFetch(workspaceLogoutUrl(), { method: "POST", redirect: "manual" });
+  window.location.assign(workspaceLoginUrl());
 }
 
 export async function fetchUiConfig(): Promise<UiConfig> {
-  const res = await fetch("/ui_config", { headers: withHeaders("") });
-  if (res.status === 401) window.location.assign("/login");
+  const res = await apiFetch("/ui_config", { headers: withHeaders("") });
+  if (res.status === 401) window.location.assign(workspaceLoginUrl());
   if (!res.ok) throw new Error("ui_config failed");
   return res.json();
 }
 
 export async function fetchHealth(): Promise<{ status: string }> {
-  const res = await fetch("/health", { headers: withHeaders("") });
+  const res = await apiFetch("/health", { headers: withHeaders("") });
   if (!res.ok) return { status: "down" };
   return res.json();
 }
 
 export async function fetchGraphViz(runId: string): Promise<GraphPayload> {
   return json(
-    await fetch("/graph_viz", {
+    await apiFetch("/graph_viz", {
       method: "POST",
       headers: withHeaders("", { "Content-Type": "application/json" }),
       body: JSON.stringify({ graph_run_id: runId }),
@@ -226,7 +248,7 @@ export async function fetchGraphExplore(
   filters?: GraphFilters
 ): Promise<GraphPayload> {
   return json(
-    await fetch("/graph_explore", {
+    await apiFetch("/graph_explore", {
       method: "POST",
       headers: withHeaders("", { "Content-Type": "application/json" }),
       body: JSON.stringify({ q, limit, field, cursor, filters }),
@@ -243,7 +265,7 @@ export async function fetchCheckpointGraph(
   const params = new URLSearchParams({ scope });
   if (unitId) params.set("unit_id", unitId);
   return json(
-    await fetch(`/api/checkpoints/${encodeURIComponent(checkpointId)}/graph?${params}`),
+    await apiFetch(`/api/checkpoints/${encodeURIComponent(checkpointId)}/graph?${params}`),
     "Не удалось загрузить данные"
   );
 }
@@ -256,7 +278,7 @@ export async function fetchGraphExpand(
   filters?: GraphFilters
 ): Promise<GraphPayload> {
   return json(
-    await fetch("/api/graph/expand", {
+    await apiFetch("/api/graph/expand", {
       method: "POST",
       headers: withHeaders("", { "Content-Type": "application/json" }),
       body: JSON.stringify({
@@ -279,7 +301,7 @@ export async function fetchGraphFacets(
   sourceLimit = 50
 ): Promise<GraphFacets> {
   return json(
-    await fetch("/api/graph/facets", {
+    await apiFetch("/api/graph/facets", {
       method: "POST",
       headers: withHeaders("", { "Content-Type": "application/json" }),
       body: JSON.stringify({
@@ -296,7 +318,7 @@ export async function fetchGraphFacets(
 }
 
 export async function fetchGraphSchema(): Promise<{ nodeLabels: string[]; relationshipTypes: string[]; runId: string }> {
-  return json(await fetch("/api/graph/schema", { headers: withHeaders("") }), "Не удалось загрузить схему базы");
+  return json(await apiFetch("/api/graph/schema", { headers: withHeaders("") }), "Не удалось загрузить схему базы");
 }
 
 export async function resolveApproval(
@@ -306,7 +328,7 @@ export async function resolveApproval(
   feedback = "",
   signal?: AbortSignal,
 ): Promise<Response> {
-  const res = await fetch(`/api/tool-approvals/${encodeURIComponent(approval.id)}/resolve`, {
+  const res = await apiFetch(`/api/tool-approvals/${encodeURIComponent(approval.id)}/resolve`, {
     method: "POST",
     headers: withHeaders("", { "Content-Type": "application/json", Accept: "text/event-stream" }),
     body: JSON.stringify({
@@ -323,11 +345,11 @@ export async function resolveApproval(
 }
 
 export async function fetchCardTemplates(): Promise<CardTemplate[]> {
-  return json(await fetch("/api/card-templates"), "Не удалось загрузить шаблоны");
+  return json(await apiFetch("/api/card-templates"), "Не удалось загрузить шаблоны");
 }
 
 export async function fetchCards(): Promise<SavedCard[]> {
-  return json(await fetch("/api/cards"), "Не удалось загрузить карточки");
+  return json(await apiFetch("/api/cards"), "Не удалось загрузить карточки");
 }
 
 export async function createCardTemplate(input: {
@@ -338,7 +360,7 @@ export async function createCardTemplate(input: {
   instructions?: string;
 }): Promise<CardTemplate> {
   return json(
-    await fetch("/api/card-templates", {
+    await apiFetch("/api/card-templates", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
@@ -358,7 +380,7 @@ export async function createCardTemplateVersion(
   }
 ): Promise<{ id: string; templateId: string; version: number }> {
   return json(
-    await fetch(`/api/card-templates/${encodeURIComponent(templateId)}/versions`, {
+    await apiFetch(`/api/card-templates/${encodeURIComponent(templateId)}/versions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
@@ -369,7 +391,7 @@ export async function createCardTemplateVersion(
 
 export async function archiveCardTemplate(templateId: string): Promise<void> {
   await json(
-    await fetch(`/api/card-templates/${encodeURIComponent(templateId)}`, { method: "DELETE" }),
+    await apiFetch(`/api/card-templates/${encodeURIComponent(templateId)}`, { method: "DELETE" }),
     "Не удалось удалить шаблон"
   );
 }
@@ -381,7 +403,7 @@ export async function generateCardDraft(
   reasoningEffort?: string
 ): Promise<{ draft: CardDraft; message: ChatMessage; checkpointId: string }> {
   const payload = await json<{ type: string; draft: CardDraft; message: ChatMessage; checkpoint_id: string }>(
-    await fetch("/api/card-drafts/generate", {
+    await apiFetch("/api/card-drafts/generate", {
       method: "POST",
       headers: withHeaders(profile || "", { "Content-Type": "application/json" }),
       body: JSON.stringify({
@@ -398,7 +420,7 @@ export async function generateCardDraft(
 
 export async function saveCardDraft(draftId: string, title = ""): Promise<SavedCard> {
   return json(
-    await fetch(`/api/card-drafts/${encodeURIComponent(draftId)}/save`, {
+    await apiFetch(`/api/card-drafts/${encodeURIComponent(draftId)}/save`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title }),
@@ -416,7 +438,7 @@ export async function updateCardDraft(
   }
 ): Promise<CardDraft> {
   return json(
-    await fetch(`/api/card-drafts/${encodeURIComponent(draftId)}`, {
+    await apiFetch(`/api/card-drafts/${encodeURIComponent(draftId)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...input, gaps: input.gaps || [] }),
@@ -431,7 +453,7 @@ export async function importCardDraft(
   checkpointId?: string
 ): Promise<CardDraft[]> {
   const payload = await json<CardDraft | { items: CardDraft[] }>(
-    await fetch("/api/cards/import", {
+    await apiFetch("/api/cards/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -447,7 +469,7 @@ export async function importCardDraft(
 
 export async function archiveCard(cardId: string): Promise<void> {
   await json(
-    await fetch(`/api/cards/${encodeURIComponent(cardId)}`, { method: "DELETE" }),
+    await apiFetch(`/api/cards/${encodeURIComponent(cardId)}`, { method: "DELETE" }),
     "Не удалось удалить карточку"
   );
 }
@@ -457,7 +479,7 @@ export async function reviseCard(
   input: { title: string; data: Record<string, unknown>; editedFields: string[] }
 ): Promise<SavedCard> {
   return json(
-    await fetch(`/api/cards/${encodeURIComponent(cardId)}`, {
+    await apiFetch(`/api/cards/${encodeURIComponent(cardId)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -477,7 +499,7 @@ export async function attachCard(
   attached = true
 ): Promise<{ checkpointId: string }> {
   return json(
-    await fetch(`/api/branches/${encodeURIComponent(branchId)}/card-attachments`, {
+    await apiFetch(`/api/branches/${encodeURIComponent(branchId)}/card-attachments`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -496,7 +518,7 @@ export async function insertCardMessage(
   cardRevisionId: string
 ): Promise<{ checkpointId: string; message: ChatMessage }> {
   return json(
-    await fetch(`/api/branches/${encodeURIComponent(branchId)}/card-messages`, {
+    await apiFetch(`/api/branches/${encodeURIComponent(branchId)}/card-messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

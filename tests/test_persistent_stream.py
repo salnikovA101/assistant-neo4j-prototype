@@ -157,6 +157,7 @@ async def test_stream_persists_ui_model_context_and_graph_without_leaking_privat
         app_state = SimpleNamespace(pipeline=FakePipeline(), app_store=store)
         request = SimpleNamespace(
             app=SimpleNamespace(state=app_state),
+            state=SimpleNamespace(workspace_run_id="full_corpus_20260713"),
             headers={},
         )
         chunks = []
@@ -208,6 +209,7 @@ async def test_stream_persists_resolved_model_label(tmp_path):
             app=SimpleNamespace(
                 state=SimpleNamespace(pipeline=FakeNamedPipeline(), app_store=store)
             ),
+            state=SimpleNamespace(workspace_run_id="full_corpus_20260713"),
             headers={},
         )
         chunks = [
@@ -254,6 +256,7 @@ async def test_stream_without_terminal_event_is_saved_as_aborted(tmp_path):
         )
         request = SimpleNamespace(
             app=SimpleNamespace(state=SimpleNamespace(pipeline=FakeAbortedPipeline(), app_store=store)),
+            state=SimpleNamespace(workspace_run_id="full_corpus_20260713"),
             headers={},
         )
         chunks = [
@@ -303,6 +306,7 @@ async def test_staged_stream_closes_inner_generator_before_waiting_for_approval(
         pipeline = FakeStagedPipeline()
         request = SimpleNamespace(
             app=SimpleNamespace(state=SimpleNamespace(pipeline=pipeline, app_store=store)),
+            state=SimpleNamespace(workspace_run_id="full_corpus_20260713"),
             headers={},
         )
         chunks = [
@@ -354,6 +358,7 @@ async def test_staged_approval_gate_treats_omitted_open_sq_refs_as_empty(tmp_pat
         pipeline = FakeStagedPipelineOmittedRefs()
         request = SimpleNamespace(
             app=SimpleNamespace(state=SimpleNamespace(pipeline=pipeline, app_store=store)),
+            state=SimpleNamespace(workspace_run_id="full_corpus_20260713"),
             headers={},
         )
         chunks = [
@@ -409,6 +414,7 @@ async def test_staged_help_tool_does_not_open_search_approval(tmp_path):
                     pipeline=FakeStagedHelpPipeline(), app_store=store
                 )
             ),
+            state=SimpleNamespace(workspace_run_id="full_corpus_20260713"),
             headers={},
         )
         chunks = [
@@ -481,7 +487,9 @@ async def test_revised_approval_persists_both_reasoning_phases(tmp_path):
         pipeline = FakeStagedPipeline()
         request = SimpleNamespace(
             app=SimpleNamespace(state=SimpleNamespace(pipeline=pipeline, app_store=store)),
-            state=SimpleNamespace(account_user=user),
+            state=SimpleNamespace(
+                account_user=user, workspace_run_id="full_corpus_20260713"
+            ),
             headers={},
         )
         chunks = [chunk async for chunk in _revised_approval_stream(request, approval, "make it precise")]
@@ -519,6 +527,7 @@ async def test_stream_error_rolls_back_and_returns_composer_text(tmp_path):
         )
         request = SimpleNamespace(
             app=SimpleNamespace(state=SimpleNamespace(pipeline=FakeErrorPipeline(), app_store=store)),
+            state=SimpleNamespace(workspace_run_id="full_corpus_20260713"),
             headers={},
         )
         chunks = [
@@ -569,6 +578,7 @@ async def test_malformed_key_cannot_leave_branch_with_active_turn(tmp_path):
             app=SimpleNamespace(
                 state=SimpleNamespace(pipeline=FakePipeline(), app_store=store)
             ),
+            state=SimpleNamespace(workspace_run_id="full_corpus_20260713"),
             headers={"X-LLM-Api-Key": "short"},
         )
         source = _persistent_stream(

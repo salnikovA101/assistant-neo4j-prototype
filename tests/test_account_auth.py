@@ -9,7 +9,12 @@ from fastapi.testclient import TestClient
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from server.core.app_store import AppStore
-from server.core.http_api import UI_SESSION_COOKIE, set_account_session_cookie, ui_auth_middleware
+from server.core.http_api import (
+    UI_SESSION_COOKIE,
+    set_account_session_cookie,
+    ui_auth_middleware,
+    workspace_session_cookie,
+)
 
 
 def test_database_cookie_basic_and_origin_guard(tmp_path):
@@ -17,11 +22,22 @@ def test_database_cookie_basic_and_origin_guard(tmp_path):
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        store = AppStore(str(tmp_path / "auth.db"))
+        store = AppStore(
+            str(tmp_path / "auth.db"),
+            workspaces={"packaging": "packaging-run", "kefir": "kefir-run"},
+        )
         await store.open()
         user = await store.create_user("worker", "a sufficiently long password")
+        kefir_user = await store.create_user(
+            "kefir-worker", "another sufficiently long password", workspace="kefir"
+        )
         state["token"] = await store.create_session(user.id)
+        state["kefir_token"] = await store.create_session(kefir_user.id)
         app.state.app_store = store
+        app.state.workspace_run_ids = {
+            "packaging": "packaging-run",
+            "kefir": "kefir-run",
+        }
         app.state.auth_trusted_origins = ""
         yield
         await store.close()
@@ -38,18 +54,39 @@ def test_database_cookie_basic_and_origin_guard(tmp_path):
         return {"username": request.state.account_user.username}
 
     with TestClient(app) as client:
-        assert client.get("/private").status_code == 401
+        workspace_headers = {"X-Workspace": "packaging"}
+        assert client.get("/private").status_code == 404
+        assert client.get(
+            "/private", headers={"X-Workspace": "unknown"}
+        ).status_code == 404
+        assert client.get("/ui/unknown/", follow_redirects=False).status_code == 404
+        assert client.get("/private", headers=workspace_headers).status_code == 401
 
         client.cookies.set(UI_SESSION_COOKIE, state["token"])
-        assert client.get("/private").json() == {"username": "worker"}
-        rejected = client.post("/private", headers={"Origin": "https://evil.example"})
+        assert client.get("/private", headers=workspace_headers).json() == {"username": "worker"}
+        assert client.get(
+            "/private", headers={"X-Workspace": "kefir"}
+        ).status_code == 401
+        client.cookies.set(workspace_session_cookie("kefir"), state["kefir_token"])
+        assert client.get(
+            "/private", headers={"X-Workspace": "kefir"}
+        ).json() == {"username": "kefir-worker"}
+        assert client.get("/private", headers=workspace_headers).json() == {"username": "worker"}
+        rejected = client.post(
+            "/private",
+            headers={"Origin": "https://evil.example", **workspace_headers},
+        )
         assert rejected.status_code == 403
 
         client.cookies.clear()
         basic = base64.b64encode(b"worker:a sufficiently long password").decode()
         response = client.post(
             "/private",
-            headers={"Authorization": f"Basic {basic}", "Origin": "https://evil.example"},
+            headers={
+                "Authorization": f"Basic {basic}",
+                "Origin": "https://evil.example",
+                **workspace_headers,
+            },
         )
         assert response.status_code == 200
 
@@ -62,3 +99,4 @@ def test_account_cookie_attributes():
     assert "samesite=lax" in cookie
     assert "secure" in cookie
     assert "max-age=2592000" in cookie
+    assert "ui_session_packaging=" in cookie

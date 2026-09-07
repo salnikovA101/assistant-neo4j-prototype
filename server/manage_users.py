@@ -23,41 +23,40 @@ async def _run(args: argparse.Namespace) -> int:
     config = load_config()
     store = AppStore(
         os.getenv("APP_DB_PATH", config.app_db_path),
-        default_run_id=config.run_id,
+        workspaces=config.workspaces,
     )
     await store.open()
     try:
         if args.command == "create":
             user = await store.create_user(
-                args.login, _password(), run_id=getattr(args, "run_id", None)
+                args.login, _password(), workspace=args.workspace
             )
-            print(f"Создан пользователь {user.username}\trun_id={user.run_id}")
+            print(f"Создан пользователь {user.username}\tworkspace={user.workspace}")
         elif args.command == "list":
             rows = await store.list_users()
             if not rows:
                 print("Пользователей нет")
             for row in rows:
                 state = "active" if row["is_active"] else "disabled"
-                print(f'{row["username"]}\t{state}\trun_id={row["run_id"]}')
-        elif args.command == "set-run-id":
-            result = await store.set_user_run_id(args.login, args.run_id)
-            if result is None:
-                raise ValueError("Пользователь не найден")
-            print(
-                f'{result["username"]}: {result["previousRunId"]} -> {result["runId"]}; '
-                f'чатов только для чтения: {result["readOnlyConversations"]}'
-            )
+                print(f'{row["username"]}\t{state}\tworkspace={row["workspace"]}')
         elif args.command == "reset-password":
-            if not await store.reset_password(args.login, _password()):
+            if not await store.reset_password(
+                args.login, _password(), workspace=args.workspace
+            ):
                 raise ValueError("Пользователь не найден")
             print("Пароль изменён, активные сессии отозваны")
         elif args.command in {"disable", "enable"}:
             active = args.command == "enable"
-            if not await store.set_user_active(args.login, active):
+            if not await store.set_user_active(
+                args.login, active, workspace=args.workspace
+            ):
                 raise ValueError("Пользователь не найден")
             print("Пользователь включён" if active else "Пользователь заблокирован")
         elif args.command == "revoke-sessions":
-            await store.revoke_user_sessions(args.login)
+            if not await store.revoke_user_sessions(
+                args.login, workspace=args.workspace
+            ):
+                raise ValueError("Пользователь не найден")
             print("Активные сессии отозваны")
         return 0
     finally:
@@ -70,11 +69,7 @@ def main() -> int:
     for command in ("create", "reset-password", "disable", "enable", "revoke-sessions"):
         child = sub.add_parser(command)
         child.add_argument("login")
-        if command == "create":
-            child.add_argument("--run-id", default=None)
-    set_run_id = sub.add_parser("set-run-id")
-    set_run_id.add_argument("login")
-    set_run_id.add_argument("run_id")
+        child.add_argument("--workspace", required=True)
     sub.add_parser("list")
     try:
         return asyncio.run(_run(parser.parse_args()))

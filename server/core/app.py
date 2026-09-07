@@ -7,6 +7,7 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
+from html import escape
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qs, quote
@@ -20,6 +21,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from server.utils.config import (
     AUTO_PROFILE,
+    DEFAULT_WORKSPACE,
     boot_profile_name,
     load_config,
     resolve_request_profile,
@@ -49,6 +51,8 @@ from server.core.http_api import (
     set_account_session_cookie,
     ui_cache_control_middleware,
     ui_auth_middleware,
+    workspace_run_id_from_request,
+    workspace_session_cookie,
 )
 from server.core.pipeline import ServerPipeline
 from server.core.sessions import session_store
@@ -88,6 +92,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _LOGIN_PAGE = Path(__file__).resolve().parents[1] / "static" / "login.html"
+_LOGIN_STYLE = Path(__file__).resolve().parents[1] / "static" / "login.css"
+_LOGIN_ICON = Path(__file__).resolve().parents[1] / "static" / "icon.svg"
 _MAX_LOGIN_BODY = 4096
 _LOGIN_SECURITY_HEADERS = {
     "Cache-Control": "no-store",
@@ -119,8 +125,15 @@ async def _form_fields(request: Request) -> dict[str, str]:
     return {key: (values[0] if values else "") for key, values in parsed.items()}
 
 
-def _login_html(show_error: bool, *, no_accounts: bool = False) -> HTMLResponse:
+def _login_html(
+    show_error: bool, *, workspace: str, run_id: str, no_accounts: bool = False
+) -> HTMLResponse:
     html = _LOGIN_PAGE.read_text(encoding="utf-8")
+    html = html.replace(
+        "__LOGIN_ACTION__", f"/ui/{quote(workspace, safe='')}/login", 1
+    )
+    html = html.replace("__WORKSPACE__", escape(workspace), 1)
+    html = html.replace("__RUN_ID__", escape(run_id), 1)
     if show_error:
         html = html.replace(' class="login-error" hidden', ' class="login-error"', 1)
     if no_accounts:
@@ -787,9 +800,14 @@ async def lifespan(app: FastAPI):
     config = load_config()
     validate_runtime_config(config)
 
-    app_store = AppStore(config.app_db_path, default_run_id=config.run_id)
+    app_store = AppStore(
+        config.app_db_path,
+        workspaces=config.workspaces,
+        default_workspace=DEFAULT_WORKSPACE,
+    )
     await app_store.open()
     app.state.app_store = app_store
+    app.state.workspace_run_ids = dict(config.workspaces)
     app.state.auth_cookie_secure = bool(config.auth_cookie_secure)
     app.state.auth_session_days = max(1, int(config.auth_session_days))
     app.state.auth_trusted_origins = config.auth_trusted_origins
@@ -807,8 +825,7 @@ async def lifespan(app: FastAPI):
         ]:
             logging.getLogger(name).setLevel(logging.ERROR)
 
-    rid = (config.run_id or "").strip()
-    logger.info("default account corpus run_id=%s", rid)
+    logger.info("configured workspaces=%s", sorted(config.workspaces))
     if not config.rerank_enabled:
         logger.warning("rerank_enabled=false: S2b keeps ANN order by sim")
     else:
@@ -862,7 +879,7 @@ async def conversation_run_mismatch_handler(
             "error": "conversation_run_mismatch",
             "message": "Этот чат относится к другому корпусу и доступен только для чтения.",
             "conversationRunId": exc.conversation_run_id,
-            "accountRunId": exc.account_run_id,
+            "workspaceRunId": exc.workspace_run_id,
         },
         status_code=409,
     )
@@ -881,6 +898,7 @@ app.add_middleware(
         "Accept",
         "X-Session-Id",
         "X-LLM-Api-Key",
+        "X-Workspace",
     ],
     expose_headers=[
         "Recognized-Text",
@@ -1264,7 +1282,7 @@ async def _persistent_stream(
             "tools": tools,
             "steps": steps,
             "elapsedSec": max(1, round(time.monotonic() - started)),
-            "retrievalRunId": user.run_id,
+            "retrievalRunId": workspace_run_id_from_request(request),
         }
         if graph_run_id:
             payload["graphRunId"] = graph_run_id
@@ -1324,7 +1342,7 @@ async def _persistent_stream(
             profile_name=profile_name,
             turn_context={
                 "user_id": user.id,
-                "run_id": user.run_id,
+                "run_id": workspace_run_id_from_request(request),
                 "conversation_id": conversation_id,
                 "branch_id": branch_id,
                 "checkpoint_id": user_checkpoint_id,
@@ -1677,7 +1695,7 @@ async def _approved_stream(
             "tools": tools,
             "steps": steps,
             "elapsedSec": max(1, round(time.monotonic() - started)),
-            "retrievalRunId": user.run_id,
+            "retrievalRunId": workspace_run_id_from_request(request),
         }
         if graph_run_id:
             payload["graphRunId"] = graph_run_id
@@ -1724,7 +1742,7 @@ async def _approved_stream(
             profile_name=profile_name,
             turn_context={
                 "user_id": user.id,
-                "run_id": user.run_id,
+                "run_id": workspace_run_id_from_request(request),
                 "conversation_id": conversation_id,
                 "branch_id": branch_id,
                 "checkpoint_id": checkpoint_id,
@@ -2045,7 +2063,7 @@ async def process_audio(request: Request):
         session_id=session_key,
         turn_context={
             "user_id": user.id,
-            "run_id": user.run_id,
+            "run_id": workspace_run_id_from_request(request),
             "conversation_id": conversation_id,
         },
     )
@@ -2459,14 +2477,15 @@ async def ui_config(request: Request):
     payload = build_ui_config(pipeline)
     user = _current_user(request)
     payload["username"] = user.username
-    payload["run_id"] = user.run_id
+    payload["workspace"] = user.workspace
+    payload["run_id"] = workspace_run_id_from_request(request)
     return payload
 
 
 @app.get("/api/me")
 async def account_me(request: Request):
     user = _current_user(request)
-    return {"id": user.id, "username": user.username, "runId": user.run_id}
+    return {"id": user.id, "username": user.username, "workspace": user.workspace}
 
 
 @app.get("/api/service-guide")
@@ -3230,7 +3249,7 @@ async def graph_explore(request: Request, body: GraphExploreBody):
         field=body.field,
         cursor=body.cursor,
         filters=body.filters.model_dump(),
-        run_id=user.run_id,
+        run_id=workspace_run_id_from_request(request),
     )
     return JSONResponse(payload)
 
@@ -3251,7 +3270,7 @@ async def graph_expand(request: Request, body: GraphExpandBody):
             exclude_edge_ids=body.exclude_edge_ids,
             direction=body.direction,
             filters=body.filters.model_dump(),
-            run_id=user.run_id,
+            run_id=workspace_run_id_from_request(request),
         )
     )
 
@@ -3268,7 +3287,7 @@ async def graph_facets(request: Request, body: GraphFacetsBody):
             source_query=body.source_query,
             source_cursor=body.source_cursor,
             source_limit=body.source_limit,
-            run_id=user.run_id,
+            run_id=workspace_run_id_from_request(request),
         )
     )
 
@@ -3276,7 +3295,7 @@ async def graph_facets(request: Request, body: GraphFacetsBody):
 @app.get("/api/graph/schema")
 async def graph_schema(request: Request):
     user = _current_user(request)
-    run_id = user.run_id
+    run_id = workspace_run_id_from_request(request)
     driver = get_driver()
     async with driver.session() as session:
         labels = [
@@ -3301,52 +3320,79 @@ async def graph_schema(request: Request):
     return {"nodeLabels": labels, "relationshipTypes": rels, "runId": run_id}
 
 
-@app.get("/login")
-async def login_page(request: Request):
+@app.get("/ui/{workspace}/login")
+async def login_page(request: Request, workspace: str):
     """Visual login form. Public. Already-authed users go to the chat."""
     if await account_user_from_request(request):
-        return RedirectResponse("/ui/", status_code=303)
+        return RedirectResponse(f"/ui/{workspace}/", status_code=303)
     store: AppStore = request.app.state.app_store
     return _login_html(
         show_error="error" in request.query_params,
-        no_accounts=await store.user_count() == 0,
+        workspace=workspace,
+        run_id=workspace_run_id_from_request(request),
+        no_accounts=await store.user_count(workspace) == 0,
     )
 
 
-@app.post("/login")
-async def login_submit(request: Request):
+@app.post("/ui/{workspace}/login")
+async def login_submit(request: Request, workspace: str):
     fields = await _form_fields(request)
     username = (fields.get("username") or "").strip()
     password = fields.get("password") or ""
     ip = request.client.host if request.client else "unknown"
-    if not login_attempt_limiter.allowed(ip, username):
-        return RedirectResponse("/login?error=1", status_code=303)
+    limiter_username = f"{workspace}:{username}"
+    if not login_attempt_limiter.allowed(ip, limiter_username):
+        return RedirectResponse(f"/ui/{workspace}/login?error=1", status_code=303)
     store: AppStore = request.app.state.app_store
-    user = await store.authenticate(username, password)
+    user = await store.authenticate(username, password, workspace=workspace)
     if user is None:
-        login_attempt_limiter.failure(ip, username)
-        return RedirectResponse("/login?error=1", status_code=303)
-    login_attempt_limiter.success(ip, username)
+        login_attempt_limiter.failure(ip, limiter_username)
+        return RedirectResponse(f"/ui/{workspace}/login?error=1", status_code=303)
+    login_attempt_limiter.success(ip, limiter_username)
     token = await store.create_session(
         user.id, lifetime_days=request.app.state.auth_session_days
     )
-    response = RedirectResponse("/ui/", status_code=303)
+    response = RedirectResponse(f"/ui/{workspace}/", status_code=303)
     set_account_session_cookie(
         response,
         token,
+        workspace=workspace,
         secure=request.app.state.auth_cookie_secure,
         max_age_days=request.app.state.auth_session_days,
     )
     return response
 
 
-@app.post("/logout")
-async def logout(request: Request):
+@app.post("/ui/{workspace}/logout")
+async def logout(request: Request, workspace: str):
     store: AppStore = request.app.state.app_store
-    await store.revoke_session(request.cookies.get("ui_session"))
-    response = RedirectResponse("/login", status_code=303)
-    clear_ui_session_cookie(response)
+    cookie_name = workspace_session_cookie(workspace)
+    await store.revoke_session(request.cookies.get(cookie_name))
+    response = RedirectResponse(f"/ui/{workspace}/login", status_code=303)
+    clear_ui_session_cookie(response, workspace=workspace)
     return response
+
+
+@app.get("/ui", include_in_schema=False)
+@app.get("/ui/", include_in_schema=False)
+async def ui_default_redirect():
+    return RedirectResponse(f"/ui/{DEFAULT_WORKSPACE}/", status_code=308)
+
+
+# These public login assets must be registered before /ui/{workspace}; otherwise
+# FastAPI interprets "login.css" or "icon.svg" as a workspace name.
+@app.get("/ui/login.css", include_in_schema=False)
+async def ui_login_style():
+    return FileResponse(
+        _LOGIN_STYLE,
+        media_type="text/css",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/ui/icon.svg", include_in_schema=False)
+async def ui_login_icon():
+    return FileResponse(_LOGIN_ICON, media_type="image/svg+xml")
 
 
 def _ui_static_dir() -> str:
@@ -3371,6 +3417,18 @@ async def ui_asset_compat(asset_name: str):
         if assets_dir in stable.parents and stable.is_file():
             return FileResponse(stable)
     raise HTTPException(status_code=404, detail="UI asset not found")
+
+
+@app.get("/ui/{workspace}", include_in_schema=False)
+async def ui_workspace_slash(workspace: str):
+    return RedirectResponse(f"/ui/{workspace}/", status_code=308)
+
+
+@app.get("/ui/{workspace}/{ui_path:path}", include_in_schema=False)
+async def ui_workspace(workspace: str, ui_path: str):
+    if ui_path == "login":
+        raise HTTPException(status_code=405, detail="Method not allowed")
+    return FileResponse(Path(_ui_static_dir()) / "index.html")
 
 
 app.mount("/ui", StaticFiles(directory=_ui_static_dir(), html=True), name="ui")

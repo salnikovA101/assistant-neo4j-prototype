@@ -29,6 +29,9 @@ _PASSWORD_HASHER = PasswordHasher(memory_cost=19456, time_cost=2, parallelism=1)
 _DUMMY_PASSWORD_HASH = _PASSWORD_HASHER.hash("not-a-real-account-password")
 _SUBQUESTION_REF_RE = re.compile(r"^subquestion:([1-9][0-9]*)$")
 RUN_ID_MAX_LENGTH = 128
+DEFAULT_WORKSPACE = "packaging"
+_WORKSPACE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_RESERVED_WORKSPACES = frozenset({"assets"})
 
 
 def now_ms() -> int:
@@ -55,6 +58,15 @@ def normalize_run_id(value: str) -> str:
     if any(ord(ch) < 32 or ord(ch) == 127 for ch in run_id):
         raise ValueError("run_id не может содержать управляющие символы")
     return run_id
+
+
+def normalize_workspace(value: str) -> str:
+    workspace = str(value or "").strip().lower()
+    if not _WORKSPACE_RE.fullmatch(workspace) or workspace in _RESERVED_WORKSPACES:
+        raise ValueError(
+            "Рабочая область должна содержать a-z, 0-9, дефис или подчёркивание"
+        )
+    return workspace
 
 
 def validate_password(password: str) -> None:
@@ -96,12 +108,12 @@ class CorruptStoreError(ValueError):
 
 
 class ConversationRunMismatchError(Exception):
-    """A conversation is pinned to a corpus other than the account corpus."""
+    """A conversation is pinned to a corpus other than the workspace corpus."""
 
-    def __init__(self, conversation_run_id: str, account_run_id: str) -> None:
+    def __init__(self, conversation_run_id: str, workspace_run_id: str) -> None:
         super().__init__("conversation_run_mismatch")
         self.conversation_run_id = conversation_run_id
-        self.account_run_id = account_run_id
+        self.workspace_run_id = workspace_run_id
 
 
 def _loads(value: str | None, fallback: Any) -> Any:
@@ -118,7 +130,7 @@ class AccountUser:
     id: str
     username: str
     is_active: bool = True
-    run_id: str = ""
+    workspace: str = DEFAULT_WORKSPACE
 
 
 SCHEMA = """
@@ -128,12 +140,13 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
-    username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    username TEXT NOT NULL COLLATE NOCASE,
     password_hash TEXT NOT NULL,
     is_active INTEGER NOT NULL DEFAULT 1,
-    run_id TEXT NOT NULL DEFAULT '',
+    workspace TEXT NOT NULL DEFAULT 'packaging',
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+    UNIQUE(username, workspace)
 );
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -433,17 +446,36 @@ EXPERIMENT_TEMPLATE_SCHEMA: dict[str, Any] = {
 class AppStore:
     """Single-connection async repository. All ownership checks live here."""
 
-    def __init__(self, path: str, *, default_run_id: str | None = None) -> None:
-        if default_run_id is None:
-            # Keep direct test/maintenance construction compatible while the
-            # server and CLIs pass the already-loaded config explicitly.
+    def __init__(
+        self,
+        path: str,
+        *,
+        workspaces: dict[str, str] | None = None,
+        default_workspace: str = DEFAULT_WORKSPACE,
+    ) -> None:
+        if workspaces is None:
             from server.utils.config import load_config
 
-            default_run_id = load_config().run_id
+            workspaces = load_config().workspaces
         self.path = str(Path(path).expanduser())
-        self.default_run_id = normalize_run_id(default_run_id)
+        self.default_workspace = normalize_workspace(default_workspace)
+        self.workspace_run_ids = {
+            normalize_workspace(name): normalize_run_id(run_id)
+            for name, run_id in workspaces.items()
+        }
+        if self.default_workspace not in self.workspace_run_ids:
+            raise ValueError(
+                f"Рабочая область {self.default_workspace!r} не настроена"
+            )
         self.db: aiosqlite.Connection | None = None
         self._write_lock = asyncio.Lock()
+
+    def run_id_for_workspace(self, workspace: str) -> str:
+        name = normalize_workspace(workspace)
+        try:
+            return self.workspace_run_ids[name]
+        except KeyError as exc:
+            raise ValueError(f"Неизвестная рабочая область: {name}") from exc
 
     async def open(self) -> None:
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
@@ -485,30 +517,86 @@ class AppStore:
         rows = await (await self._conn().execute(f"PRAGMA table_info({table})")).fetchall()
         return {str(row["name"]) for row in rows}
 
+    async def _migrate_users_login_scope(self) -> None:
+        """Allow the same login in different workspaces; keep it unique inside one."""
+        conn = self._conn()
+        row = await (await conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+        )).fetchone()
+        schema_sql = str(row["sql"] or "") if row is not None else ""
+        compact = "".join(schema_sql.split()).lower().replace('"', "")
+        if "unique(username,workspace)" in compact:
+            return
+        await conn.execute("PRAGMA foreign_keys=OFF")
+        await conn.execute(
+            """CREATE TABLE users_workspace_unique (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL COLLATE NOCASE,
+                password_hash TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                workspace TEXT NOT NULL DEFAULT 'packaging',
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                UNIQUE(username, workspace)
+            )"""
+        )
+        await conn.execute(
+            """INSERT INTO users_workspace_unique
+               (id,username,password_hash,is_active,workspace,created_at,updated_at)
+               SELECT id,username,password_hash,is_active,workspace,created_at,updated_at
+               FROM users"""
+        )
+        await conn.execute("DROP TABLE users")
+        await conn.execute("ALTER TABLE users_workspace_unique RENAME TO users")
+        await conn.execute("PRAGMA foreign_keys=ON")
+
     async def _migrate_state_schema(self) -> None:
         """Add branch/checkpoint columns and backfill a main branch for linear transcripts."""
         conn = self._conn()
         await conn.executescript(STATE_SCHEMA)
         user_columns = await self._table_columns("users")
-        if "run_id" not in user_columns:
-            await conn.execute("ALTER TABLE users ADD COLUMN run_id TEXT NOT NULL DEFAULT ''")
-        await conn.execute(
-            "UPDATE users SET run_id=? WHERE trim(COALESCE(run_id,''))=''",
-            (self.default_run_id,),
-        )
+        legacy_user_run_id = "run_id" in user_columns
+        if "workspace" not in user_columns:
+            await conn.execute(
+                "ALTER TABLE users ADD COLUMN workspace TEXT NOT NULL DEFAULT 'packaging'"
+            )
+        if legacy_user_run_id:
+            # This release intentionally migrates every existing account to the
+            # packaging workspace. Future accounts receive an explicit workspace.
+            await conn.execute(
+                "UPDATE users SET workspace=?", (self.default_workspace,)
+            )
+        else:
+            await conn.execute(
+                "UPDATE users SET workspace=? WHERE trim(COALESCE(workspace,''))=''",
+                (self.default_workspace,),
+            )
         conversation_columns = await self._table_columns("conversations")
         if "run_id" not in conversation_columns:
             await conn.execute(
                 "ALTER TABLE conversations ADD COLUMN run_id TEXT NOT NULL DEFAULT ''"
             )
         await conn.execute(
-            """UPDATE conversations
-               SET run_id=COALESCE((
-                   SELECT u.run_id FROM users u WHERE u.id=conversations.user_id
-               ), ?)
-               WHERE trim(COALESCE(run_id,''))=''""",
-            (self.default_run_id,),
+            "UPDATE conversations SET run_id=? WHERE trim(COALESCE(run_id,''))=''",
+            (self.workspace_run_ids[self.default_workspace],),
         )
+        if legacy_user_run_id:
+            await conn.execute("ALTER TABLE users DROP COLUMN run_id")
+        configured = set(self.workspace_run_ids)
+        stored_rows = await (await conn.execute(
+            "SELECT DISTINCT workspace FROM users"
+        )).fetchall()
+        unknown = sorted(
+            str(row["workspace"] or "")
+            for row in stored_rows
+            if str(row["workspace"] or "") not in configured
+        )
+        if unknown:
+            raise ValueError(
+                "В базе есть аккаунты неизвестных рабочих областей: "
+                + ", ".join(unknown)
+            )
+        await self._migrate_users_login_scope()
         columns = await self._table_columns("messages")
         additions = {
             "branch_id": "TEXT",
@@ -832,8 +920,16 @@ class AppStore:
         )).fetchone()
         return int(row["n"] if row else 0)
 
-    async def user_count(self) -> int:
-        row = await (await self._conn().execute("SELECT COUNT(*) AS n FROM users")).fetchone()
+    async def user_count(self, workspace: str | None = None) -> int:
+        if workspace is None:
+            row = await (await self._conn().execute(
+                "SELECT COUNT(*) AS n FROM users"
+            )).fetchone()
+        else:
+            row = await (await self._conn().execute(
+                "SELECT COUNT(*) AS n FROM users WHERE workspace=?",
+                (normalize_workspace(workspace),),
+            )).fetchone()
         return int(row["n"] if row else 0)
 
     async def banned_llm_models(self, key_fp: str) -> set[str]:
@@ -885,116 +981,127 @@ class AppStore:
         return bool(row) and str(row["status"]) == "dead"
 
     async def create_user(
-        self, username: str, password: str, *, run_id: str | None = None
+        self,
+        username: str,
+        password: str,
+        *,
+        workspace: str = DEFAULT_WORKSPACE,
     ) -> AccountUser:
         username = normalize_username(username)
         password_hash = hash_password(password)
-        corpus_run_id = normalize_run_id(
-            self.default_run_id if run_id is None else run_id
-        )
-        user = AccountUser(str(uuid.uuid4()), username, True, corpus_run_id)
+        workspace = normalize_workspace(workspace)
+        self.run_id_for_workspace(workspace)
+        user = AccountUser(str(uuid.uuid4()), username, True, workspace)
         ts = now_ms()
         async with self._write_lock:
             try:
                 await self._conn().execute(
                     """INSERT INTO users
-                       (id,username,password_hash,is_active,run_id,created_at,updated_at)
+                       (id,username,password_hash,is_active,workspace,created_at,updated_at)
                        VALUES(?,?,?,?,?,?,?)""",
-                    (user.id, user.username, password_hash, 1, user.run_id, ts, ts),
+                    (user.id, user.username, password_hash, 1, user.workspace, ts, ts),
                 )
                 await self._conn().commit()
             except aiosqlite.IntegrityError as exc:
                 await self._conn().rollback()
-                raise ValueError("Пользователь с таким логином уже существует") from exc
+                raise ValueError(
+                    "Пользователь с таким логином уже существует в этой рабочей области"
+                ) from exc
         return user
 
     async def list_users(self) -> list[dict[str, Any]]:
         rows = await (await self._conn().execute(
-            "SELECT id,username,is_active,run_id,created_at,updated_at FROM users ORDER BY username"
+            """SELECT id,username,is_active,workspace,created_at,updated_at
+               FROM users ORDER BY workspace, username"""
         )).fetchall()
         return [dict(row) for row in rows]
 
-    async def set_user_run_id(self, username: str, run_id: str) -> dict[str, Any] | None:
+    async def set_user_active(
+        self, username: str, active: bool, *, workspace: str = DEFAULT_WORKSPACE
+    ) -> bool:
         username = normalize_username(username)
-        next_run_id = normalize_run_id(run_id)
-        ts = now_ms()
-        async with self._write_lock:
-            row = await (await self._conn().execute(
-                "SELECT id,run_id FROM users WHERE username=? COLLATE NOCASE",
-                (username,),
-            )).fetchone()
-            if row is None:
-                return None
-            user_id = str(row["id"])
-            previous = str(row["run_id"] or "")
-            await self._conn().execute(
-                "UPDATE users SET run_id=?,updated_at=? WHERE id=?",
-                (next_run_id, ts, user_id),
-            )
-            stale_row = await (await self._conn().execute(
-                "SELECT COUNT(*) AS n FROM conversations WHERE user_id=? AND run_id<>?",
-                (user_id, next_run_id),
-            )).fetchone()
-            await self._conn().commit()
-        return {
-            "username": username,
-            "previousRunId": previous,
-            "runId": next_run_id,
-            "changed": previous != next_run_id,
-            "readOnlyConversations": int(stale_row["n"] if stale_row else 0),
-        }
-
-    async def set_user_active(self, username: str, active: bool) -> bool:
-        username = normalize_username(username)
+        workspace = normalize_workspace(workspace)
         ts = now_ms()
         async with self._write_lock:
             cur = await self._conn().execute(
-                "UPDATE users SET is_active=?,updated_at=? WHERE username=? COLLATE NOCASE",
-                (1 if active else 0, ts, username),
+                """UPDATE users SET is_active=?,updated_at=?
+                   WHERE username=? COLLATE NOCASE AND workspace=?""",
+                (1 if active else 0, ts, username, workspace),
             )
             if cur.rowcount and not active:
                 await self._conn().execute(
-                    "UPDATE auth_sessions SET revoked_at=? WHERE user_id=(SELECT id FROM users WHERE username=? COLLATE NOCASE) AND revoked_at IS NULL",
-                    (ts, username),
+                    """UPDATE auth_sessions SET revoked_at=?
+                       WHERE user_id=(
+                           SELECT id FROM users
+                           WHERE username=? COLLATE NOCASE AND workspace=?
+                       ) AND revoked_at IS NULL""",
+                    (ts, username, workspace),
                 )
             await self._conn().commit()
         return bool(cur.rowcount)
 
-    async def reset_password(self, username: str, password: str) -> bool:
+    async def reset_password(
+        self, username: str, password: str, *, workspace: str = DEFAULT_WORKSPACE
+    ) -> bool:
         username = normalize_username(username)
+        workspace = normalize_workspace(workspace)
         password_hash = hash_password(password)
         ts = now_ms()
         async with self._write_lock:
             cur = await self._conn().execute(
-                "UPDATE users SET password_hash=?,updated_at=? WHERE username=? COLLATE NOCASE",
-                (password_hash, ts, username),
+                """UPDATE users SET password_hash=?,updated_at=?
+                   WHERE username=? COLLATE NOCASE AND workspace=?""",
+                (password_hash, ts, username, workspace),
             )
             if cur.rowcount:
                 await self._conn().execute(
-                    "UPDATE auth_sessions SET revoked_at=? WHERE user_id=(SELECT id FROM users WHERE username=? COLLATE NOCASE) AND revoked_at IS NULL",
-                    (ts, username),
+                    """UPDATE auth_sessions SET revoked_at=?
+                       WHERE user_id=(
+                           SELECT id FROM users
+                           WHERE username=? COLLATE NOCASE AND workspace=?
+                       ) AND revoked_at IS NULL""",
+                    (ts, username, workspace),
                 )
             await self._conn().commit()
         return bool(cur.rowcount)
 
-    async def revoke_user_sessions(self, username: str) -> bool:
+    async def revoke_user_sessions(
+        self, username: str, *, workspace: str = DEFAULT_WORKSPACE
+    ) -> bool:
         username = normalize_username(username)
+        workspace = normalize_workspace(workspace)
         async with self._write_lock:
-            cur = await self._conn().execute(
-                "UPDATE auth_sessions SET revoked_at=? WHERE user_id=(SELECT id FROM users WHERE username=? COLLATE NOCASE) AND revoked_at IS NULL",
-                (now_ms(), username),
+            row = await (await self._conn().execute(
+                """SELECT id FROM users
+                   WHERE username=? COLLATE NOCASE AND workspace=?""",
+                (username, workspace),
+            )).fetchone()
+            if row is None:
+                return False
+            await self._conn().execute(
+                """UPDATE auth_sessions SET revoked_at=?
+                   WHERE user_id=? AND revoked_at IS NULL""",
+                (now_ms(), str(row["id"])),
             )
             await self._conn().commit()
-        return bool(cur.rowcount)
+        return True
 
-    async def authenticate(self, username: str, password: str) -> AccountUser | None:
+    async def authenticate(
+        self,
+        username: str,
+        password: str,
+        *,
+        workspace: str = DEFAULT_WORKSPACE,
+    ) -> AccountUser | None:
         try:
             username = normalize_username(username)
+            workspace = normalize_workspace(workspace)
         except ValueError:
             return None
         row = await (await self._conn().execute(
-            "SELECT id,username,password_hash,is_active,run_id FROM users WHERE username=? COLLATE NOCASE",
-            (username,),
+            """SELECT id,username,password_hash,is_active,workspace FROM users
+               WHERE username=? COLLATE NOCASE AND workspace=?""",
+            (username, workspace),
         )).fetchone()
         candidate_hash = str(row["password_hash"]) if row is not None else _DUMMY_PASSWORD_HASH
         valid = await asyncio.to_thread(verify_password, candidate_hash, password)
@@ -1003,7 +1110,7 @@ class AppStore:
         if not bool(row["is_active"]):
             return None
         return AccountUser(
-            str(row["id"]), str(row["username"]), True, str(row["run_id"] or "")
+            str(row["id"]), str(row["username"]), True, str(row["workspace"] or "")
         )
 
     async def create_session(self, user_id: str, lifetime_days: int = 30) -> str:
@@ -1022,7 +1129,7 @@ class AppStore:
             return None
         ts = now_ms()
         row = await (await self._conn().execute(
-            """SELECT u.id,u.username,u.is_active,u.run_id,s.id AS session_id,s.last_seen_at
+            """SELECT u.id,u.username,u.is_active,u.workspace,s.id AS session_id,s.last_seen_at
                FROM auth_sessions s JOIN users u ON u.id=s.user_id
                WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>? AND u.is_active=1""",
             (token_digest(raw_token), ts),
@@ -1036,7 +1143,7 @@ class AppStore:
                 )
                 await self._conn().commit()
         return AccountUser(
-            str(row["id"]), str(row["username"]), True, str(row["run_id"] or "")
+            str(row["id"]), str(row["username"]), True, str(row["workspace"] or "")
         )
 
     async def revoke_session(self, raw_token: str | None) -> None:
@@ -1061,12 +1168,13 @@ class AppStore:
         ts = now_ms()
         async with self._write_lock:
             user_row = await (await self._conn().execute(
-                "SELECT run_id FROM users WHERE id=? AND is_active=1",
+                "SELECT workspace FROM users WHERE id=? AND is_active=1",
                 (user_id,),
             )).fetchone()
             if user_row is None:
                 raise KeyError(user_id)
-            run_id = normalize_run_id(str(user_row["run_id"] or ""))
+            workspace = str(user_row["workspace"] or "")
+            run_id = self.run_id_for_workspace(workspace)
             await self._conn().execute(
                 """INSERT INTO conversations
                    (id,user_id,title,run_id,created_at,updated_at)
@@ -1083,7 +1191,7 @@ class AppStore:
             "activeBranchId": branch_id,
             "mode": branch_mode,
             "runId": run_id,
-            "accountRunId": run_id,
+            "workspaceRunId": run_id,
             "readOnly": False,
             "readOnlyReason": None,
         }
@@ -1098,7 +1206,7 @@ class AppStore:
         self, user_id: str, conversation_id: str
     ) -> dict[str, Any] | None:
         row = await (await self._conn().execute(
-            """SELECT c.run_id AS conversation_run_id,u.run_id AS account_run_id
+            """SELECT c.run_id AS conversation_run_id,u.workspace
                FROM conversations c JOIN users u ON u.id=c.user_id
                WHERE c.id=? AND c.user_id=?""",
             (conversation_id, user_id),
@@ -1106,11 +1214,11 @@ class AppStore:
         if row is None:
             return None
         conversation_run_id = str(row["conversation_run_id"] or "")
-        account_run_id = str(row["account_run_id"] or "")
+        workspace_run_id = self.run_id_for_workspace(str(row["workspace"] or ""))
         return {
             "conversationRunId": conversation_run_id,
-            "accountRunId": account_run_id,
-            "readOnly": conversation_run_id != account_run_id,
+            "workspaceRunId": workspace_run_id,
+            "readOnly": conversation_run_id != workspace_run_id,
         }
 
     async def require_conversation_writable(
@@ -1121,7 +1229,7 @@ class AppStore:
             raise KeyError(conversation_id)
         if access["readOnly"]:
             raise ConversationRunMismatchError(
-                str(access["conversationRunId"]), str(access["accountRunId"])
+                str(access["conversationRunId"]), str(access["workspaceRunId"])
             )
         return str(access["conversationRunId"])
 
@@ -1547,7 +1655,7 @@ class AppStore:
         args.append(limit + 1)
         rows = await (await self._conn().execute(
             f"""SELECT c.id,c.title,c.run_id,c.created_at,c.updated_at,
-                       u.run_id AS account_run_id
+                       u.workspace
                 FROM conversations c JOIN users u ON u.id=c.user_id
                 WHERE {where}
                 ORDER BY c.updated_at DESC,c.id DESC LIMIT ?""",
@@ -1555,23 +1663,24 @@ class AppStore:
         )).fetchall()
         has_more = len(rows) > limit
         rows = rows[:limit]
-        items = [
-            {
+        items = []
+        for r in rows:
+            workspace_run_id = self.run_id_for_workspace(str(r["workspace"] or ""))
+            conversation_run_id = str(r["run_id"] or "")
+            items.append({
                 "id": str(r["id"]),
                 "title": str(r["title"]),
                 "createdAt": int(r["created_at"]),
                 "updatedAt": int(r["updated_at"]),
-                "runId": str(r["run_id"] or ""),
-                "accountRunId": str(r["account_run_id"] or ""),
-                "readOnly": str(r["run_id"] or "") != str(r["account_run_id"] or ""),
+                "runId": conversation_run_id,
+                "workspaceRunId": workspace_run_id,
+                "readOnly": conversation_run_id != workspace_run_id,
                 "readOnlyReason": (
                     "run_id_changed"
-                    if str(r["run_id"] or "") != str(r["account_run_id"] or "")
+                    if conversation_run_id != workspace_run_id
                     else None
                 ),
-            }
-            for r in rows
-        ]
+            })
         for item in items:
             branch = await (await self._conn().execute(
                 """SELECT id,mode,head_checkpoint_id FROM branches WHERE conversation_id=?
@@ -1599,7 +1708,7 @@ class AppStore:
     ) -> dict[str, Any] | None:
         conv = await (await self._conn().execute(
             """SELECT c.id,c.title,c.run_id,c.created_at,c.updated_at,
-                      u.run_id AS account_run_id
+                      u.workspace
                FROM conversations c JOIN users u ON u.id=c.user_id
                WHERE c.id=? AND c.user_id=?""",
             (conversation_id, user_id),
@@ -1684,15 +1793,17 @@ class AppStore:
                     "branchId": branch_id,
                 })
                 messages.append(waiting_payload)
+        workspace_run_id = self.run_id_for_workspace(str(conv["workspace"] or ""))
+        conversation_run_id = str(conv["run_id"] or "")
         return {
             "id": str(conv["id"]), "title": str(conv["title"]),
             "createdAt": int(conv["created_at"]), "updatedAt": int(conv["updated_at"]),
-            "runId": str(conv["run_id"] or ""),
-            "accountRunId": str(conv["account_run_id"] or ""),
-            "readOnly": str(conv["run_id"] or "") != str(conv["account_run_id"] or ""),
+            "runId": conversation_run_id,
+            "workspaceRunId": workspace_run_id,
+            "readOnly": conversation_run_id != workspace_run_id,
             "readOnlyReason": (
                 "run_id_changed"
-                if str(conv["run_id"] or "") != str(conv["account_run_id"] or "")
+                if conversation_run_id != workspace_run_id
                 else None
             ),
             "messages": messages,

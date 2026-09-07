@@ -40,7 +40,7 @@ from server.algorithm.embed_client import (  # noqa: E402
     get_embeddings_batch,
     _resolve_embed_settings,
 )
-from server.utils.config import load_config  # noqa: E402
+from server.utils.config import DEFAULT_WORKSPACE, load_config, workspace_run_id  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -645,7 +645,7 @@ def main() -> None:
     parser.add_argument(
         "--run-id",
         default=None,
-        help="Relationship run_id (default: server/config.yaml run_id)",
+        help="Relationship run_id (default: server/config.yaml workspaces.packaging)",
     )
     parser.add_argument(
         "--force",
@@ -673,11 +673,15 @@ def main() -> None:
     _load_env()
     _require_neo4j_password()
     cfg = load_config()
-    run_id = (args.run_id if args.run_id is not None else cfg.run_id) or ""
+    run_id = (
+        args.run_id
+        if args.run_id is not None
+        else workspace_run_id(cfg, DEFAULT_WORKSPACE)
+    ) or ""
     run_id = str(run_id).strip()
     if not run_id:
         raise SystemExit(
-            "run_id is empty: pass --run-id or set run_id in server/config.yaml"
+            "run_id is empty: pass --run-id or configure workspaces.packaging"
         )
 
     db = _Neo4j(cfg.neo4j.uri, cfg.neo4j.user, cfg.neo4j.password)

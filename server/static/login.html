@@ -4,29 +4,57 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
     <meta name="color-scheme" content="dark">
-    <meta name="theme-color" content="#0d0d0d">
+    <meta name="theme-color" content="#0b0b0d">
     <title>Вход — Neo4j Assistant</title>
     <meta name="robots" content="noindex">
-    <link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
+    <link rel="icon" href="/ui/icon.svg?v=2" type="image/svg+xml">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/ui/login.css">
+    <link rel="stylesheet" href="/ui/login.css?v=3">
 </head>
 <body class="login-page">
-    <main class="login-card">
-        <div class="welcome-logo"><img src="/ui/icon.svg" alt="" width="40" height="40"></div>
-        <h1>Neo4j Assistant</h1>
-        <p class="login-lead">Введите логин и пароль, чтобы открыть рабочее пространство.</p>
-        <p id="login-setup" class="login-error" hidden>Аккаунты ещё не настроены. Обратитесь к администратору.</p>
-        <p id="login-error" class="login-error" hidden>Неверный логин или пароль</p>
-        <form class="login-form" method="post" action="/login" autocomplete="on">
-            <label class="login-label" for="username">Логин</label>
-            <input id="username" name="username" type="text" required autocomplete="username" spellcheck="false" autocapitalize="off" autocorrect="off" autofocus>
-            <label class="login-label" for="password">Пароль</label>
-            <input id="password" name="password" type="password" required autocomplete="current-password" spellcheck="false">
-            <button type="submit" class="login-submit">Войти</button>
-        </form>
+    <aside class="login-context" aria-label="Текущая база данных">
+        <div class="context-workspace">
+            <span class="context-status" aria-hidden="true"></span>
+            <span>workspace</span>
+            <strong>__WORKSPACE__</strong>
+        </div>
+        <div class="context-run">
+            <span>run_id</span>
+            <code>__RUN_ID__</code>
+        </div>
+    </aside>
+
+    <main class="login-shell">
+        <section class="login-card">
+            <header class="login-brand">
+                <span class="welcome-logo"><img src="/ui/icon.svg?v=2" alt="" width="36" height="36"></span>
+                <span>Neo4j Assistant</span>
+            </header>
+
+            <div class="login-copy">
+                <p class="login-eyebrow">Исследовательская среда</p>
+                <h1>С возвращением</h1>
+                <p class="login-lead">Войдите, чтобы продолжить работу с базой знаний и своими диалогами.</p>
+            </div>
+
+            <p id="login-setup" class="login-error" hidden>Аккаунты ещё не настроены. Обратитесь к администратору.</p>
+            <p id="login-error" class="login-error" hidden>Неверный логин или пароль</p>
+
+            <form class="login-form" method="post" action="__LOGIN_ACTION__" autocomplete="on">
+                <label class="login-label" for="username">Логин</label>
+                <input id="username" name="username" type="text" required autocomplete="username" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="Ваш логин" autofocus>
+                <label class="login-label" for="password">Пароль</label>
+                <input id="password" name="password" type="password" required autocomplete="current-password" spellcheck="false" placeholder="Ваш пароль">
+                <button type="submit" class="login-submit"><span>Войти</span><span aria-hidden="true">→</span></button>
+            </form>
+
+            <footer class="login-footer">
+                <span class="footer-lock" aria-hidden="true">●</span>
+                Защищённый доступ к рабочей области
+            </footer>
+        </section>
     </main>
 </body>
 </html>

@@ -21,6 +21,7 @@ export type UiConfig = {
   current_profile: string;
   llm_key_configured: boolean;
   username: string;
+  workspace: string;
   run_id: string;
   models: UiModel[];
 };
@@ -248,7 +249,7 @@ export type ConversationSummary = {
   headCheckpointId?: string | null;
   mode?: "auto" | "staged";
   runId: string;
-  accountRunId: string;
+  workspaceRunId: string;
   readOnly: boolean;
   readOnlyReason?: "run_id_changed" | null;
 };
@@ -318,4 +319,4 @@ export type SavedCard = {
   };
 };
 
-export type Account = { id: string; username: string; runId: string };
+export type Account = { id: string; username: string; workspace: string };

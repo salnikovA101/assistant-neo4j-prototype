@@ -1,5 +1,6 @@
 from pathlib import Path
 import logging
+import re
 
 import yaml
 
@@ -10,6 +11,9 @@ from server.utils.constants import LLMProviderType, TTSModes
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 AUTO_PROFILE = "auto"
+DEFAULT_WORKSPACE = "packaging"
+_WORKSPACE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_RESERVED_WORKSPACES = frozenset({"assets"})
 
 
 class Neo4jConfig(BaseModel):
@@ -142,8 +146,8 @@ class AppConfig(BaseSettings):
 
     debug_mode: bool = False
     audio_enabled: bool = True
-    # Bootstrap/default relationship.run_id for accounts; retrieval is fail-closed.
-    run_id: str = ""
+    # Fixed public workspace slug -> Neo4j relationship.run_id.
+    workspaces: dict[str, str] = Field(default_factory=dict)
     # S2b cross-encoder. false skips Ettin (ANN sim order).
     rerank_enabled: bool = True
     staged_enabled: bool = True
@@ -160,11 +164,26 @@ class AppConfig(BaseSettings):
     neo4j: Neo4jConfig = Field(default_factory=Neo4jConfig)
 
 
-def retrieval_param_overrides(config: AppConfig | None = None) -> dict:
-    """Params fields driven by config.yaml (run_id, rerank_enabled)."""
+def workspace_run_id(
+    config: AppConfig, workspace: str = DEFAULT_WORKSPACE
+) -> str:
+    """Resolve one whitelisted workspace to its exact corpus id."""
+    name = str(workspace or "").strip().lower()
+    if not _WORKSPACE_RE.fullmatch(name):
+        raise ValueError("invalid workspace")
+    run_id = str(config.workspaces.get(name) or "").strip()
+    if not run_id:
+        raise ValueError(f"unknown workspace: {name}")
+    return run_id
+
+
+def retrieval_param_overrides(
+    config: AppConfig | None = None, *, workspace: str = DEFAULT_WORKSPACE
+) -> dict:
+    """Standalone algorithm defaults driven by one configured workspace."""
     cfg = config or load_config()
     return {
-        "run_id": (cfg.run_id or "").strip(),
+        "run_id": workspace_run_id(cfg, workspace),
         "rerank_enabled": bool(cfg.rerank_enabled),
     }
 
@@ -217,7 +236,7 @@ def boot_profile_name(llm: LlmConfig) -> str:
 _YAML_TOP_LEVEL_KEYS = {
     "debug_mode",
     "audio_enabled",
-    "run_id",
+    "workspaces",
     "rerank_enabled",
     "staged_enabled",
     "cards_enabled",
@@ -255,10 +274,23 @@ def resolve_request_profile(llm: LlmConfig, name: str | None) -> str:
 
 def validate_runtime_config(config: AppConfig) -> None:
     """Refuse to boot with placeholder Neo4j credentials or an empty LLM model."""
-    if not (config.run_id or "").strip():
-        raise ValueError(
-            "run_id must be non-empty; unscoped Neo4j retrieval is disabled"
-        )
+    if not config.workspaces:
+        raise ValueError("at least one workspace must be configured")
+    for raw_name, raw_run_id in config.workspaces.items():
+        name = str(raw_name or "").strip().lower()
+        if (
+            name != raw_name
+            or not _WORKSPACE_RE.fullmatch(name)
+            or name in _RESERVED_WORKSPACES
+        ):
+            raise ValueError(f"invalid workspace name: {raw_name!r}")
+        run_id = str(raw_run_id or "").strip()
+        if not run_id:
+            raise ValueError(f"workspace {name!r} must have a non-empty run_id")
+        if len(run_id) > 128 or any(ord(ch) < 32 or ord(ch) == 127 for ch in run_id):
+            raise ValueError(f"workspace {name!r} has an invalid run_id")
+    if DEFAULT_WORKSPACE not in config.workspaces:
+        raise ValueError(f"default workspace {DEFAULT_WORKSPACE!r} is not configured")
     password = (config.neo4j.password or "").strip()
     if password in _PLACEHOLDER_NEO4J_PASSWORDS:
         raise ValueError(

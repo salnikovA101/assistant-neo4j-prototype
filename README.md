@@ -86,9 +86,9 @@
 *   Ответы инструмента начинаются с однозначных маркеров `NO_RESULTS` /
     `TOOL_ERROR`, поведение на каждый маркер задано в промпте одной строкой.
 
-Корпус ANN и мостов S3 фильтруется по `run_id` текущего аккаунта. Значение
-`server/config.yaml` используется только как bootstrap для существующих строк
-при миграции и как default для новых аккаунтов. Пустой `run_id` запрещён.
+Корпус ANN и мостов S3 фильтруется по `run_id` рабочей области из
+`server/config.yaml`. Аккаунт хранит только неизменяемое имя workspace;
+произвольный `run_id` клиент передать не может. Пустой `run_id` запрещён.
 В ANN условие `r.run_id = $run_id` находится внутри `SEARCH` до `LIMIT`, поэтому
 лимит набирается только из рёбер нужного корпуса. Эмбеддинг retrieval — локальный
 Ollama, задаётся `EMBED__*` в `.env`, не yaml.
@@ -161,7 +161,7 @@ ask_subgraph accepted chains
 
 ## 7. Серверная архитектура (`server/`)
 
-*   **FastAPI:** Ручки в `server/core/app.py`. Почти все требуют сессию: cookie `ui_session` (форма `/login`) или HTTP Basic. Публичные: `GET/POST /login`, `GET /healthz`, статика логина и `/ui/assets/*`.
+*   **FastAPI:** Ручки в `server/core/app.py`. Почти все требуют workspace-заголовок и сессию в cookie `ui_session_<workspace>` либо HTTP Basic. Публичные: `GET /healthz`, `/ui/`, формы `/ui/<workspace>/login` и `/ui/assets/*`.
 
 | Метод | Эндпоинт | Назначение и формат данных |
 | :--- | :--- | :--- |
@@ -171,8 +171,8 @@ ask_subgraph accepted chains
 | `POST` | `/process_text_test` | Как `/process_text` без TTS: JSON `{"answer":"…"}` для скриптов. |
 | `POST` | `/process` | WAV → PCM. При `audio_enabled=false` — 503. |
 | `POST` | `/stt` | WAV → `{"text":"…"}`. При `audio_enabled=false` — 503. |
-| `GET` | `/login` | HTML-форма входа. После успеха — cookie и редирект на `/ui/`. |
-| `POST` | `/logout` | Отзыв сессии. |
+| `GET/POST` | `/ui/{workspace}/login` | HTML-форма входа для рабочей области. |
+| `POST` | `/ui/{workspace}/logout` | Отзыв сессии этой рабочей области. |
 | `GET` | `/api/me` | Текущий аккаунт. |
 | `GET/POST` | `/api/conversations` | Список чатов и создание. |
 | `GET/PATCH/DELETE` | `/api/conversations/{id}` | Открытие, переименование, удаление. |
@@ -191,7 +191,7 @@ ask_subgraph accepted chains
 | `GET` | `/health` | `{status, checks}`. Без cookie или Basic — 401. |
 | `GET` | `/healthz` | Публичный probe Compose: `{status: ready\|degraded}`. |
 | `GET` | `/ui_config` | Флаги UI: модели, глубина, `audio` / `staged` / `cards`. Без ключей. |
-| `GET` | `/ui/` | SPA (`web/dist`). Без сессии браузер уходит на `/login`. |
+| `GET` | `/ui/` | Редирект на `/ui/packaging/`. Неизвестный workspace возвращает 404. |
 
 *   **Lifespan:** при старте проверяются `config.yaml`, промпты, пароль Neo4j (placeholder `password123` не принимается) и текущий LLM-профиль.
 
@@ -201,8 +201,8 @@ ask_subgraph accepted chains
 
 Продакшен-шелл на Vite + React + TypeScript: сайдбар, чат по центру, граф ответа справа. Бренд в UI — «Neo4j Assistant».
 
-*   Обычно Node на машине не нужен: `docker compose up --build` собирает SPA внутри образа и кладёт её в `/ui/`. Локально без Docker: `cd web && npm install && npm run build`. `npm run dev` (порт 5173) проксирует на `:8000` только часть путей из `web/vite.config.ts` и **не** проксирует `/api/*` — ветки, карточки и approvals в этом режиме не работают. Для полного UI нужен собранный `/ui/` на `:8000`.
-*   Логин — серверная форма `/login` (без JS). После cookie открывается SPA.
+*   Обычно Node на машине не нужен: `docker compose up --build` собирает SPA внутри образа и кладёт её в `/ui/`. Локально без Docker: `cd web && npm install && npm run build`.
+*   Логин — серверная форма `/ui/<workspace>/login` (без JS). После cookie открывается SPA этой рабочей области.
 *   Чаты, ветки, checkpoint и карточки хранятся в SQLite на сервере и изолированы по аккаунтам. В браузере остаются настройки UI (глубина, режим, ключи LLM).
 *   Композер: **Автоматически** vs **По этапам** (`staged_enabled`); глубина поиска; модель из `ui_profiles` (Авто + QwenCloud); reasoning effort скрыт для Авто. Микрофон только при `audio_enabled`.
 *   **По этапам:** стрим останавливается на `approval_required`; пользователь правит английские SQ и подтверждает. Один поиск на ответ, по одному новому UNIT на открытый SQ.
@@ -225,7 +225,7 @@ ask_subgraph accepted chains
 ### 9.1 Конфигурация и переменные окружения
 
 Настройки имеют двухуровневую иерархию (Pydantic Settings):
-1. **Базовые настройки:** `server/config.yaml` (флаги `audio_enabled` / `rerank_enabled` / `staged_enabled` / `cards_enabled`, `run_id`, профили LLM, порт).
+1. **Базовые настройки:** `server/config.yaml` (флаги `audio_enabled` / `rerank_enabled` / `staged_enabled` / `cards_enabled`, карта `workspaces`, профили LLM, порт).
 2. **Секреты:** `.env` в корне репозитория, переопределяют yaml. Вложенные ключи — через двойное подчёркивание (`__`).
 
 Скопируйте пример и заполните реальные значения:
@@ -284,22 +284,19 @@ App ходит на `http://reranker:7997`. Поиск начнёт звать C
 
 После первого запуска создайте аккаунт (пароль 12–128 символов):
 ```bash
-docker compose exec app python -m server.manage_users create technologist
+docker compose exec app python -m server.manage_users create technologist --workspace packaging
 ```
-Он получит bootstrap `run_id` из `server/config.yaml`; явно задать корпус можно
-через `create LOGIN --run-id RUN_ID`. Переключение существующего аккаунта:
-```bash
-docker compose exec app python -m server.manage_users set-run-id technologist RUN_ID
-```
-Новый чат фиксирует текущий `run_id`. Старые чаты другого корпуса остаются
+Аккаунт нельзя переносить между рабочими областями. Один и тот же логин можно
+создать в разных workspace — уникальна пара `(логин, workspace)`. Новый чат
+фиксирует `run_id`, настроенный для workspace. Старые чаты другого корпуса остаются
 доступны для просмотра, переименования и удаления, но не принимают новые
-сообщения/ветки/изменения контента; возврат аккаунта на прежний `run_id` снова
-их разблокирует. `list` показывает назначенный корпус. Доступны также
-`reset-password LOGIN`, `disable LOGIN`, `enable LOGIN` и
-`revoke-sessions LOGIN`. Сброс пароля и блокировка отзывают открытые сессии.
+сообщения/ветки/изменения контента. `list` показывает workspace. Доступны также
+`reset-password LOGIN --workspace NAME`, `disable LOGIN --workspace NAME`,
+`enable LOGIN --workspace NAME` и `revoke-sessions LOGIN --workspace NAME`.
+Сброс пароля и блокировка отзывают открытые сессии этой рабочей области.
 
-*   **Web-интерфейс:** [http://localhost:8000/ui/](http://localhost:8000/ui/) перенаправляет на `/login`. Сессия — отзывная HttpOnly cookie, пароль — Argon2id в SQLite.
-*   Скрипты: `/health` без авторизации — **401**. `curl -I -u technologist:ПАРОЛЬ http://127.0.0.1:8000/health`. Compose-probe — публичный `/healthz`.
+*   **Web-интерфейс:** [http://localhost:8000/ui/](http://localhost:8000/ui/) перенаправляет на `/ui/packaging/`, а затем при необходимости на `/ui/packaging/login`. Сессия — отзывная HttpOnly cookie, пароль — Argon2id в SQLite.
+*   Скрипты: API без workspace или авторизации закрыт. Пример: `curl -I -H 'X-Workspace: packaging' -u technologist:ПАРОЛЬ http://127.0.0.1:8000/health`. Compose-probe — публичный `/healthz`.
 *   **Neo4j Browser (если установлен локально):** [http://localhost:7474](http://localhost:7474)
 
 SQLite лежит в volume `assistant_data` и переживает пересоздание контейнера. Backup:

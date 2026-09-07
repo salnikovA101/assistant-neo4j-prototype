@@ -9,26 +9,24 @@ from server.core.app_store import AppStore, ConversationRunMismatchError
 
 
 @pytest.mark.asyncio
-async def test_account_run_id_snapshots_conversations_and_makes_old_chat_read_only(tmp_path):
-    store = AppStore(str(tmp_path / "runs.db"), default_run_id="run-old")
+async def test_workspace_run_id_snapshots_conversations_and_keeps_old_chat_read_only(tmp_path):
+    store = AppStore(str(tmp_path / "runs.db"), workspaces={"packaging": "run-new"})
     await store.open()
     try:
         user = await store.create_user("run-user", "long enough run password")
-        assert user.run_id == "run-old"
+        assert user.workspace == "packaging"
         conversation = await store.create_conversation(user.id)
-        assert conversation["runId"] == "run-old"
+        assert conversation["runId"] == "run-new"
         assert conversation["readOnly"] is False
 
-        changed = await store.set_user_run_id(user.username, "run-new")
-        assert changed == {
-            "username": "run-user",
-            "previousRunId": "run-old",
-            "runId": "run-new",
-            "changed": True,
-            "readOnlyConversations": 1,
-        }
+        await store._conn().execute(
+            "UPDATE conversations SET run_id='run-old' WHERE id=?",
+            (conversation["id"],),
+        )
+        await store._conn().commit()
         listed = (await store.list_conversations(user.id))["items"]
         assert listed[0]["runId"] == "run-old"
+        assert listed[0]["workspaceRunId"] == "run-new"
         assert listed[0]["readOnly"] is True
         assert listed[0]["readOnlyReason"] == "run_id_changed"
         with pytest.raises(ConversationRunMismatchError) as exc_info:
@@ -39,31 +37,23 @@ async def test_account_run_id_snapshots_conversations_and_makes_old_chat_read_on
                 "must stay read-only",
             )
         assert exc_info.value.conversation_run_id == "run-old"
-        assert exc_info.value.account_run_id == "run-new"
+        assert exc_info.value.workspace_run_id == "run-new"
 
         # Metadata remains manageable while content is frozen.
         assert await store.rename_conversation(user.id, conversation["id"], "Архив")
-        await store.set_user_run_id(user.username, "run-old")
-        writable = await store.get_conversation(user.id, conversation["id"])
-        assert writable is not None and writable["readOnly"] is False
-        await store.begin_turn(
-            user.id,
-            conversation["id"],
-            "20202020-2020-4020-8020-202020202020",
-            "writable again",
-        )
     finally:
         await store.close()
 
 
 @pytest.mark.asyncio
-async def test_run_id_migration_backfills_existing_accounts_and_chats(tmp_path):
+async def test_workspace_migration_moves_existing_accounts_and_drops_account_run_id(tmp_path):
     path = tmp_path / "legacy-runs.db"
     with sqlite3.connect(path) as db:
         db.execute(
             """CREATE TABLE users (
                    id TEXT PRIMARY KEY, username TEXT NOT NULL COLLATE NOCASE UNIQUE,
                    password_hash TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1,
+                   run_id TEXT NOT NULL DEFAULT '',
                    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
                )"""
         )
@@ -75,23 +65,71 @@ async def test_run_id_migration_backfills_existing_accounts_and_chats(tmp_path):
                )"""
         )
         db.execute(
-            "INSERT INTO users VALUES('u1','legacy','hash',1,1,1)"
+            "INSERT INTO users VALUES('u1','legacy','hash',1,'legacy-account-run',1,1)"
         )
         db.execute(
             "INSERT INTO conversations VALUES('c1','u1','Legacy chat',1,1)"
         )
 
-    store = AppStore(str(path), default_run_id="bootstrap-run")
+    store = AppStore(str(path), workspaces={"packaging": "bootstrap-run"})
     await store.open()
     try:
         user_row = await (await store._conn().execute(
-            "SELECT run_id FROM users WHERE id='u1'"
+            "SELECT workspace FROM users WHERE id='u1'"
         )).fetchone()
         conversation_row = await (await store._conn().execute(
             "SELECT run_id FROM conversations WHERE id='c1'"
         )).fetchone()
-        assert user_row["run_id"] == "bootstrap-run"
+        columns = await store._table_columns("users")
+        assert user_row["workspace"] == "packaging"
+        assert "run_id" not in columns
         assert conversation_row["run_id"] == "bootstrap-run"
+        users_sql = await (await store._conn().execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+        )).fetchone()
+        compact = "".join(str(users_sql["sql"] or "").split()).lower().replace('"', "")
+        assert "unique(username,workspace)" in compact
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_same_login_is_unique_per_workspace(tmp_path):
+    store = AppStore(
+        str(tmp_path / "shared-login.db"),
+        workspaces={"packaging": "p-run", "kefir": "k-run"},
+    )
+    await store.open()
+    try:
+        packaging = await store.create_user(
+            "worker", "a sufficiently long password", workspace="packaging"
+        )
+        kefir = await store.create_user(
+            "worker", "another sufficiently long password", workspace="kefir"
+        )
+        assert packaging.id != kefir.id
+        assert await store.authenticate(
+            "worker", "a sufficiently long password", workspace="packaging"
+        ) == packaging
+        assert await store.authenticate(
+            "worker", "another sufficiently long password", workspace="kefir"
+        ) == kefir
+        assert await store.authenticate(
+            "worker", "a sufficiently long password", workspace="kefir"
+        ) is None
+        with pytest.raises(ValueError, match="уже существует"):
+            await store.create_user(
+                "worker", "third sufficiently long password", workspace="packaging"
+            )
+        assert await store.reset_password(
+            "worker", "packaging reset pw", workspace="packaging"
+        )
+        assert await store.authenticate(
+            "worker", "packaging reset pw", workspace="packaging"
+        ) == packaging
+        assert await store.authenticate(
+            "worker", "another sufficiently long password", workspace="kefir"
+        ) == kefir
     finally:
         await store.close()
 
@@ -110,7 +148,9 @@ async def test_accounts_sessions_and_revocation(tmp_path):
         assert token not in (tmp_path / "app.db").read_bytes().decode("utf-8", errors="ignore")
         assert await store.user_for_session(token) == user
 
-        assert await store.reset_password("technologist", "a different long password")
+        assert await store.reset_password(
+            "technologist", "a different long password", workspace="packaging"
+        )
         assert await store.user_for_session(token) is None
         assert await store.authenticate("technologist", "a different long password") == user
     finally:

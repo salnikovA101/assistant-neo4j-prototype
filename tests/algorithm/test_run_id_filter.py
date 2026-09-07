@@ -19,16 +19,17 @@ from server.algorithm.pipeline import run
 from server.utils.config import AppConfig, load_config, retrieval_param_overrides
 
 
-def test_app_config_has_run_id_field():
-    assert "run_id" in AppConfig.model_fields
+def test_app_config_has_workspace_map_instead_of_account_run_id():
+    assert "workspaces" in AppConfig.model_fields
+    assert "run_id" not in AppConfig.model_fields
     cfg = load_config()
-    assert isinstance(cfg.run_id, str)
+    assert cfg.workspaces["packaging"] == "full_corpus_20260713"
 
 
 def test_retrieval_overrides_from_yaml():
     cfg = load_config()
     o = retrieval_param_overrides(cfg)
-    assert o["run_id"] == (cfg.run_id or "").strip()
+    assert o["run_id"] == cfg.workspaces["packaging"]
     assert o["rerank_enabled"] is False
     assert cfg.rerank_enabled is False
 

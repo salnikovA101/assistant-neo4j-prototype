@@ -1,7 +1,10 @@
 debug_mode: false
 audio_enabled: false
-# Bootstrap/default corpus for accounts. Empty is forbidden; retrieval fails closed.
-run_id: "full_corpus_20260713"
+# Fixed UI workspace -> corpus. Unknown /ui/<name>/ addresses return 404.
+workspaces:
+  packaging: "full_corpus_20260713"
+  kefir: "new_mega_run"
+  kefir_ilya: "kefir_20260907_6267_382f08a"
 rerank_enabled: false
 staged_enabled: true
 cards_enabled: true
@@ -40,7 +43,7 @@ tts:
     voice: "alloy"
 
 # Algorithm knobs (L, effort K, rerank_url, …) live in server/algorithm/params.py.
-# Deploy switches: run_id and rerank_enabled at the top of this file.
+# Deploy switches: workspaces and rerank_enabled at the top of this file.
 # Embeddings: local Ollama embeddinggemma:300m-qat-q8_0 (EMBED__* in .env, not yaml).
 llm:
   current_profile: "auto"

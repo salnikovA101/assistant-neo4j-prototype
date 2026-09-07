@@ -183,19 +183,17 @@ class SubgraphSearchAgent:
         try:
             from server.algorithm.params import merge_params
             from server.algorithm.pipeline import run
-            from server.utils.config import load_config, retrieval_param_overrides
+            from server.utils.config import load_config
 
             driver = get_driver()
             turn = current_turn()
             config = load_config()
-            effective_run_id = (
-                (turn.run_id if turn is not None else config.run_id) or ""
-            ).strip()
+            effective_run_id = ((turn.run_id if turn is not None else "") or "").strip()
             if not effective_run_id:
                 return f"{TOOL_ERROR}: run_id is required for corpus search"
             params = merge_params(
                 {
-                    **retrieval_param_overrides(config),
+                    "rerank_enabled": bool(config.rerank_enabled),
                     "run_id": effective_run_id,
                 }
             )

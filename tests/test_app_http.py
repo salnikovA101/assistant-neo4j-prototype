@@ -307,13 +307,13 @@ def _stub_client(user: str = "demo", password: str = "secret"):
     def health():
         return {"status": "ok"}
 
-    @app.get("/login")
+    @app.get("/ui/packaging/login")
     def login_page(request: Request):
         if request_is_ui_authenticated(request):
-            return RedirectResponse("/ui/", status_code=303)
+            return RedirectResponse("/ui/packaging/", status_code=303)
         return {"login": True}
 
-    @app.post("/login")
+    @app.post("/ui/packaging/login")
     async def login_submit(request: Request):
         from urllib.parse import parse_qs
 
@@ -325,12 +325,16 @@ def _stub_client(user: str = "demo", password: str = "secret"):
         if not ui_basic_ok(
             username, password, expected_user, expected_password
         ):
-            return RedirectResponse("/login?error=1", status_code=303)
-        response = RedirectResponse("/ui/", status_code=303)
+            return RedirectResponse("/ui/packaging/login?error=1", status_code=303)
+        response = RedirectResponse("/ui/packaging/", status_code=303)
         set_ui_session_cookie(response, expected_user, expected_password)
         return response
 
     @app.get("/ui/")
+    def ui_redirect():
+        return RedirectResponse("/ui/packaging/", status_code=308)
+
+    @app.get("/ui/packaging/")
     def ui():
         return {"ui": True}
 
@@ -397,15 +401,42 @@ def test_login_html_has_no_inline_script():
     assert "super-secret" not in html
     assert 'value="demo"' not in html
     assert ' class="login-error" hidden' in html
-    assert is_public_auth_path("/login") is True
+    assert is_public_auth_path("/login") is False
+    assert is_public_auth_path("/ui/packaging/login") is True
     assert is_public_auth_path("/healthz") is True
     assert is_public_auth_path("/logout") is False
     assert is_public_auth_path("/ui/login.css") is True
     assert is_public_auth_path("/ui/icon.svg") is True
-    assert is_public_auth_path("/ui/") is False
+    assert is_public_auth_path("/ui/") is True
     assert is_public_auth_path("/health") is False
     assert is_public_auth_path("/ui/app.js") is False
     assert is_public_auth_path("/ui/assets/index.js") is True
+
+
+def test_login_html_shows_workspace_and_run_id_safely():
+    from server.core.app import _login_html
+
+    response = _login_html(
+        False,
+        workspace="packaging",
+        run_id="full_corpus_20260713",
+    )
+    html = response.body.decode("utf-8")
+
+    assert "__WORKSPACE__" not in html
+    assert "__RUN_ID__" not in html
+    assert 'action="/ui/packaging/login"' in html
+    assert "packaging" in html
+    assert "full_corpus_20260713" in html
+
+
+def test_login_assets_are_routed_before_workspace_fallback():
+    from server.core.app import app
+
+    paths = [getattr(route, "path", "") for route in app.routes]
+    workspace_fallback = paths.index("/ui/{workspace}")
+    assert paths.index("/ui/login.css") < workspace_fallback
+    assert paths.index("/ui/icon.svg") < workspace_fallback
 
 
 def test_chat_html_uses_mobile_safe_viewport():
@@ -448,13 +479,16 @@ def test_stable_ui_assets_are_not_cached_across_rebuilds():
 def test_browser_ui_redirects_to_login():
     with _stub_client() as client:
         response = client.get("/ui/", follow_redirects=False)
+        assert response.status_code == 308
+        assert response.headers["location"] == "/ui/packaging/"
+        response = client.get("/ui/packaging/", follow_redirects=False)
         assert response.status_code == 303
-        assert response.headers["location"] == "/login"
+        assert response.headers["location"] == "/ui/packaging/login"
 
 
 def test_login_page_is_public():
     with _stub_client() as client:
-        response = client.get("/login")
+        response = client.get("/ui/packaging/login")
         assert response.status_code == 200
         assert "secret" not in response.text
 
@@ -462,7 +496,7 @@ def test_login_page_is_public():
 def test_login_form_sets_httponly_cookie():
     with _stub_client(password="secret") as client:
         bad = client.post(
-            "/login",
+            "/ui/packaging/login",
             data={"username": "demo", "password": "nope"},
             follow_redirects=False,
         )
@@ -473,12 +507,12 @@ def test_login_form_sets_httponly_cookie():
         assert "secret" not in bad.text
 
         ok = client.post(
-            "/login",
+            "/ui/packaging/login",
             data={"username": "demo", "password": "secret"},
             follow_redirects=False,
         )
         assert ok.status_code == 303
-        assert ok.headers["location"] == "/ui/"
+        assert ok.headers["location"] == "/ui/packaging/"
         cookie = ok.cookies.get(UI_SESSION_COOKIE)
         assert cookie
         assert "secret" not in cookie
@@ -493,9 +527,9 @@ def test_login_form_sets_httponly_cookie():
 
 def test_ui_app_js_is_not_public():
     with _stub_client() as client:
-        response = client.get("/ui/app.js", follow_redirects=False)
+        response = client.get("/ui/packaging/app.js", follow_redirects=False)
         assert response.status_code == 303
-        assert response.headers["location"] == "/login"
+        assert response.headers["location"] == "/ui/packaging/login"
 
 
 def test_forged_session_cookie_is_rejected():

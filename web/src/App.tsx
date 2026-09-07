@@ -11,6 +11,7 @@ import {
 } from "react";
 import {
   adoptSessionId,
+  apiFetch,
   agendaEvent,
   bindAccount,
   createConversation,
@@ -34,6 +35,7 @@ import {
   streamBody,
   updateCardDraft,
   withHeaders,
+  workspaceLoginUrl,
 } from "./api";
 import { branchColor } from "./branchVisuals";
 import { ChatThread } from "./components/ChatThread";
@@ -274,7 +276,7 @@ export function App() {
       headCheckpointId: detail.headCheckpointId,
       mode: detail.mode,
       runId: detail.runId,
-      accountRunId: detail.accountRunId,
+      workspaceRunId: detail.workspaceRunId,
       readOnly: detail.readOnly,
       readOnlyReason: detail.readOnlyReason,
     } : item));
@@ -320,9 +322,10 @@ export function App() {
         clearLegacySessions();
         setSessions(history);
         const storedId = getSessionId();
-        const target = history.some((item) => item.id === storedId)
-          ? storedId
-          : history[0]?.id || "";
+        const stored = history.find(
+          (item) => item.id === storedId && !item.readOnly
+        );
+        const target = stored?.id || history.find((item) => !item.readOnly)?.id || "";
         if (target) {
           adoptSessionId(target);
           setCurrentId(target);
@@ -504,7 +507,7 @@ export function App() {
     const value = text.trim();
     if (!value || busy) return;
     if (current?.readOnly) {
-      setNotice("Этот чат относится к другой версии базы. Переключите аккаунт обратно на его run_id или создайте новый чат.");
+      setNotice("Этот чат относится к другой версии базы и доступен только для чтения. Создайте новый чат в текущей рабочей области.");
       return;
     }
     let conversationId = currentId;
@@ -593,7 +596,7 @@ export function App() {
       const endpoint = activeBranchId
         ? `/api/conversations/${encodeURIComponent(conversationId)}/branches/${encodeURIComponent(activeBranchId)}/turns`
         : "/process_text_stream";
-      const res = await fetch(endpoint, {
+      const res = await apiFetch(endpoint, {
         method: "POST",
         headers: (() => {
           adoptSessionId(conversationId);
@@ -620,7 +623,7 @@ export function App() {
       });
         if (!res.ok || !res.body) {
         if (res.status === 401) {
-          window.location.assign("/login");
+          window.location.assign(workspaceLoginUrl());
           return;
         }
         let err = "Ошибка сервера";
@@ -829,7 +832,7 @@ export function App() {
       stream.getTracks().forEach((track) => track.stop());
       const blob = new Blob(chunks, { type: "audio/webm" });
       try {
-        const res = await fetch("/stt", {
+        const res = await apiFetch("/stt", {
           method: "POST",
           headers: withHeaders(profile),
           body: blob,
@@ -1335,7 +1338,7 @@ export function App() {
             <div className="context-continuation" role="status">
               <span>
                 <b>Только чтение:</b> чат создан для run_id <code>{current.runId}</code>,
-                а аккаунт сейчас использует <code>{current.accountRunId || config?.run_id || "—"}</code>.
+                а рабочая область использует <code>{current.workspaceRunId || config?.run_id || "—"}</code>.
               </span>
             </div>
           )}
@@ -1483,6 +1486,16 @@ export function App() {
       {settingsOpen && <div className="sidebar-settings-pop" ref={settingsRef}>
         <p className="settings-title">Подключение</p>
         <p className="settings-hint">Ключи хранятся только в этой вкладке браузера.</p>
+        <dl className="settings-runtime" aria-label="Текущая рабочая область">
+          <div>
+            <dt>Рабочая область</dt>
+            <dd>{config?.workspace || "—"}</dd>
+          </div>
+          <div>
+            <dt>run_id</dt>
+            <dd><code>{config?.run_id || "—"}</code></dd>
+          </div>
+        </dl>
         {!hasUserKey && (
           <p className="settings-key-warning" id="qwen-key-warning" role="status">
             Ключ не вставлен — используется демонстрационный. Вставьте свой ключ QwenCloud.
