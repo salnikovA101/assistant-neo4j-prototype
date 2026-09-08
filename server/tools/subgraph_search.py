@@ -4,6 +4,7 @@ import json
 import re
 from typing import Any, Sequence
 
+from server.algorithm.models import format_chain_text
 from server.utils.constants import RETRIEVAL_STATE_VERSION
 from server.core.db import get_driver
 from server.core.graph_runs import chain_unit_index, record_accepted_chains
@@ -87,13 +88,13 @@ def _format_accepted_chains(
         "### Retrieved evidence chains",
         "",
         "Format only (behaviour rules are in the system prompt):",
-        "UNIT = one tour in walk order; consecutive cards share a vertex "
+        "Chain = one tour in walk order; consecutive cards share a vertex "
         "(A-B, then B-C).",
-        "Card = `A —REL→ B` (node names only), next line = the evidence text with "
+        "Card = `A —relation→ B` (node names only), next line = the evidence text with "
         "(source:N; conf=0-1 or None).",
         "@Hub = still at that vertex (a sibling edge), not the next process step.",
         "Evidence text may name more entities than the graph endpoints do.",
-        "conf and UNIT numbers are service fields; source:N is copied from the "
+        "conf and Chain numbers are service fields; source:N is copied from the "
         "evidence line.",
         "",
     ]
@@ -114,20 +115,15 @@ def _format_accepted_chains(
         if first_unit is None:
             first_unit = unit_n
         last_unit = unit_n
-        if text.startswith("UNIT "):
-            rest = text.split("\n", 1)
-            body = rest[1] if len(rest) > 1 else ""
-            text = f"UNIT [{unit_n}]\n{body}".rstrip()
-        else:
-            text = f"UNIT [{unit_n}]\n{text}"
+        text = format_chain_text(text, f"[{unit_n}]")
         units.append(text)
 
     if n == 0:
         return f"{NO_RESULTS}: no evidence chains matched these subquestions."
     if first_unit and first_unit > 1:
         lines.append(
-            f"UNIT numbers continue this turn: this batch is UNIT [{first_unit}]–[{last_unit}]. "
-            "Do not reuse UNIT indices from an earlier ask_subgraph in this answer."
+            f"Chain numbers continue this turn: this batch is Chain [{first_unit}]–[{last_unit}]. "
+            "Do not confuse these Chain indices with those from an earlier ask_subgraph."
         )
         lines.append("")
     for i, text in enumerate(units):

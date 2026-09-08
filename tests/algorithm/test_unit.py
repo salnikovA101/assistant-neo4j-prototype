@@ -558,10 +558,10 @@ def _parse_triple_joints(text: str) -> list[tuple[str, str]]:
 
     pairs: list[tuple[str, str]] = []
     triple_re = re.compile(
-        r"^(?:@.+(?:  ))?(.+?) —[A-Za-z0-9_]+→ (.+?)\s*$"
+        r"^(?:@.+(?:  ))?(.+?) —[A-Za-z0-9_ ]+→ (.+?)\s*$"
     )
     for line in text.splitlines():
-        if line.startswith("UNIT ") or line.startswith("  "):
+        if line.startswith("Chain ") or line.startswith("  "):
             continue
         m = triple_re.match(line)
         if m:
@@ -574,7 +574,7 @@ def test_format_single_edge_spine_neo4j_direction():
     e = _edge("e1", "A", "B", evidence='quote with "quotes"')
     c = Chain("c1", ["e1"], 1.0, edges=[e])
     text = c.format_unit()
-    assert "A —INHIBITS→ B" in text
+    assert "A —inhibits→ B" in text
     assert '  "quote with \'quotes\'"  (source:None; conf=None)' in text
     assert " (source:None; conf=None)" not in text.split("\n")[1]
     assert "FANS" not in text
@@ -597,15 +597,15 @@ def test_format_edge_appends_source_file():
         fans={"B": [ray]},
         fan_hub_names={"B": "B"},
     ).format_unit()
-    assert "A —INHIBITS→ B" in text
+    assert "A —inhibits→ B" in text
     assert '  "ab"  (PMC123.pdf; conf=0.87)' in text
-    assert "B —INHIBITS→ C" in text
+    assert "B —inhibits→ C" in text
     assert '  "bc"  (Other.pdf; conf=0.50)' in text
     # missing source_file → source:None; missing confidence → conf=None
     bare = _edge("e3", "X", "Y", evidence="xy")
     bare.confidence = None
     bare_text = Chain("c2", ["e3"], 1.0, edges=[bare]).format_unit()
-    assert "X —INHIBITS→ Y" in bare_text
+    assert "X —inhibits→ Y" in bare_text
     assert '  "xy"  (source:None; conf=None)' in bare_text
 
 
@@ -643,11 +643,11 @@ def test_format_spine_uses_names_not_node_labels():
         fans={"met1": [ray]},
         fan_hub_names={"met1": "Metabolite: L-lactic acid"},
     ).format_unit()
-    assert "Lactobacillus —PRODUCES→ L-lactic acid" in text
+    assert "Lactobacillus —produces→ L-lactic acid" in text
     assert "Metabolite:" not in text
     assert '  "makes acid"' in text
     assert "FANS" not in text
-    assert "L-lactic acid —INHIBITS→ E. coli" in text
+    assert "L-lactic acid —inhibits→ E. coli" in text
     assert '  "kills"' in text
 
 
@@ -713,8 +713,8 @@ def test_format_spine_spur_directions_and_fans():
         ("Llactic", "Pathogen"),
         ("Wkefir", "Llactic"),
     ]
-    assert "@Llactic  Llactic —INHIBITS→ Pathogen" in text
-    assert "@Llactic  Wkefir —INHIBITS→ Llactic" in text
+    assert "@Llactic  Llactic —inhibits→ Pathogen" in text
+    assert "@Llactic  Wkefir —inhibits→ Llactic" in text
     assert '  "lp"' in text
 
 
@@ -731,7 +731,7 @@ def test_format_empty_walk_prints_label_only():
     """Empty walk does not dump raw edge_keys as if they were evidence."""
     c = Chain("c1", ["key-only-1", "key-only-2"], 0.5, edges=[])
     text = c.format_unit()
-    assert text.strip() == "UNIT c1"
+    assert text.strip() == "Chain c1"
     assert "key-only-1" not in text
 
 
@@ -764,14 +764,14 @@ def test_format_fans_out_star_direction():
     joints = _parse_triple_joints(text)
     assert joints == [("A", "H"), ("H", "D"), ("H", "E"), ("H", "C")]
     assert not text.splitlines()[1].startswith("@")
-    assert "@H  H —INHIBITS→ D" in text
+    assert "@H  H —inhibits→ D" in text
     assert '  "ray-d"' in text
-    assert "@H  H —INHIBITS→ E" in text
-    assert "@H  H —INHIBITS→ C" in text
+    assert "@H  H —inhibits→ E" in text
+    assert "@H  H —inhibits→ C" in text
 
 
 def test_format_fans_in_star_direction():
-    """Co-incoming rays: Leaf —REL→ Hub as a full triple with @H."""
+    """Co-incoming rays: Leaf —rel→ Hub as a full triple with @H."""
     ah = _edge("ah", "A", "H", evidence="enter")
     dh = _edge("dh", "D", "H", evidence="in-d")
     eh = _edge("eh", "E", "H", evidence="in-e")
@@ -785,9 +785,9 @@ def test_format_fans_in_star_direction():
         fan_hub_names={"H": "H"},
         walk=[ah, dh, eh, hc],
     ).format_unit()
-    assert "@H  D —INHIBITS→ H" in text
+    assert "@H  D —inhibits→ H" in text
     assert '  "in-d"' in text
-    assert "@H  E —INHIBITS→ H" in text
+    assert "@H  E —inhibits→ H" in text
     assert '  "in-e"' in text
 
 
@@ -815,10 +815,10 @@ def test_format_spine_after_reshape_hub_walk():
     joints = _parse_triple_joints(text)
     assert joints == [("A", "H"), ("H", "D"), ("H", "E"), ("H", "C")]
     assert "FANS" not in text
-    assert "@H  H —INHIBITS→ D" in text
+    assert "@H  H —inhibits→ D" in text
     assert '  "ray-d"' in text
-    assert "@H  H —INHIBITS→ E" in text
-    assert "@H  H —INHIBITS→ C" in text
+    assert "@H  H —inhibits→ E" in text
+    assert "@H  H —inhibits→ C" in text
 
 
 def test_format_two_hubs_keeps_walk_order():
@@ -845,14 +845,14 @@ def test_format_two_hubs_keeps_walk_order():
         ("H2", "Y"),
     ]
     assert "FANS" not in text
-    assert "@H1  H1 —INHIBITS→ A" in text
-    assert "@H1  H1 —INHIBITS→ H2" in text
-    assert "@H2  H2 —INHIBITS→ B" in text
-    assert "@H2  H2 —INHIBITS→ Y" in text
+    assert "@H1  H1 —inhibits→ A" in text
+    assert "@H1  H1 —inhibits→ H2" in text
+    assert "@H2  H2 —inhibits→ B" in text
+    assert "@H2  H2 —inhibits→ Y" in text
 
 
 def test_format_unit_always_uses_arrows():
-    """Cypher -[REL]- / <-[REL]- never emitted; cards use —REL→."""
+    """Cypher -[REL]- / <-[REL]- never emitted; cards use —rel→."""
     e1 = _edge("e1", "A", "B", evidence="ab")
     e2 = _edge("e2", "C", "B", evidence="cb")
     fans = {"B": [_edge("bd", "B", "D", evidence="bd"), _edge("xb", "X", "B", evidence="xb")]}
@@ -867,8 +867,8 @@ def test_format_unit_always_uses_arrows():
     assert "—" in text and "→" in text
     assert "-[" not in text
     assert "<-[" not in text
-    assert "B —INHIBITS→ D" in text
-    assert "X —INHIBITS→ B" in text
+    assert "B —inhibits→ D" in text
+    assert "X —inhibits→ B" in text
     assert _parse_triple_joints(text) == [
         ("A", "B"),
         ("B", "D"),
@@ -921,11 +921,11 @@ def test_format_unit_card_layout_walk_and_quote_meta():
         fan_hub_names={"pH": "EnvironmentCondition: pH"},
     ).format_unit()
     assert text == (
-        "UNIT c1\n"
-        "Ph-sensitive dyes —REQUIRES→ pH\n"
+        "Chain c1\n"
+        "Ph-sensitive dyes —requires→ pH\n"
         '  "Colorimetric indicators, such as pH-sensitive dyes"'
         "  (a.pdf; conf=1.00)\n"
-        "Alizarin —REQUIRES→ pH\n"
+        "Alizarin —requires→ pH\n"
         '  "plant-based natural pigments, such as anthocyanins, curcumin, '
         'and alizarin"  (b.pdf; conf=1.00)'
     )

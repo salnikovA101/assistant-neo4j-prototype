@@ -72,13 +72,16 @@ async def test_staged_context_keeps_agenda_and_units_while_auto_hides_them(tmp_p
         assert "assess only these refs" in staged
         assert sq_ref in staged
         assert sq_id not in staged
-        assert "UNIT U1 (" not in staged
+        assert "UNIT" not in staged
+        assert staged.count("Chain [1]") == 1
+        assert "Culture —acidifies→ Milk 1" in staged
+        assert "UNIT" not in card
         assert "paths=2, review recommended" in staged
-        assert "EVIDENCE UNITs" in staged
+        assert "EVIDENCE Chains" in staged
         assert "CURRENT RESEARCH QUESTIONS" not in auto
-        assert "EVIDENCE UNITs" not in auto
+        assert "EVIDENCE Chains" not in auto
         assert "CURRENT RESEARCH QUESTIONS" not in card
-        assert "EVIDENCE UNITs" in card
+        assert "EVIDENCE Chains" in card
 
         closed = await store.finish_turn(
             conversation["id"],

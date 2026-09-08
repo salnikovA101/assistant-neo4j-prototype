@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -52,9 +53,39 @@ def _edge_meta_suffix(source_file: str = "", confidence: float | None = None) ->
     return f"  ({src}; conf={conf})"
 
 
+def readable_relation(rel_type: str) -> str:
+    """Presentation only: preserve the stored relationship type."""
+    return " ".join(rel_type.replace("_", " ").lower().split())
+
+
+def format_chain_text(text: str, label: str) -> str:
+    """Adapt cached chain text without changing evidence or persisted data."""
+    lines = text.strip().splitlines(keepends=True)
+    # Older checkpoint context can wrap an already labelled block.
+    while lines and re.fullmatch(r"(?:UNIT|Chain) [^\n]+\n?", lines[0]):
+        lines.pop(0)
+    result: list[str] = []
+    in_evidence = False
+    for line in lines:
+        if line.lstrip().startswith('"'):
+            in_evidence = True
+        if in_evidence:
+            result.append(line)
+            if re.search(r"; conf=[^)]+\)\s*$", line):
+                in_evidence = False
+            continue
+        result.append(re.sub(
+            r"^((?:@.+?  )?.+? —)([^→\n]+)(→ .+)",
+            lambda m: m[1] + readable_relation(m[2]) + m[3],
+            line,
+        ))
+    body = "".join(result).strip()
+    return f"Chain {label}\n{body}".rstrip()
+
+
 def _directed_edge_line(e: EdgeRecord, hub_display: str = "") -> str:
     """Triple line: optional `@Hub  ` then start —REL→ end."""
-    triple = f"{e.start_ref()} —{e.rel_type}→ {e.end_ref()}"
+    triple = f"{e.start_ref()} —{readable_relation(e.rel_type)}→ {e.end_ref()}"
     hub = (hub_display or "").strip()
     if hub:
         return f"@{hub}  {triple}"
@@ -203,10 +234,10 @@ class Chain:
         )
 
         label = uid or self.chain_id
-        lines = [f"UNIT {label}"]
+        lines = [f"Chain {label}"]
         walk = list(self.walk) if self.walk else reconstruct_walk(self.edges, self.fans)
         if not walk:
-            return f"UNIT {label}"
+            return f"Chain {label}"
         tags = linger_hubs(walk)
         for e, hub_id in zip(walk, tags, strict=True):
             display = (

@@ -166,6 +166,12 @@ def _check_answer(case: dict[str, Any], body: str) -> tuple[list[str], list[str]
     for artefact in LEAKED_ARTEFACTS:
         if artefact.lower() in low:
             failures.append(f"служебная утечка в ответе: {artefact}")
+    for match in re.finditer(
+        r"\b(?i:UNIT|Chain|conf)\b|(?i:@Hub)\b|\b[A-Z][A-Z0-9]*(?:_+[A-Z0-9]+)+\b"
+        r"|\b(?:PRODUCES|INHIBITS|STIMULATES|REQUIRES|CONSUMES)\b",
+        body,
+    ):
+        failures.append(f"служебная утечка в ответе: {match.group()}")
     for claim in COMPLETENESS_CLAIMS:
         if claim in low:
             failures.append(f"заявление о полноте базы: «{claim}»")

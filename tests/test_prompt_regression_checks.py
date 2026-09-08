@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 import json
 from pathlib import Path
 
@@ -189,3 +190,9 @@ def test_staged_missing_tool_still_fails():
         Transcript(answer="Закваска для творога обычно мезофильная."),
     )
     assert any("инструмент не вызван" in f for f in result.failures)
+
+
+@pytest.mark.parametrize("leak", ["UNIT", "unit", "chain", "UNIT U3", "Chain [3]", "Chain", "@Hub", "conf", "COMPOSED_OF", "PRODUCES", "CUSTOM_RELATION"])
+def test_chain_and_relation_leaks_fail(leak):
+    result = check_case(_case(), Transcript(answer=leak + "\n" + GOOD_ANSWER))
+    assert any("служебная утечка" in failure for failure in result.failures)
