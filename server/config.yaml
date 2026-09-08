@@ -4,7 +4,7 @@ audio_enabled: false
 workspaces:
   packaging: "full_corpus_20260713"
   kefir: "new_mega_run"
-  kefir_ilya: "kefir_20260907_6267_382f08a"
+  kefir_ilya: "kefir_20260908_6267_6fc44f7"
 rerank_enabled: false
 staged_enabled: true
 cards_enabled: true

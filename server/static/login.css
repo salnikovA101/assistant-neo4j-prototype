@@ -62,8 +62,6 @@ body.login-page {
     font-weight: 600;
 }
 
-.brand-mark { color:var(--muted); flex:none; }
-
 .login-copy {
     margin: 32px 0 24px;
 }
@@ -218,3 +216,5 @@ body.login-page {
 body { -webkit-font-smoothing:antialiased; }
 .login-footer strong { color:var(--soft); font-weight:500; overflow-wrap:anywhere; min-width:0; }
 .login-footer { flex-wrap:wrap; }
+
+.login-logo { display:block; width:32px; height:32px; flex:none; }
