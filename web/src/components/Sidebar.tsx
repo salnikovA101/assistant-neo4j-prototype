@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ConversationSummary } from "../types";
 import { formatRelativeTime } from "../format";
-import { IconCards, IconChat, IconGraph, IconHelp, IconLibrary, IconLogout, IconPlus, IconSettings, IconSidebar } from "./Icons";
+import { IconCards, IconChat, IconGraph, IconHelp, IconLibrary, IconLogout, IconPlus, IconSettings, IconSidebar, IconTrash } from "./Icons";
 
 const RELATIVE_TICK_MS = 30_000;
 
@@ -13,6 +13,8 @@ export function Sidebar({
   username,
   onNewChat,
   onOpenSession,
+  onDeleteSession,
+  deleteDisabled,
   onExplorer,
   onLibrary,
   onHelp,
@@ -32,6 +34,8 @@ export function Sidebar({
   username: string;
   onNewChat: () => void;
   onOpenSession: (id: string) => void;
+  onDeleteSession: (id: string) => Promise<void>;
+  deleteDisabled: boolean;
   onExplorer: () => void;
   onLibrary: () => void;
   onHelp: () => void;
@@ -111,8 +115,8 @@ export function Sidebar({
         {!collapsed && visibleSessions.map((session) => {
           const relative = formatRelativeTime(session.updatedAt, now);
           return (
+            <div key={session.id} className={`sidebar-chat-row ${session.id === currentId ? "is-active" : ""}`}>
             <button
-              key={session.id}
               type="button"
               className={`sidebar-chat ${session.id === currentId ? "is-active" : ""}`}
               onClick={() => onOpenSession(session.id)}
@@ -121,6 +125,8 @@ export function Sidebar({
               <span className="sidebar-chat-title">{session.title}</span>
               <span className="sidebar-chat-time">{relative}</span>
             </button>
+            <button type="button" className="sidebar-chat-delete" disabled={deleteDisabled} aria-label={`Удалить чат «${session.title}»`} title="Удалить чат" onClick={() => void onDeleteSession(session.id)}><IconTrash /></button>
+            </div>
           );
         })}
         {!collapsed && historyQuery && visibleSessions.length === 0 && <p className="sidebar-empty">Ничего не найдено</p>}

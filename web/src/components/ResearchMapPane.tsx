@@ -10,6 +10,7 @@ import {
 } from "react";
 import { fetchResearchMap } from "../api";
 import { branchColor } from "../branchVisuals";
+import { renderMarkdown } from "../format";
 import type { ResearchBranch, ResearchMap, ResearchStep } from "../types";
 import { IconClose, IconEdit, IconGraph } from "./Icons";
 import { MODE_LABELS } from "../uiLabels";
@@ -352,7 +353,9 @@ export function ResearchMapPane({
                   >
                     <header><span>Вопрос {step.displayNo}</span>{step.unitNos.length > 0 && <b>+{step.unitNos.length} {step.unitNos.length === 1 ? "цепочка" : "цепочек"}</b>}</header>
                     <strong>{step.question.preview || "Вопрос без текста"}</strong>
-                    <p className={!step.answer?.preview ? "is-muted" : ""}>{step.answer?.preview || (step.answer?.status === "streaming" ? "Ассистент отвечает…" : "Ответ ещё не сформирован")}</p>
+                    {step.answer?.preview
+                      ? <div className="md research-step-preview" dangerouslySetInnerHTML={{ __html: renderMarkdown(step.answer.preview, step.answer.status === "streaming") }} />
+                      : <p className="is-muted">{step.answer?.status === "streaming" ? "Ассистент отвечает…" : "Ответ ещё не сформирован"}</p>}
                     <footer><span>{step.answer?.status === "error" ? "Ошибка" : step.answer?.status === "streaming" ? "В работе" : "Готово"}</span>{step.graphCheckpointId && step.graphUnitCount > 0 && <button type="button" onClick={(event) => { event.stopPropagation(); onSelectStep(step.branchId, step); onOpenGraph(step.graphCheckpointId!, step.id); }}><IconGraph /> Данные</button>}</footer>
                   </article>
                 </div>

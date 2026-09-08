@@ -60,63 +60,18 @@ export function GraphPane({
   return (
     <section className={`graph-pane ${embedded ? "is-embedded" : ""}`}>
       <header className="graph-pane-bar">
-        <div className="panel-title">
-          <strong>{title}</strong>
-          <span>{views.length ? `${views.length} ${views.length === 1 ? "цепочка" : "цепочек"}` : "связи этого шага"}</span>
-        </div>
-        <div className="chain-nav" aria-label="Представление данных">
-          <button
-            type="button"
-            className={viewId === "all" ? "is-on" : ""}
-            onClick={() => setViewId("all")}
-          >
-            Все
-          </button>
-          {views.map((view) => (
-            <button
-              key={view.id}
-              type="button"
-              className={`unit-tab ${viewId === view.id ? "is-on" : ""} ${view.is_new && payload?.mode === "staged" ? "has-new" : ""}`}
-              onClick={() => setViewId(view.id)}
-              title={view.is_new && payload?.mode === "staged" ? "Новая цепочка этого шага" : chainLabel(view.label, view.unit_no)}
-              aria-label={view.is_new && payload?.mode === "staged" ? `${chainLabel(view.label, view.unit_no)}, новое` : chainLabel(view.label, view.unit_no)}
-            >
-              <span>{chainLabel(view.label, view.unit_no)}</span>
-              <small>{view.origin?.step_no ? `из вопроса ${view.origin.step_no}` : "источник не определён"}</small>
-              {view.is_new && payload?.mode === "staged" && <span className="unit-new">новое</span>}
-            </button>
-          ))}
-        </div>
+        <label className="graph-view-picker"><span>{title}</span>
+          <select aria-label="Представление данных" value={viewId} onChange={(event) => setViewId(event.target.value)}>
+            <option value="all">Все цепочки · {views.length}</option>
+            {views.map((view) => <option key={view.id} value={view.id}>{chainLabel(view.label, view.unit_no)}{view.origin?.step_no ? ` · вопрос ${view.origin.step_no}` : ""}{view.is_new && payload?.mode === "staged" ? " · новая" : ""}</option>)}
+          </select>
+        </label>
         {!embedded && <button type="button" className="icon-btn" onClick={onClose} aria-label="Скрыть данные"><IconClose /></button>}
       </header>
       {payload && views.length > 0 && (
-        <div className="graph-origin-bar">
-          {selectedView ? (
-            <>
-              <span><b>Вопрос {selectedView.origin?.step_no || "—"}:</b> {selectedView.origin?.question || "Исходный вопрос не определён"}</span>
-              {selectedView.origin?.step_id && (
-                <button type="button" onClick={() => onOpenStep?.(selectedView.origin!.step_id!, selectedView.origin?.branch_id || undefined)}>Перейти к шагу</button>
-              )}
-            </>
-          ) : (
-            <>
-              <span><b>{views.length} {views.length === 1 ? "цепочка" : "цепочек"}</b> из {originGroups.length} {originGroups.length === 1 ? "вопроса" : "вопросов"}</span>
-              <div>
-                {originGroups.map((group, index) => (
-                  <button
-                    key={group.origin?.step_id || `unknown-${index}`}
-                    type="button"
-                    disabled={!group.origin?.step_id}
-                    title={group.origin?.question || "Исходный вопрос не определён"}
-                    onClick={() => group.origin?.step_id && onOpenStep?.(group.origin.step_id, group.origin.branch_id || undefined)}
-                  >
-                    Вопрос {group.origin?.step_no || "—"} · {group.count}
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+        <details className="graph-origins" key={viewId}><summary>Откуда эти данные</summary>
+          {selectedView ? <div><p>{selectedView.origin?.question || "Исходный вопрос не определён"}</p>{selectedView.origin?.step_id && <button type="button" className="ghost-btn" onClick={() => onOpenStep?.(selectedView.origin!.step_id!, selectedView.origin?.branch_id || undefined)}>Перейти к вопросу {selectedView.origin?.step_no || ""}</button>}</div> : originGroups.map((group, index) => <button className="graph-origin-link" key={group.origin?.step_id || index} type="button" disabled={!group.origin?.step_id} onClick={() => group.origin?.step_id && onOpenStep?.(group.origin.step_id, group.origin.branch_id || undefined)}><strong>Вопрос {group.origin?.step_no || "—"} · {group.count} цепочек</strong><span>{group.origin?.question || "Исходный вопрос не определён"}</span></button>)}
+        </details>
       )}
       {!embedded && onBackToMap && (
         <button type="button" className="graph-back-map" onClick={onBackToMap}>← К карте хода</button>

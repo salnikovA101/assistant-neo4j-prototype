@@ -413,7 +413,7 @@ def test_login_html_has_no_inline_script():
     assert is_public_auth_path("/ui/assets/index.js") is True
 
 
-def test_login_html_shows_workspace_and_run_id_safely():
+def test_login_html_shows_workspace_without_internal_run_id():
     from server.core.app import _login_html
 
     response = _login_html(
@@ -427,7 +427,29 @@ def test_login_html_shows_workspace_and_run_id_safely():
     assert "__RUN_ID__" not in html
     assert 'action="/ui/packaging/login"' in html
     assert "packaging" in html
-    assert "full_corpus_20260713" in html
+    assert "full_corpus_20260713" not in html
+
+
+def test_login_html_wrong_password_does_not_claim_accounts_are_missing():
+    from server.core.app import _login_html
+
+    failed = _login_html(
+        True, workspace="packaging", run_id="full_corpus_20260713"
+    ).body.decode("utf-8")
+    empty = _login_html(
+        False,
+        workspace="kefir",
+        run_id="new_mega_run",
+        no_accounts=True,
+    ).body.decode("utf-8")
+
+    assert 'id="login-error" class="login-error" hidden' not in failed
+    assert 'id="login-setup" class="login-error" hidden' in failed
+    assert "Неверный логин или пароль" in failed
+
+    assert 'id="login-setup" class="login-error" hidden' not in empty
+    assert 'id="login-error" class="login-error" hidden' in empty
+    assert "Аккаунты ещё не настроены" in empty
 
 
 def test_login_assets_are_routed_before_workspace_fallback():

@@ -102,6 +102,7 @@ export function GraphCanvas({
   resultEdges = [],
   filtersContent,
   activeFilterCount = 0,
+  statusHint = "",
 }: {
   payload: GraphPayload | null;
   viewId: string | "all";
@@ -118,6 +119,7 @@ export function GraphCanvas({
   resultEdges?: GraphEdge[];
   filtersContent?: ReactNode;
   activeFilterCount?: number;
+  statusHint?: string;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -134,7 +136,7 @@ export function GraphCanvas({
   const [query, setQuery] = useState("");
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [collection, setCollection] = useState<GraphCollectionItem[]>([]);
-  const [inspectorMode, setInspectorMode] = useState<"results" | "filters" | "detail" | "collection">(workspaceMode ? "results" : "detail");
+  const [inspectorMode, setInspectorMode] = useState<"results" | "filters" | "detail" | "collection">(workspaceMode ? "filters" : "detail");
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [inspectorHeight, setInspectorHeight] = useState(220);
   const [workspaceInspectorWidth, setWorkspaceInspectorWidth] = useState(DEFAULT_WORKSPACE_INSPECTOR_WIDTH);
@@ -414,7 +416,7 @@ export function GraphCanvas({
             value={query}
             onChange={(event) => { setQuery(event.target.value); setSuggestionsOpen(true); }}
             onFocus={() => setSuggestionsOpen(true)}
-            placeholder="Search entities, relations, or evidence in English"
+            placeholder="Поиск сущностей, связей и данных — на английском"
             aria-label="Поиск на схеме по английским именам и evidence"
           />
           {suggestionsOpen && q && hits.length > 0 && (
@@ -440,7 +442,15 @@ export function GraphCanvas({
           <div className="graph-canvas-wrap">
             {filtered.nodes.length ? <>
               <div ref={hostRef} className="graph-canvas" />
+              <div className="graph-viewport-tools" role="group" aria-label="Масштаб графа">
+                <button type="button" aria-label="Уменьшить граф" title="Уменьшить" onClick={() => { const net = netRef.current; if (net) net.moveTo({ scale: Math.max(.05, net.getScale() / 1.3), animation: false }); }}>−</button>
+                <button type="button" onClick={() => { const net = netRef.current; if (net) fitVisibleGraph(net, filtered.nodes.length); }}>Вписать</button>
+                <button type="button" aria-label="Увеличить граф" title="Увеличить" onClick={() => { const net = netRef.current; if (net) net.moveTo({ scale: Math.min(5, net.getScale() * 1.3), animation: false }); }}>+</button>
+              </div>
             </> : <div className="graph-empty">{emptyHint}</div>}
+            {(statusHint || filtered.nodes.length > 0) && (
+              <div className="graph-canvas-hint">{statusHint || `${filtered.nodes.length} сущностей · ${filtered.edges.length} связей`}</div>
+            )}
             {workspaceMode && !inspectorOpen && <button type="button" className="inspector-reopen" onClick={() => setInspectorOpen(true)}><IconSidebar /> Показать панель</button>}
           </div>
           {!workspaceMode && <div
@@ -510,13 +520,13 @@ export function GraphCanvas({
             }}
           ><span /></div>}
           {(!workspaceMode || inspectorOpen) && <aside ref={inspectorRef} className="graph-inspector">
-            <div className="inspector-tabs">
+            {(workspaceMode || onUseCollection) && <div className="inspector-tabs">
               {workspaceMode && <button type="button" className={inspectorMode === "filters" ? "is-on" : ""} onClick={() => setInspectorMode("filters")}>Фильтры {activeFilterCount || ""}</button>}
               {workspaceMode && <button type="button" className={inspectorMode === "results" ? "is-on" : ""} onClick={() => setInspectorMode("results")}>Результаты {resultEdges.length || ""}</button>}
               <button type="button" className={inspectorMode === "detail" ? "is-on" : ""} onClick={() => setInspectorMode("detail")}>Детали</button>
-              <button type="button" className={inspectorMode === "collection" ? "is-on" : ""} onClick={() => setInspectorMode("collection")}>Подборка {collection.length || ""}</button>
+              {onUseCollection && <button type="button" className={inspectorMode === "collection" ? "is-on" : ""} onClick={() => setInspectorMode("collection")}>Подборка {collection.length || ""}</button>}
               {workspaceMode && <button type="button" className="inspector-close" aria-label="Скрыть панель" title="Скрыть панель" onClick={() => setInspectorOpen(false)}><IconClose /></button>}
-            </div>
+            </div>}
             {inspectorMode === "results" ? <div className="graph-results-list">
               {!resultEdges.length && <p className="muted">Введите запрос или выберите фильтры — найденные связи появятся здесь.</p>}
               {resultEdges.slice(0, RESULT_LIST_LIMIT).map((edge) => (
@@ -529,27 +539,27 @@ export function GraphCanvas({
               {resultEdges.length > RESULT_LIST_LIMIT && <p className="muted">Показаны первые {RESULT_LIST_LIMIT} из {resultEdges.length}. Уменьшите лимит связей или уточните запрос.</p>}
             </div> : inspectorMode === "filters" ? <div className="graph-filter-content">{filtersContent}</div> : inspectorMode === "detail" ? <>
               {!selected && <p className="muted">Выберите сущность или связь. Найденный контекст останется на схеме.</p>}
-              {selected?.kind === "node" && <div>
+              {selected?.kind === "node" && <div className="entity-profile">
+                <p className="inspector-kicker">Сущность базы знаний</p>
                 <h3>{captionOf(selected.node)}</h3>
                 <NodeClasses labels={selected.node.labels} />
                 <p className="muted">Загружено связей: {selectedExpansion?.loaded ?? selectedLoadedEdges}{selectedExpansion?.total ? ` из ${selectedExpansion.total}` : ""}.</p>
-                <div className="inspector-actions"><button type="button" className="primary-btn" onClick={() => toggleNode(selected.node)}>{collectedNodeIds.has(selected.node.id) ? "Убрать из подборки" : "В подборку"}</button></div>
+                {onUseCollection && <button type="button" className="collection-toggle" aria-pressed={collectedNodeIds.has(selected.node.id)} onClick={() => toggleNode(selected.node)}>{collectedNodeIds.has(selected.node.id) ? "✓ В подборке" : "+ Добавить в подборку"}</button>}
                 {onExpandNode && graph.nodes.some((item) => item.id === selected.node.id) && <div className="node-expansion-controls">
-                  <div className="direction-toggle" aria-label="Направление связей">
-                    {(["all", "incoming", "outgoing"] as const).map((direction) => <button key={direction} type="button" className={expandDirection === direction ? "is-on" : ""} onClick={() => setExpandDirection(direction)}>{direction === "all" ? "Все" : direction === "incoming" ? "Входящие" : "Исходящие"}</button>)}
-                  </div>
+                  <select aria-label="Направление раскрытия связей" value={expandDirection} onChange={(event) => setExpandDirection(event.target.value as "all" | "incoming" | "outgoing")}><option value="all">Все связи</option><option value="incoming">Входящие</option><option value="outgoing">Исходящие</option></select>
                   <button type="button" className="graph-expand-btn" disabled={selectedExpansion?.busy || selectedExpansion?.hasMore === false} onClick={() => onExpandNode(selected.node.id, expandDirection)}>
                     {selectedExpansion?.busy ? "Загрузка…" : selectedExpansion?.hasMore === false ? "Все связи раскрыты" : selectedExpansion?.loaded ? "Раскрыть ещё" : "Раскрыть связи"}
                   </button>
                 </div>}
               </div>}
-              {selected?.kind === "edge" && <EdgeCard edge={selected.edge} inCollection={collectedEdgeIds.has(selected.edge.id)} onToggleCollection={() => toggleEdge(selected.edge)} />}
+              {selected?.kind === "edge" && <EdgeCard edge={selected.edge} inCollection={collectedEdgeIds.has(selected.edge.id)} onToggleCollection={onUseCollection ? () => toggleEdge(selected.edge) : undefined} />}
             </> : <div className="evidence-collection">
-              {!collection.length && <p className="muted">Добавляйте сущности и доказательные связи, чтобы собрать контекст разработки.</p>}
-              {collection.some((item) => item.kind === "node") && <p className="collection-section-title">Сущности</p>}
-              {collection.filter((item): item is Extract<GraphCollectionItem, { kind: "node" }> => item.kind === "node").map((item) => <button key={item.key} type="button" onClick={() => pickNode(item.node)}><strong>{captionOf(item.node)}</strong></button>)}
-              {collection.some((item) => item.kind === "edge") && <p className="collection-section-title">Данные</p>}
-              {collection.filter((item): item is Extract<GraphCollectionItem, { kind: "edge" }> => item.kind === "edge").map((item) => <button key={item.key} type="button" onClick={() => pickTriplet(item.edge)}><strong>{visibleTripletCaption(item.edge)}</strong><span>{String(item.edge.properties?.source_file || "Источник не указан")}</span></button>)}
+              <div className="collection-intro"><h3>Контекст для чата</h3><p>Соберите нужные сущности и связи, затем вставьте их в сообщение ассистенту. Подборка временная — вставьте её в чат, чтобы сохранить выбранные данные.</p></div>
+              {!collection.length && <p className="collection-empty">Выберите объект на графе и нажмите «Добавить в подборку».</p>}
+              {collection.map((item) => <div className="collection-item" key={item.key}>
+                <button type="button" className="collection-item-open" onClick={() => item.kind === "node" ? pickNode(item.node) : pickTriplet(item.edge)}><small>{item.kind === "node" ? "Сущность" : "Связь"}</small><strong>{item.kind === "node" ? captionOf(item.node) : visibleTripletCaption(item.edge)}</strong>{item.kind === "edge" && <span>{String(item.edge.properties?.source_file || "Источник не указан")}</span>}</button>
+                <button type="button" className="icon-btn" aria-label={`Убрать из подборки: ${item.kind === "node" ? captionOf(item.node) : visibleTripletCaption(item.edge)}`} title="Убрать из подборки" onClick={() => setCollection((items) => items.filter((entry) => entry.key !== item.key))}><IconClose /></button>
+              </div>)}
               {collection.length > 0 && <div className="collection-footer">
                 {onUseCollection && <button type="button" className="primary-btn" onClick={() => onUseCollection(collection)}>Вставить в чат</button>}
                 <button type="button" className="collection-clear" onClick={() => setCollection([])}>Очистить подборку</button>
@@ -572,7 +582,7 @@ function NodeClasses({ labels }: { labels: string[] | undefined }) {
   </div>;
 }
 
-function EdgeCard({ edge, inCollection, onToggleCollection }: { edge: GraphEdge; inCollection: boolean; onToggleCollection: () => void }) {
+function EdgeCard({ edge, inCollection, onToggleCollection }: { edge: GraphEdge; inCollection: boolean; onToggleCollection?: () => void }) {
   const properties = edge.properties || {};
   const evidence = String(properties.evidence || "");
   const source = String(properties.source_file || "");
@@ -583,7 +593,7 @@ function EdgeCard({ edge, inCollection, onToggleCollection }: { edge: GraphEdge;
     {evidence && <blockquote className="inspector-quote">{evidence}</blockquote>}
     <dl className="inspector-meta">{source && <><dt>Источник</dt><dd>{source}</dd></>}{confidence != null && confidence !== "" && <><dt>Уверенность экстракции</dt><dd>{Number(confidence).toFixed(2)}</dd></>}</dl>
     <div className="inspector-actions">
-      <button type="button" className="primary-btn" onClick={onToggleCollection}>{inCollection ? "Убрать из подборки" : "В подборку"}</button>
+      {onToggleCollection && <button type="button" className="collection-toggle" aria-pressed={inCollection} onClick={onToggleCollection}>{inCollection ? "✓ В подборке" : "+ Добавить в подборку"}</button>}
       {evidence && <button type="button" className="ghost-btn" onClick={() => copyText(evidence)}>Копировать данные</button>}
     </div>
   </div>;

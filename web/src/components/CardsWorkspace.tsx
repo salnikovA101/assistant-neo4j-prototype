@@ -89,7 +89,7 @@ function SavedCardEditor({ card, template, busy, onCancel, onSave }: {
 
 export function CardsWorkspace({
   checkpointId, branchId, onNotice, chatMode = false,
-  onGenerate, onInsert, onClose, initialTab = "templates", readOnly = false,
+  onGenerate, onInsert, onClose, initialTab = "library", readOnly = false,
 }: {
   checkpointId: string;
   branchId: string;
@@ -110,6 +110,9 @@ export function CardsWorkspace({
   const [busy, setBusy] = useState(false);
   const [editor, setEditor] = useState<"create" | "edit" | null>(null);
   const [editingCardId, setEditingCardId] = useState("");
+  const [cardQuery, setCardQuery] = useState("");
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
+  const visibleCards = cards.filter((card) => `${card.title} ${JSON.stringify(card.latestRevision.data)}`.toLocaleLowerCase("ru-RU").includes(cardQuery.trim().toLocaleLowerCase("ru-RU")));
 
   const reload = async () => {
     const [nextTemplates, nextCards] = await Promise.all([fetchCardTemplates(), fetchCards()]);
@@ -147,7 +150,8 @@ export function CardsWorkspace({
 
   return (
     <section className="cards-workspace">
-      <header className="workspace-bar">
+      <header className="workspace-bar cards-workspace-bar">
+        <nav><button className={tab === "library" ? "is-on" : ""} onClick={() => setTab("library")}>Библиотека</button><button className={tab === "templates" ? "is-on" : ""} onClick={() => setTab("templates")}>Шаблоны</button></nav>
         {!chatMode && <label className="ghost-btn card-import-control">Импорт JSON<input type="file" accept="application/json,.json" hidden onChange={async (event) => {
           const file = event.target.files?.[0];
           if (!file) return;
@@ -165,7 +169,7 @@ export function CardsWorkspace({
           } catch (error) { onNotice(error instanceof Error ? error.message : "Ошибка импорта"); }
           finally { setBusy(false); event.target.value = ""; }
         }} /></label>}
-        <nav><button className={tab === "templates" ? "is-on" : ""} onClick={() => setTab("templates")}>Шаблоны</button><button className={tab === "library" ? "is-on" : ""} onClick={() => setTab("library")}>Библиотека</button></nav>
+
         {onClose && <button type="button" className="icon-btn" aria-label="Закрыть карточки" title="Закрыть" onClick={onClose}>×</button>}
       </header>
 
@@ -186,6 +190,7 @@ export function CardsWorkspace({
         ) : (
         <div className="cards-grid">
           <div className="cards-list-panel">
+            <p className="template-list-heading">Шаблоны карточек</p>
             {templates.map((item) => <button type="button" key={item.id} className={selectedTemplate === item.latestVersion.id ? "is-active" : ""} onClick={() => { setSelectedTemplate(item.latestVersion.id); setEditor(null); }}><strong>{item.name}</strong><span>{item.system ? "Встроенный" : "Личный"}</span><p>{item.description}</p></button>)}
             {!chatMode && <button type="button" className="new-template" onClick={() => setEditor("create")}>+ Новый шаблон</button>}
           </div>
@@ -215,7 +220,7 @@ export function CardsWorkspace({
                     }}><IconTrash /></button>}
                   </div>
                 </div>
-                <CardVisual templateName={template.name} version={template.latestVersion.version} schema={template.latestVersion.schema} ui={template.latestVersion.ui} data={blankData(template.latestVersion.schema)} status="Шаблон" />
+                <div className="template-structure"><h3>Поля карточки</h3><p>Ассистент заполнит их по вашему диалогу.</p><div className="template-field-list">{Object.entries((template.latestVersion.schema.properties || {}) as Record<string, { title?: string; description?: string }>).filter(([key]) => key !== "title").map(([key, field], index) => <div key={key}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{field.title || key}</strong>{field.description && <p>{field.description}</p>}</div></div>)}</div></div>
                 {!chatMode && <details className="technical-card-data"><summary>Дополнительно · технические данные</summary><pre>{JSON.stringify({ schema: template.latestVersion.schema, ui: template.latestVersion.ui }, null, 2)}</pre></details>}
                 {draft && <DraftReview draft={draft} template={draftTemplate} queueSize={draftQueue.length} busy={busy} onSave={async (data, provenance, title) => {
                   setBusy(true);
@@ -235,9 +240,11 @@ export function CardsWorkspace({
         )
       ) : (
         <div className="library-shell">
+          <div className="library-tools"><label className="library-search"><span className="sr-only">Поиск по карточкам</span><input type="search" placeholder="Найти карточку по названию или содержанию" value={cardQuery} onChange={(event) => setCardQuery(event.target.value)} /></label><span className="library-count">{visibleCards.length} из {cards.length}</span></div>
           <div className="library-grid">
             {cards.length === 0 && <div className="cards-empty-state"><strong>Сохранённых карточек пока нет</strong><p>Откройте диалог, нажмите <code>+</code> у поля сообщения и выберите «Открыть карточки».</p></div>}
-            {cards.map((card) => {
+            {cards.length > 0 && visibleCards.length === 0 && <div className="cards-empty-state"><strong>Карточки не найдены</strong><p>Попробуйте другое название или слово из содержимого.</p></div>}
+            {visibleCards.map((card) => {
               const cardTemplate = templateForVersion(templates, card.templateVersionId);
               if (editingCardId === card.id) return <SavedCardEditor key={card.id} card={card} template={cardTemplate} busy={busy} onCancel={() => setEditingCardId("")} onSave={async (data, editedFields, title) => {
                 setBusy(true);
@@ -245,9 +252,10 @@ export function CardsWorkspace({
                 catch (error) { onNotice(error instanceof Error ? error.message : "Не удалось сохранить правку"); }
                 finally { setBusy(false); }
               }} />;
-              return <article key={card.id} className={chatMode ? "library-card chat-library-card" : "library-card"}>
+              return <article key={card.id} className={`library-card ${chatMode ? "chat-library-card" : ""} ${expandedCards.has(card.id) ? "is-expanded" : "is-preview"}`}>
                 <CardVisual templateName={cardTemplate?.name || card.template?.name || "Карточка"} version={cardTemplate?.latestVersion.version || card.template?.version} schema={cardTemplate?.latestVersion.schema || card.template?.schema || fallbackSchemaForData(card.latestRevision.data)} ui={cardTemplate?.latestVersion.ui || card.template?.ui || {}} data={{ ...card.latestRevision.data, title: card.title }} provenance={card.latestRevision.provenance} status={`Правка ${card.latestRevision.revision}`} />
                 <footer>
+                  <button type="button" className="ghost-btn card-expand" aria-expanded={expandedCards.has(card.id)} onClick={() => setExpandedCards((current) => { const next = new Set(current); if (next.has(card.id)) next.delete(card.id); else next.add(card.id); return next; })}>{expandedCards.has(card.id) ? "Свернуть" : "Открыть полностью"}</button>
                   {chatMode && onInsert && <button className="primary-btn" disabled={!branchId || !checkpointId || busy || readOnly} onClick={() => onInsert(card)}>Вставить в диалог</button>}
                   {!chatMode && <button className="ghost-btn" onClick={() => setEditingCardId(card.id)}>Изменить</button>}
                   {!chatMode && <button type="button" className="ghost-btn danger-btn" disabled={busy} onClick={async () => {

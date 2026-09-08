@@ -348,6 +348,7 @@ export function ChatThread({
   const followTailRef = useRef(true);
   const frameRef = useRef<number | null>(null);
   const [openSourcesMessageId, setOpenSourcesMessageId] = useState<string | null>(null);
+  const [citationTarget, setCitationTarget] = useState<{ messageId: string; number: string } | null>(null);
   const isStreaming = messages.some((message) => message.status === "streaming");
   const activeBranchVisual = branchVisuals[activeBranchId];
   const branchStartsAfterHistory = Boolean(
@@ -365,10 +366,16 @@ export function ChatThread({
   useEffect(() => {
     if (!openSourcesMessageId) return;
     const frame = window.requestAnimationFrame(() => {
-      document.getElementById(`sources-${openSourcesMessageId}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+      const panel = document.getElementById(`sources-${openSourcesMessageId}`);
+      panel?.querySelectorAll(".is-citation-target").forEach((item) => item.classList.remove("is-citation-target"));
+      const target = citationTarget?.messageId === openSourcesMessageId
+        ? panel?.querySelector<HTMLElement>(`[data-source-number="${citationTarget.number}"]`) : null;
+      target?.classList.add("is-citation-target");
+      (target || panel)?.scrollIntoView({ block: "center", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      target?.focus({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [openSourcesMessageId]);
+  }, [openSourcesMessageId, citationTarget]);
 
   useEffect(() => {
     const thread = threadRef.current;
@@ -484,6 +491,12 @@ export function ChatThread({
             ) : msg.text ? (
               <div
                 className="md"
+                onClick={(event) => {
+                  const ref = (event.target as HTMLElement).closest<HTMLButtonElement>("button[data-source-ref]");
+                  if (!ref?.dataset.sourceRef || !/^\d+$/.test(ref.dataset.sourceRef)) return;
+                  setCitationTarget({ messageId: msg.id, number: ref.dataset.sourceRef });
+                  setOpenSourcesMessageId(msg.id);
+                }}
                 dangerouslySetInnerHTML={{
                   __html: renderedAnswer?.bodyHtml || "",
                 }}

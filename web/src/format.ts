@@ -192,6 +192,60 @@ function improveAnswerHtml(html: string): AnswerMarkdownParts {
   const sources = parsed.createElement("div");
   sources.append(...sourceNodes);
   sourcesHeading.remove();
+  // The server bibliography is one paragraph with a <br> between entries.
+  for (const paragraph of sources.querySelectorAll("p")) {
+    if (!paragraph.querySelector(":scope > br")) continue;
+    const rows = parsed.createDocumentFragment();
+    let row = parsed.createElement("p");
+    rows.append(row);
+    for (const child of Array.from(paragraph.childNodes)) {
+      if (child instanceof Element && child.tagName === "BR") {
+        row = parsed.createElement("p");
+        rows.append(row);
+      } else row.append(child);
+    }
+    paragraph.replaceWith(rows);
+  }
+  // Only turn a number into an action when the bibliography has that number.
+  // Walking text nodes preserves links, code, math and the sanitized markup.
+  const sourceNumbers = new Set<string>();
+  for (const item of sources.querySelectorAll("li, p")) {
+    const explicit = item.textContent?.trim().match(/^\[(\d+)\]/)?.[1];
+    const ordered = item.tagName === "LI" && item.parentElement?.tagName === "OL"
+      ? String(Number(item.getAttribute("value")) || (Number(item.parentElement.getAttribute("start")) || 1) + Array.from(item.parentElement.children).indexOf(item))
+      : "";
+    const number = explicit || ordered;
+    if (!number || sourceNumbers.has(number)) continue;
+    sourceNumbers.add(number);
+    item.setAttribute("data-source-number", number);
+    item.setAttribute("tabindex", "-1");
+  }
+  const walker = parsed.createTreeWalker(parsed.body, NodeFilter.SHOW_TEXT);
+  const textNodes: Text[] = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode as Text);
+  for (const node of textNodes) {
+    if (node.parentElement?.closest("a, button, code, pre, .katex, [role=math]")) continue;
+    const content = node.textContent || "";
+    const fragment = parsed.createDocumentFragment();
+    let cursor = 0;
+    for (const match of content.matchAll(/\[(\d+)\]/g)) {
+      if (!sourceNumbers.has(match[1])) continue;
+      fragment.append(content.slice(cursor, match.index));
+      const button = parsed.createElement("button");
+      button.type = "button";
+      button.className = "citation-ref";
+      button.dataset.sourceRef = match[1];
+      button.setAttribute("aria-label", `Показать источник ${match[1]}`);
+      button.title = `Источник ${match[1]}`;
+      button.textContent = match[1];
+      fragment.append(button);
+      cursor = match.index! + match[0].length;
+    }
+    if (cursor) {
+      fragment.append(content.slice(cursor));
+      node.replaceWith(fragment);
+    }
+  }
   return {
     bodyHtml: parsed.body.innerHTML,
     sourcesHtml: sources.innerHTML,

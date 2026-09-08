@@ -6,7 +6,7 @@ from server.service_guide import load_service_guide
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web" / "src"
-SEARCH_PLACEHOLDER = 'placeholder="Search entities, relations, or evidence in English"'
+SEARCH_PLACEHOLDER = 'placeholder="Поиск сущностей, связей и данных — на английском"'
 SEARCH_HINT = "Введите название или термин на английском."
 
 
@@ -17,6 +17,8 @@ def test_explorer_search_uses_english_graph_language():
     assert "по английским именам и evidence" in source
     assert "Введите английское название, тип связи или фрагмент данных." in source
     assert "уверенность экстракции ≥" in source
+    assert "statusHint=" in source
+    assert '<p className="explorer-status">Показано связей:' not in source
     assert "relationLabel" not in source
     assert "showTechnical" not in source
     assert "Начните вводить запрос" not in source
@@ -73,9 +75,13 @@ def test_agenda_ui_exposes_three_editable_coverage_states():
     types = (WEB / "types.ts").read_text(encoding="utf-8")
     styles = (WEB / "styles.css").read_text(encoding="utf-8")
     assert '"not_closed" | "partial" | "closed"' in types
-    assert '<option value="not_closed">Не закрыт</option>' in drawer
-    assert '<option value="partial">Закрыт частично</option>' in drawer
-    assert '<option value="closed">Закрыт</option>' in drawer
+    assert 'not_closed: "Не закрыт"' in drawer
+    assert 'partial: "Закрыт частично"' in drawer
+    assert 'closed: "Закрыт"' in drawer
+    assert "Object.keys(STATUS_LABEL)" in drawer
+    assert 'aria-pressed={item.status === status}' in drawer
+    assert 'className="agenda-status"' not in drawer
+    assert "agenda-coverage is-${item.status}" in drawer
     assert "Оценил ассистент" in drawer and "Изменено вами" in drawer
     assert ".agenda-coverage.is-closed" in styles
     assert ".agenda-coverage.is-partial" in styles
@@ -133,6 +139,7 @@ def test_chat_has_one_cards_entry_and_compact_user_question():
     assert "GRAPH_PANEL_MIN" in app
     assert "min={GRAPH_PANEL_MIN}" in app
     assert graph.index(">Фильтры") < graph.index(">Результаты")
+    assert 'workspaceMode ? "filters"' in graph
     assert "current === \"filters\"" in graph
     assert "RESULT_LIST_LIMIT" in graph
     assert "chunk_id" not in graph
@@ -175,19 +182,14 @@ def test_message_ids_work_on_plain_http_hosts():
     assert "is not a secure context" in uid
 
 
-def test_empty_chat_welcome_is_short_help_not_suggestion_grid():
+def test_empty_chat_welcome_is_only_help():
     app = (WEB / "App.tsx").read_text(encoding="utf-8")
-    styles = (WEB / "styles.css").read_text(encoding="utf-8")
-    assert 'className="welcome"' in app
-    assert "Как пользоваться" in app
-    assert 'setWorkspace("help")' in app
-    assert 'className="suggestions"' not in app
-    assert ".welcome-help-link" in styles
-    welcome = app.split('className="welcome"', 1)[1].split("</div>", 1)[0]
-    assert "подключённой базе знаний" not in welcome
-    assert "Подбери культуры для творога" not in welcome
-    assert "или спросите у ассистента" in welcome
-    assert welcome.count("<p>") == 1
+    welcome = (WEB / "components" / "Welcome.tsx").read_text(encoding="utf-8")
+    assert "<Welcome onHelp" in app
+    assert "Как пользоваться" in welcome
+    assert "onClick={onHelp}" in welcome
+    assert "<h1" not in welcome
+    assert "onPrompt" not in welcome
 
 
 def test_empty_research_branch_placeholder_is_selectable():
@@ -200,6 +202,20 @@ def test_empty_research_branch_placeholder_is_selectable():
     assert 'className="research-empty-node"' in pane
     assert "role=\"treeitem\"" in pane
     assert "cursor:pointer" in styles.split(".research-empty-node {", 1)[1].split("}", 1)[0]
+
+
+def test_research_step_cards_render_markdown_previews():
+    pane = (WEB / "components" / "ResearchMapPane.tsx").read_text(encoding="utf-8")
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
+    assert "renderMarkdown" in pane
+    assert 'className="md research-step-preview"' in pane
+    assert "dangerouslySetInnerHTML" in pane
+    assert ".research-step-card > .research-step-preview" in styles
+    assert "research-step-card > .research-step-preview h2" in styles.replace("\n", "")
+    preview_rule = styles.split(".research-step-card > p,.research-step-card > .research-step-preview {", 1)[1].split("}", 1)[0]
+    assert "flex:1 1 auto" in preview_rule
+    assert "line-clamp" not in preview_rule
+    assert "margin:6px 0 8px" in preview_rule
 
 
 def test_stream_markdown_holds_incomplete_source_groups():
@@ -236,7 +252,11 @@ def test_history_can_only_be_deleted_and_approved_stream_can_abort():
     assert "clearHistory" not in app
     assert "/clear_history" not in api
     assert "/clear_history" not in vite
-    assert "Удалить этот чат без возможности восстановления?" in app
+    assert "Удалить чат «${session.title}» без возможности восстановления?" in app
+    sidebar = (WEB / "components" / "Sidebar.tsx").read_text(encoding="utf-8")
+    assert "onDeleteSession(session.id)" in sidebar
+    settings = app.split('className="sidebar-settings-pop"', 1)[1]
+    assert "deleteConversation" not in settings
     assert "const controller = streaming ? new AbortController() : null;" in app
     assert "setBusy(true);" in app
     assert "controller?.signal" in app

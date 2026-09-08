@@ -517,6 +517,17 @@ class AppStore:
         rows = await (await self._conn().execute(f"PRAGMA table_info({table})")).fetchall()
         return {str(row["name"]) for row in rows}
 
+    async def _set_foreign_keys(self, enabled: bool) -> None:
+        """Toggle FK enforcement. SQLite ignores this pragma inside a transaction."""
+        conn = self._conn()
+        await conn.commit()
+        await conn.execute(f"PRAGMA foreign_keys={'ON' if enabled else 'OFF'}")
+        row = await (await conn.execute("PRAGMA foreign_keys")).fetchone()
+        actual = int(row[0] if row is not None else -1)
+        expected = 1 if enabled else 0
+        if actual != expected:
+            raise RuntimeError("SQLite ignored PRAGMA foreign_keys inside a transaction")
+
     async def _migrate_users_login_scope(self) -> None:
         """Allow the same login in different workspaces; keep it unique inside one."""
         conn = self._conn()
@@ -527,28 +538,36 @@ class AppStore:
         compact = "".join(schema_sql.split()).lower().replace('"', "")
         if "unique(username,workspace)" in compact:
             return
-        await conn.execute("PRAGMA foreign_keys=OFF")
-        await conn.execute(
-            """CREATE TABLE users_workspace_unique (
-                id TEXT PRIMARY KEY,
-                username TEXT NOT NULL COLLATE NOCASE,
-                password_hash TEXT NOT NULL,
-                is_active INTEGER NOT NULL DEFAULT 1,
-                workspace TEXT NOT NULL DEFAULT 'packaging',
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                UNIQUE(username, workspace)
-            )"""
-        )
-        await conn.execute(
-            """INSERT INTO users_workspace_unique
-               (id,username,password_hash,is_active,workspace,created_at,updated_at)
-               SELECT id,username,password_hash,is_active,workspace,created_at,updated_at
-               FROM users"""
-        )
-        await conn.execute("DROP TABLE users")
-        await conn.execute("ALTER TABLE users_workspace_unique RENAME TO users")
-        await conn.execute("PRAGMA foreign_keys=ON")
+        await self._set_foreign_keys(False)
+        try:
+            await conn.execute("BEGIN IMMEDIATE")
+            await conn.execute(
+                """CREATE TABLE users_workspace_unique (
+                    id TEXT PRIMARY KEY,
+                    username TEXT NOT NULL COLLATE NOCASE,
+                    password_hash TEXT NOT NULL,
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    workspace TEXT NOT NULL DEFAULT 'packaging',
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    UNIQUE(username, workspace)
+                )"""
+            )
+            await conn.execute(
+                """INSERT INTO users_workspace_unique
+                   (id,username,password_hash,is_active,workspace,created_at,updated_at)
+                   SELECT id,username,password_hash,is_active,workspace,created_at,updated_at
+                   FROM users"""
+            )
+            await conn.execute("DROP TABLE users")
+            await conn.execute("ALTER TABLE users_workspace_unique RENAME TO users")
+        except BaseException:
+            await conn.rollback()
+            raise
+        else:
+            await conn.commit()
+        finally:
+            await self._set_foreign_keys(True)
 
     async def _migrate_state_schema(self) -> None:
         """Add branch/checkpoint columns and backfill a main branch for linear transcripts."""
@@ -741,32 +760,40 @@ class AppStore:
         schema_sql = str(schema_row["sql"] or "") if schema_row is not None else ""
         compact = "".join(schema_sql.split())
         if "UNIQUE(conversation_id,unit_no)" in compact:
-            await conn.execute("PRAGMA foreign_keys=OFF")
-            await conn.execute(
-                """CREATE TABLE evidence_units_v6 (
-                    id TEXT PRIMARY KEY,
-                    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-                    created_checkpoint_id TEXT REFERENCES checkpoints(id) ON DELETE SET NULL,
-                    unit_no INTEGER NOT NULL,
-                    sq_id TEXT REFERENCES subquestions(id) ON DELETE SET NULL,
-                    signature TEXT NOT NULL,
-                    chain_json TEXT NOT NULL,
-                    created_at INTEGER NOT NULL,
-                    UNIQUE(conversation_id, signature)
-                )"""
-            )
-            await conn.execute(
-                """INSERT INTO evidence_units_v6
-                   (id,conversation_id,created_checkpoint_id,unit_no,sq_id,signature,chain_json,created_at)
-                   SELECT id,conversation_id,created_checkpoint_id,unit_no,sq_id,signature,chain_json,created_at
-                   FROM evidence_units"""
-            )
-            await conn.execute("DROP TABLE evidence_units")
-            await conn.execute("ALTER TABLE evidence_units_v6 RENAME TO evidence_units")
-            await conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_units_conversation ON evidence_units(conversation_id, created_at)"
-            )
-            await conn.execute("PRAGMA foreign_keys=ON")
+            await self._set_foreign_keys(False)
+            try:
+                await conn.execute("BEGIN IMMEDIATE")
+                await conn.execute(
+                    """CREATE TABLE evidence_units_v6 (
+                        id TEXT PRIMARY KEY,
+                        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                        created_checkpoint_id TEXT REFERENCES checkpoints(id) ON DELETE SET NULL,
+                        unit_no INTEGER NOT NULL,
+                        sq_id TEXT REFERENCES subquestions(id) ON DELETE SET NULL,
+                        signature TEXT NOT NULL,
+                        chain_json TEXT NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        UNIQUE(conversation_id, signature)
+                    )"""
+                )
+                await conn.execute(
+                    """INSERT INTO evidence_units_v6
+                       (id,conversation_id,created_checkpoint_id,unit_no,sq_id,signature,chain_json,created_at)
+                       SELECT id,conversation_id,created_checkpoint_id,unit_no,sq_id,signature,chain_json,created_at
+                       FROM evidence_units"""
+                )
+                await conn.execute("DROP TABLE evidence_units")
+                await conn.execute("ALTER TABLE evidence_units_v6 RENAME TO evidence_units")
+                await conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_units_conversation ON evidence_units(conversation_id, created_at)"
+                )
+            except BaseException:
+                await conn.rollback()
+                raise
+            else:
+                await conn.commit()
+            finally:
+                await self._set_foreign_keys(True)
         await conn.execute(
             "INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(6,?)",
             (now_ms(),),
@@ -1893,7 +1920,8 @@ class AppStore:
         }
 
         def preview(value: Any, limit: int = 180) -> str:
-            clean = " ".join(str(value or "").split())
+            clean = re.sub(r"[ \t]+", " ", str(value or "").replace("\r\n", "\n").strip())
+            clean = re.sub(r"\n{3,}", "\n\n", clean)
             return clean if len(clean) <= limit else clean[: limit - 1].rstrip() + "…"
 
         def step_for_checkpoint(checkpoint_id_value: str | None) -> str | None:
@@ -1940,7 +1968,7 @@ class AppStore:
                 },
                 "answer": ({
                     "messageId": str(assistant_row["id"]),
-                    "preview": preview(assistant_row["text"]),
+                    "preview": preview(assistant_row["text"], 420),
                     "status": str(assistant_row["status"]),
                 } if assistant_row is not None else None),
                 "userCheckpointId": user_checkpoint_id or None,

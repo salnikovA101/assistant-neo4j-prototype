@@ -8,6 +8,8 @@ import { visibleNodeRef, visibleTripletCaption } from "../uiLabels";
 const DEFAULT_LIMIT = 100;
 const MIN_LIMIT = 1;
 const MAX_LIMIT = 5000;
+const FACET_PREVIEW_LIMIT = 10;
+const FACET_SOURCE_PAGE = 200;
 const EMPTY_FILTERS: GraphFilters = {
   node_labels: [],
   relationship_types: [],
@@ -28,6 +30,18 @@ function mergeFacetValues(values: string[], items: GraphFacetItem[]): GraphFacet
   return [...new Set([...values, ...items.map((item) => item.value)])]
     .map((value) => ({ value, count: counts.get(value) || 0 }))
     .sort((left, right) => right.count - left.count || left.value.localeCompare(right.value));
+}
+
+function facetPreviewKey(items: GraphFacetItem[]): string {
+  return items.slice(0, FACET_PREVIEW_LIMIT).map((item) => item.value).join("\n");
+}
+
+function takeFacetPreview(items: GraphFacetItem[], selected: string[]): GraphFacetItem[] {
+  if (items.length <= FACET_PREVIEW_LIMIT) return items;
+  const head = items.slice(0, FACET_PREVIEW_LIMIT);
+  const seen = new Set(head.map((item) => item.value));
+  const extra = items.filter((item) => selected.includes(item.value) && !seen.has(item.value));
+  return extra.length ? [...head, ...extra] : head;
 }
 
 function collectionDraft(items: GraphCollectionItem[]): string {
@@ -78,7 +92,7 @@ export function Explorer({ onUseCollection }: { onUseCollection?: (draft: string
   useEffect(() => {
     let alive = true;
     const timer = window.setTimeout(() => {
-      void fetchGraphFacets(q, filters, sourceQuery).then((next) => {
+      void fetchGraphFacets(q, filters, sourceQuery, "", FACET_PREVIEW_LIMIT).then((next) => {
         if (alive) setFacets(next);
       }).catch((err: Error) => { if (alive) setError(err.message); });
     }, 280);
@@ -160,20 +174,28 @@ export function Explorer({ onUseCollection }: { onUseCollection?: (draft: string
 
   const nodeFacets = useMemo(() => mergeFacetValues(schema.nodeLabels, facets?.nodeLabels || []), [facets?.nodeLabels, schema.nodeLabels]);
   const relationshipFacets = useMemo(() => mergeFacetValues(schema.relationshipTypes, facets?.relationshipTypes || []), [facets?.relationshipTypes, schema.relationshipTypes]);
+  const sourceFacets = useMemo(() => mergeFacetValues(filters.sources, facets?.sources.items || []), [facets?.sources.items, filters.sources]);
 
-  const loadMoreSources = () => {
-    const cursor = facets?.sources.nextCursor;
-    if (!cursor || sourceBusy) return;
+  const loadAllSources = () => {
+    const startCursor = facets?.sources.nextCursor;
+    if (!startCursor || sourceBusy) return;
     setSourceBusy(true);
-    void fetchGraphFacets(q, filters, sourceQuery, cursor).then((next) => {
-      setFacets((current) => current ? {
-        ...current,
-        sources: {
-          ...next.sources,
-          items: mergeFacetValues([], [...current.sources.items, ...next.sources.items]),
-        },
-      } : next);
-    }).catch((err: Error) => setError(err.message)).finally(() => setSourceBusy(false));
+    void (async () => {
+      let cursor: string | null | undefined = startCursor;
+      let acc = facets?.sources.items || [];
+      let pages = 0;
+      while (cursor && pages < 20) {
+        pages += 1;
+        const next = await fetchGraphFacets(q, filters, sourceQuery, cursor, FACET_SOURCE_PAGE);
+        acc = mergeFacetValues([], [...acc, ...next.sources.items]);
+        const hasMore = Boolean(next.sources.hasMore);
+        cursor = hasMore ? next.sources.nextCursor : "";
+        setFacets((current) => current ? {
+          ...current,
+          sources: { ...next.sources, items: acc, hasMore, nextCursor: cursor || null },
+        } : { ...next, sources: { ...next.sources, items: acc, hasMore, nextCursor: cursor || null } });
+      }
+    })().catch((err: Error) => setError(err.message)).finally(() => setSourceBusy(false));
   };
 
   return <div className="explorer">
@@ -182,7 +204,7 @@ export function Explorer({ onUseCollection }: { onUseCollection?: (draft: string
         <input
           value={q}
           onChange={(event) => setQ(event.target.value)}
-          placeholder="Search entities, relations, or evidence in English"
+          placeholder="Поиск сущностей, связей и данных — на английском"
           aria-label="Поиск по всей базе по английским именам и evidence"
           autoFocus
         />
@@ -198,7 +220,6 @@ export function Explorer({ onUseCollection }: { onUseCollection?: (draft: string
       <button type="button" className="active-filters-clear" onClick={() => setFilters(EMPTY_FILTERS)}>Сбросить всё</button>
     </div>}
     {error && <p className="explorer-status is-error">{error}</p>}
-    {(payload || facets) && !error && <p className="explorer-status">Показано связей: {payload?.all.edges.length || 0} из {facets?.matchingRelationships || 0} · сущностей: {facets?.matchingNodes || 0}</p>}
     <div className="explorer-content">
       <GraphCanvas
         payload={payload}
@@ -213,12 +234,19 @@ export function Explorer({ onUseCollection }: { onUseCollection?: (draft: string
         workspaceMode
         resultEdges={payload?.all.edges || []}
         activeFilterCount={activeFilterCount}
+        statusHint={(payload || facets) && !error ? `Показано связей: ${payload?.all.edges.length || 0} из ${facets?.matchingRelationships || 0} · сущностей: ${facets?.matchingNodes || 0}` : ""}
         filtersContent={<>
           <FacetSection title="Тип сущности" items={nodeFacets} selected={filters.node_labels} onToggle={(value) => setFilters((current) => ({ ...current, node_labels: toggleValue(current.node_labels, value) }))} showColors />
           <FacetSection title="Тип отношения" items={relationshipFacets} selected={filters.relationship_types} onToggle={(value) => setFilters((current) => ({ ...current, relationship_types: toggleValue(current.relationship_types, value) }))} />
           <section className="facet-section"><h3>Источник</h3><input className="facet-search" value={sourceQuery} onChange={(event) => setSourceQuery(event.target.value)} placeholder="Найти статью" />
-            <FacetList items={facets?.sources.items || []} selected={filters.sources} onToggle={(value) => setFilters((current) => ({ ...current, sources: toggleValue(current.sources, value) }))} />
-            {facets?.sources.hasMore && <button type="button" className="facet-more" disabled={sourceBusy} onClick={loadMoreSources}>{sourceBusy ? "Загрузка…" : "Показать ещё"}</button>}
+            <FacetList
+              items={sourceFacets}
+              selected={filters.sources}
+              onToggle={(value) => setFilters((current) => ({ ...current, sources: toggleValue(current.sources, value) }))}
+              hasMore={Boolean(facets?.sources.hasMore)}
+              moreBusy={sourceBusy}
+              onLoadMore={loadAllSources}
+            />
           </section>
           <section className="facet-section" title="Порог уверенности извлечения связи; это не оценка истинности данных"><h3>Минимальная уверенность экстракции</h3>
             <label className="confidence-field"><input type="number" min="0" max="1" step="0.05" value={filters.min_confidence ?? ""} placeholder="Без ограничения" aria-label="Минимальная уверенность экстракции" onChange={(event) => { const value = event.target.value; setFilters((current) => ({ ...current, min_confidence: value === "" ? null : Math.max(0, Math.min(1, Number(value))) })); }} /></label>
@@ -234,6 +262,39 @@ function FacetSection({ title, items, selected, onToggle, showColors = false }: 
   return <section className="facet-section"><h3>{title}</h3><FacetList items={items} selected={selected} onToggle={onToggle} showColors={showColors} /></section>;
 }
 
-function FacetList({ items, selected, onToggle, showColors = false }: { items: GraphFacetItem[]; selected: string[]; onToggle: (value: string) => void; showColors?: boolean }) {
-  return <div className="facet-list">{items.map((item) => <label key={item.value} className={item.count === 0 && !selected.includes(item.value) ? "is-disabled" : ""}><input type="checkbox" checked={selected.includes(item.value)} disabled={item.count === 0 && !selected.includes(item.value)} onChange={() => onToggle(item.value)} /><span className="facet-value" title={item.value}>{showColors && <i className="facet-color-dot" style={{ backgroundColor: colorForLabel(item.value) }} aria-hidden="true" />}<span className="facet-value-text">{item.value}</span></span><b>{item.count.toLocaleString("ru-RU")}</b></label>)}</div>;
+function FacetList({
+  items,
+  selected,
+  onToggle,
+  showColors = false,
+  hasMore = false,
+  moreBusy = false,
+  onLoadMore,
+}: {
+  items: GraphFacetItem[];
+  selected: string[];
+  onToggle: (value: string) => void;
+  showColors?: boolean;
+  hasMore?: boolean;
+  moreBusy?: boolean;
+  onLoadMore?: () => void;
+}) {
+  const previewKey = facetPreviewKey(items);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [previewKey]);
+
+  const visible = expanded ? items : takeFacetPreview(items, selected);
+  const hasHidden = items.length > FACET_PREVIEW_LIMIT || hasMore;
+
+  return <>
+    <div className="facet-list">{visible.map((item) => <label key={item.value} className={item.count === 0 && !selected.includes(item.value) ? "is-disabled" : ""}><input type="checkbox" checked={selected.includes(item.value)} disabled={item.count === 0 && !selected.includes(item.value)} onChange={() => onToggle(item.value)} /><span className="facet-value" title={item.value}>{showColors && <i className="facet-color-dot" style={{ backgroundColor: colorForLabel(item.value) }} aria-hidden="true" />}<span className="facet-value-text">{item.value}</span></span><b>{item.count.toLocaleString("ru-RU")}</b></label>)}</div>
+    {!expanded && hasHidden && <button type="button" className="facet-more" disabled={moreBusy} onClick={() => {
+      setExpanded(true);
+      if (hasMore) onLoadMore?.();
+    }}>{moreBusy ? "Загрузка…" : "Показать ещё"}</button>}
+    {expanded && hasHidden && <button type="button" className="facet-more" disabled={moreBusy} onClick={() => setExpanded(false)}>{moreBusy ? "Загрузка…" : "Свернуть"}</button>}
+  </>;
 }

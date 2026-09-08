@@ -135,11 +135,15 @@ def _login_html(
     html = html.replace("__WORKSPACE__", escape(workspace), 1)
     html = html.replace("__RUN_ID__", escape(run_id), 1)
     if show_error:
-        html = html.replace(' class="login-error" hidden', ' class="login-error"', 1)
+        html = html.replace(
+            'id="login-error" class="login-error" hidden',
+            'id="login-error" class="login-error"',
+            1,
+        )
     if no_accounts:
         html = html.replace(
-            ' id="login-setup" class="login-error" hidden',
-            ' id="login-setup" class="login-error"',
+            'id="login-setup" class="login-error" hidden',
+            'id="login-setup" class="login-error"',
             1,
         )
     return HTMLResponse(html, headers=_LOGIN_SECURITY_HEADERS)

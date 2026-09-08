@@ -96,7 +96,7 @@ export function CardVisual({
           return <section key={field.key} className="visual-card-field">
             <div className="visual-card-label">
               <strong>{field.label}</strong>
-              {field.description && <button type="button" className="card-info" title={field.description} aria-label={`Пояснение: ${field.description}`}>i</button>}
+              {field.description && <details className="card-field-help"><summary aria-label={`Пояснение к полю «${field.label}»`}>Подсказка</summary><p>{field.description}</p></details>}
             </div>
             <div className="visual-card-answer">
               {editable ? (

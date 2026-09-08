@@ -7,6 +7,8 @@ declare module "vis-network/standalone" {
     on(event: string, handler: (params: { nodes: string[]; edges: string[] }) => void): void;
     once(event: string, handler: () => void): void;
     fit(options?: unknown): void;
+    getScale(): number;
+    moveTo(options: { scale: number; animation: boolean }): void;
     redraw(): void;
     setSize(width: string, height: string): void;
     selectNodes(ids: string[]): void;

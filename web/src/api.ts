@@ -35,6 +35,15 @@ export function workspaceLoginUrl(): string {
   return `/ui/${getWorkspace()}/login`;
 }
 
+function isLoginPath(pathname = window.location.pathname): boolean {
+  return /\/ui\/[^/]+\/login\/?$/.test(pathname);
+}
+
+export function redirectToLogin(): void {
+  if (isLoginPath()) return;
+  window.location.assign(workspaceLoginUrl());
+}
+
 export function workspaceLogoutUrl(): string {
   return `/ui/${getWorkspace()}/logout`;
 }
@@ -83,7 +92,7 @@ export function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Prom
 
 async function json<T>(res: Response, fallback: string): Promise<T> {
   if (res.status === 401) {
-    window.location.assign(workspaceLoginUrl());
+    redirectToLogin();
     throw new Error("Сессия истекла");
   }
   let payload: unknown;
@@ -218,7 +227,7 @@ export async function logout(): Promise<void> {
 
 export async function fetchUiConfig(): Promise<UiConfig> {
   const res = await apiFetch("/ui_config", { headers: withHeaders("") });
-  if (res.status === 401) window.location.assign(workspaceLoginUrl());
+  if (res.status === 401) redirectToLogin();
   if (!res.ok) throw new Error("ui_config failed");
   return res.json();
 }

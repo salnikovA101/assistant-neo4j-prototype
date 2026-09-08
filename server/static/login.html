@@ -4,43 +4,30 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
     <meta name="color-scheme" content="dark">
-    <meta name="theme-color" content="#0b0b0d">
+    <meta name="theme-color" content="#17191e">
     <title>Вход — Neo4j Assistant</title>
     <meta name="robots" content="noindex">
     <link rel="icon" href="/ui/icon.svg?v=2" type="image/svg+xml">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/ui/login.css?v=3">
+    <link rel="stylesheet" href="/ui/login.css?v=4">
 </head>
 <body class="login-page">
-    <aside class="login-context" aria-label="Текущая база данных">
-        <div class="context-workspace">
-            <span class="context-status" aria-hidden="true"></span>
-            <span>workspace</span>
-            <strong>__WORKSPACE__</strong>
-        </div>
-        <div class="context-run">
-            <span>run_id</span>
-            <code>__RUN_ID__</code>
-        </div>
-    </aside>
-
     <main class="login-shell">
         <section class="login-card">
             <header class="login-brand">
-                <span class="welcome-logo"><img src="/ui/icon.svg?v=2" alt="" width="36" height="36"></span>
+                <svg class="brand-mark" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
                 <span>Neo4j Assistant</span>
             </header>
 
             <div class="login-copy">
-                <p class="login-eyebrow">Исследовательская среда</p>
-                <h1>С возвращением</h1>
-                <p class="login-lead">Войдите, чтобы продолжить работу с базой знаний и своими диалогами.</p>
+                <h1>Вход в аккаунт</h1>
+                <p class="login-lead">Введите логин и пароль.</p>
             </div>
 
-            <p id="login-setup" class="login-error" hidden>Аккаунты ещё не настроены. Обратитесь к администратору.</p>
             <p id="login-error" class="login-error" hidden>Неверный логин или пароль</p>
+            <p id="login-setup" class="login-error" hidden>Аккаунты ещё не настроены. Обратитесь к администратору.</p>
 
             <form class="login-form" method="post" action="__LOGIN_ACTION__" autocomplete="on">
                 <label class="login-label" for="username">Логин</label>
@@ -51,8 +38,7 @@
             </form>
 
             <footer class="login-footer">
-                <span class="footer-lock" aria-hidden="true">●</span>
-                Защищённый доступ к рабочей области
+                Рабочая область <strong>__WORKSPACE__</strong>
             </footer>
         </section>
     </main>

@@ -35,10 +35,11 @@ import {
   streamBody,
   updateCardDraft,
   withHeaders,
-  workspaceLoginUrl,
+  redirectToLogin,
 } from "./api";
 import { branchColor } from "./branchVisuals";
 import { ChatThread } from "./components/ChatThread";
+import { Welcome } from "./components/Welcome";
 import { Composer } from "./components/Composer";
 import { AgendaDrawer } from "./components/AgendaDrawer";
 import { BranchMenu } from "./components/BranchMenu";
@@ -623,7 +624,7 @@ export function App() {
       });
         if (!res.ok || !res.body) {
         if (res.status === 401) {
-          window.location.assign(workspaceLoginUrl());
+          redirectToLogin();
           return;
         }
         let err = "Ошибка сервера";
@@ -1238,6 +1239,19 @@ export function App() {
         username={config?.username || "demo"}
         onNewChat={() => void newChat()}
         onOpenSession={openSession}
+        deleteDisabled={busy}
+        onDeleteSession={async (id) => {
+          const session = sessions.find((item) => item.id === id);
+          if (!session || !window.confirm(`Удалить чат «${session.title}» без возможности восстановления?`)) return;
+          try {
+            await deleteConversation(id);
+            setSessions((items) => items.filter((item) => item.id !== id));
+            if (id === currentId) {
+              sessionStorage.removeItem("neo4j-assistant.session-id");
+              await newChat();
+            }
+          } catch (error) { setNotice(error instanceof Error ? error.message : "Не удалось удалить чат"); }
+        }}
         onExplorer={() => { setRightPanel({ kind: "closed" }); setWorkspace("graph"); }}
         onLibrary={() => { setRightPanel({ kind: "closed" }); setWorkspace("library"); }}
         onHelp={() => openHelp()}
@@ -1310,14 +1324,7 @@ export function App() {
           )}
           <div className="composer-stack">
           {empty && (
-            <div className="welcome">
-              <p>
-                <button type="button" className="welcome-help-link" onClick={() => openHelp()}>
-                  Как пользоваться
-                </button>
-                <span> — или спросите у ассистента, он сам расскажет</span>
-              </p>
-            </div>
+            <Welcome onHelp={() => openHelp()} />
           )}
           {empty && !hasUserKey && (
             <div className="demo-access" role="status">
@@ -1486,7 +1493,7 @@ export function App() {
       {settingsOpen && <div className="sidebar-settings-pop" ref={settingsRef}>
         <p className="settings-title">Подключение</p>
         <p className="settings-hint">Ключи хранятся только в этой вкладке браузера.</p>
-        <dl className="settings-runtime" aria-label="Текущая рабочая область">
+        <details className="settings-details"><summary>Рабочая область</summary><dl className="settings-runtime" aria-label="Текущая рабочая область">
           <div>
             <dt>Рабочая область</dt>
             <dd>{config?.workspace || "—"}</dd>
@@ -1495,7 +1502,7 @@ export function App() {
             <dt>run_id</dt>
             <dd><code>{config?.run_id || "—"}</code></dd>
           </div>
-        </dl>
+        </dl></details>
         {!hasUserKey && (
           <p className="settings-key-warning" id="qwen-key-warning" role="status">
             Ключ не вставлен — используется демонстрационный. Вставьте свой ключ QwenCloud.
@@ -1534,17 +1541,7 @@ export function App() {
           setHasUserKey(Boolean(qwenKeyDraft.trim()));
           setSettingsOpen(false);
         }}>Сохранить</button>
-        <button type="button" className="ghost-btn danger-btn" disabled={!currentId} onClick={async () => {
-          if (!currentId || !window.confirm("Удалить этот чат без возможности восстановления?")) return;
-          try {
-            await deleteConversation(currentId);
-            const remaining = sessions.filter((item) => item.id !== currentId);
-            setSessions(remaining);
-            const nextId = remaining[0]?.id || "";
-            if (nextId) adoptSessionId(nextId); else sessionStorage.removeItem("neo4j-assistant.session-id");
-            setCurrentId(nextId); setMessages([]); setRightPanel({ kind: "closed" }); setSettingsOpen(false);
-          } catch (error) { setNotice(error instanceof Error ? error.message : "Не удалось удалить чат"); }
-        }}>Удалить чат</button>
+
       </div>}
       {notice && <div className="toast" role="status">{notice}</div>}
     </div>

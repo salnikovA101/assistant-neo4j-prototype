@@ -49,6 +49,7 @@ async def test_workspace_run_id_snapshots_conversations_and_keeps_old_chat_read_
 async def test_workspace_migration_moves_existing_accounts_and_drops_account_run_id(tmp_path):
     path = tmp_path / "legacy-runs.db"
     with sqlite3.connect(path) as db:
+        db.execute("PRAGMA foreign_keys=ON")
         db.execute(
             """CREATE TABLE users (
                    id TEXT PRIMARY KEY, username TEXT NOT NULL COLLATE NOCASE UNIQUE,
@@ -59,7 +60,8 @@ async def test_workspace_migration_moves_existing_accounts_and_drops_account_run
         )
         db.execute(
             """CREATE TABLE conversations (
-                   id TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+                   id TEXT PRIMARY KEY,
+                   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                    title TEXT NOT NULL DEFAULT 'Новый чат',
                    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
                )"""
@@ -78,17 +80,74 @@ async def test_workspace_migration_moves_existing_accounts_and_drops_account_run
             "SELECT workspace FROM users WHERE id='u1'"
         )).fetchone()
         conversation_row = await (await store._conn().execute(
-            "SELECT run_id FROM conversations WHERE id='c1'"
+            "SELECT title,run_id FROM conversations WHERE id='c1'"
         )).fetchone()
         columns = await store._table_columns("users")
         assert user_row["workspace"] == "packaging"
         assert "run_id" not in columns
+        assert conversation_row is not None
         assert conversation_row["run_id"] == "bootstrap-run"
+        assert conversation_row["title"] == "Legacy chat"
         users_sql = await (await store._conn().execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
         )).fetchone()
         compact = "".join(str(users_sql["sql"] or "").split()).lower().replace('"', "")
         assert "unique(username,workspace)" in compact
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_username_workspace_rebuild_does_not_cascade_delete_chats(tmp_path):
+    path = tmp_path / "scoped-users.db"
+    with sqlite3.connect(path) as db:
+        db.execute("PRAGMA foreign_keys=ON")
+        db.execute(
+            """CREATE TABLE users (
+                   id TEXT PRIMARY KEY, username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                   password_hash TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1,
+                   workspace TEXT NOT NULL DEFAULT 'packaging',
+                   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+               )"""
+        )
+        db.execute(
+            """CREATE TABLE conversations (
+                   id TEXT PRIMARY KEY,
+                   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                   title TEXT NOT NULL DEFAULT 'Новый чат',
+                   run_id TEXT NOT NULL DEFAULT '',
+                   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+               )"""
+        )
+        db.execute(
+            "INSERT INTO users VALUES('u1','kefir','hash',1,'kefir',1,1)"
+        )
+        db.execute(
+            "INSERT INTO conversations VALUES('c1','u1','Keep me','new_mega_run',1,1)"
+        )
+
+    store = AppStore(
+        str(path), workspaces={"packaging": "p-run", "kefir": "new_mega_run"}
+    )
+    await store.open()
+    try:
+        user_row = await (await store._conn().execute(
+            "SELECT username,workspace FROM users WHERE id='u1'"
+        )).fetchone()
+        conversation_row = await (await store._conn().execute(
+            "SELECT title,run_id FROM conversations WHERE id='c1'"
+        )).fetchone()
+        users_sql = await (await store._conn().execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+        )).fetchone()
+        compact = "".join(str(users_sql["sql"] or "").split()).lower().replace('"', "")
+        assert user_row["username"] == "kefir"
+        assert user_row["workspace"] == "kefir"
+        assert conversation_row["title"] == "Keep me"
+        assert conversation_row["run_id"] == "new_mega_run"
+        assert "unique(username,workspace)" in compact
+        fk = await (await store._conn().execute("PRAGMA foreign_keys")).fetchone()
+        assert int(fk[0]) == 1
     finally:
         await store.close()
 
@@ -583,6 +642,39 @@ async def test_pending_approval_revision_is_persistent_and_single_use(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_research_map_preview_keeps_markdown_headings(tmp_path):
+    store = AppStore(str(tmp_path / "md-preview.db"))
+    await store.open()
+    try:
+        user = await store.create_user("md-preview-user", "long markdown preview password")
+        conv = await store.create_conversation(user.id)
+        branch_id = conv["activeBranchId"]
+        turn = await store.begin_branch_turn(
+            user.id,
+            conv["id"],
+            branch_id,
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "Можешь собрать клубничную закваску для кефира?",
+            mode="auto",
+        )
+        await store.finish_turn(
+            conv["id"],
+            turn["assistantMessageId"],
+            text="## Что подтверждено в этой версии\n\nПрямо «клубничной закваски» в базе нет: ни одного узла по клубнике. " + ("Дополнительные данные по кисломолочным продуктам и стартовым культурам. " * 8),
+            status="done",
+            payload={},
+        )
+        research = await store.research_map(user.id, conv["id"], branch_id)
+        preview = research["steps"][0]["answer"]["preview"]
+        assert preview.startswith("## Что подтверждено в этой версии")
+        assert "\n\n" in preview
+        assert "## Что подтверждено в этой версии Прямо" not in preview
+        assert len(preview) > 180
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
 async def test_corrupt_state_json_raises(tmp_path):
     from server.core.app_store import AppStore, CorruptStoreError
 
@@ -607,3 +699,57 @@ async def test_corrupt_state_json_raises(tmp_path):
             await store.checkpoint_state(user.id, started["userCheckpointId"])
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_user_rebuild_rolls_back_and_can_retry(tmp_path, monkeypatch):
+    """A failure after DROP must preserve the old parent and its child rows."""
+    path = tmp_path / "interrupted-migration.db"
+    with sqlite3.connect(path) as db:
+        db.executescript("""
+            CREATE TABLE users (
+                id TEXT PRIMARY KEY, username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                password_hash TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1,
+                workspace TEXT NOT NULL DEFAULT 'packaging',
+                created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE conversations (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                title TEXT NOT NULL DEFAULT 'Новый чат', run_id TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+            );
+            INSERT INTO users VALUES('u1','worker','hash',1,'packaging',1,1);
+            INSERT INTO conversations VALUES('c1','u1','Keep me','p-run',1,1);
+        """)
+    import aiosqlite
+    original = aiosqlite.Connection.execute
+
+    def fail_rename(self, sql, parameters=None):
+        if sql == "ALTER TABLE users_workspace_unique RENAME TO users":
+            raise sqlite3.OperationalError("simulated migration failure")
+        return original(self, sql, parameters or [])
+
+    store = AppStore(str(path), workspaces={"packaging": "p-run"})
+    with monkeypatch.context() as patch:
+        patch.setattr(aiosqlite.Connection, "execute", fail_rename)
+        try:
+            with pytest.raises(sqlite3.OperationalError, match="simulated"):
+                await store.open()
+            fk = await (await store._conn().execute("PRAGMA foreign_keys")).fetchone()
+            assert fk[0] == 1
+        finally:
+            await store.close()
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 1
+        assert not db.execute("PRAGMA foreign_key_check").fetchall()
+        assert not db.execute("SELECT name FROM sqlite_master WHERE name='users_workspace_unique'").fetchall()
+    for _ in range(2):
+        retry = AppStore(str(path), workspaces={"packaging": "p-run"})
+        await retry.open()
+        try:
+            assert (await (await retry._conn().execute("SELECT COUNT(*) FROM users")).fetchone())[0] == 1
+            assert (await (await retry._conn().execute("SELECT COUNT(*) FROM conversations")).fetchone())[0] == 1
+        finally:
+            await retry.close()

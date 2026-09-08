@@ -33,6 +33,8 @@ export default defineConfig({
       "/stt": api,
       "/login": api,
       "/logout": api,
+      "^/ui/[^/]+/login": api,
+      "^/ui/[^/]+/logout": api,
     },
   },
 });
