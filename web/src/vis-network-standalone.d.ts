@@ -4,7 +4,7 @@ declare module "vis-network/standalone" {
   }
   export class Network {
     constructor(container: HTMLElement, data: unknown, options?: unknown);
-    on(event: string, handler: (params: { nodes: string[]; edges: string[] }) => void): void;
+    on(event: string, handler: (params: { nodes: string[]; edges: string[]; edge?: string | number }) => void): void;
     once(event: string, handler: () => void): void;
     fit(options?: unknown): void;
     getScale(): number;

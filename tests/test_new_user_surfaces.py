@@ -30,7 +30,8 @@ def test_graph_canvas_local_search_uses_english_graph_language():
     assert SEARCH_PLACEHOLDER in source
     assert SEARCH_HINT not in source
     assert "по английским именам и evidence" in source
-    assert "label: edge.label" in source
+    assert '? edge.label : ""' in source
+    assert 'title: visibleTripletCaption(edge)' in source
     assert "relationLabel" not in source
     assert "Копировать данные" in source
     assert "Найти ребро в этом графе" not in source

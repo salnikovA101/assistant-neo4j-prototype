@@ -360,7 +360,11 @@ export function ChatThread({
   useEffect(() => {
     if (!selectedMessageIds.length) return;
     const target = document.getElementById(`message-${selectedMessageIds[selectedMessageIds.length - 1]}`);
-    target?.scrollIntoView({ block: "center", behavior: "smooth" });
+    const thread = threadRef.current;
+    if (thread && target) thread.scrollTo({
+      top: thread.scrollTop + target.getBoundingClientRect().top - thread.getBoundingClientRect().top - (thread.clientHeight - Math.min(target.clientHeight, thread.clientHeight)) / 2,
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    });
   }, [selectedMessageIds]);
 
   useEffect(() => {
@@ -371,7 +375,13 @@ export function ChatThread({
       const target = citationTarget?.messageId === openSourcesMessageId
         ? panel?.querySelector<HTMLElement>(`[data-source-number="${citationTarget.number}"]`) : null;
       target?.classList.add("is-citation-target");
-      (target || panel)?.scrollIntoView({ block: "center", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      // Only a citation navigates. Opening the list must not scroll hidden
+      // ancestor containers (which also moves the composer out of place).
+      const thread = threadRef.current;
+      if (target && thread) thread.scrollTo({
+        top: thread.scrollTop + target.getBoundingClientRect().top - thread.getBoundingClientRect().top - (thread.clientHeight - Math.min(target.clientHeight, thread.clientHeight)) / 2,
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      });
       target?.focus({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(frame);
@@ -517,7 +527,7 @@ export function ChatThread({
                     type="button"
                     className="source-action"
                     aria-expanded={openSourcesMessageId === msg.id}
-                    onClick={() => setOpenSourcesMessageId((current) => current === msg.id ? null : msg.id)}
+                    onClick={() => { setCitationTarget(null); setOpenSourcesMessageId((current) => current === msg.id ? null : msg.id); }}
                   >Источники{renderedAnswer.sourceCount ? ` · ${renderedAnswer.sourceCount}` : ""}</button>
                 )}
                 {msg.checkpointId && msg.graphChainCount && openGraphId !== msg.checkpointId && (

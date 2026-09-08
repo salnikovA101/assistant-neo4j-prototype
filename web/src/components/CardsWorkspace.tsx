@@ -152,23 +152,7 @@ export function CardsWorkspace({
     <section className="cards-workspace">
       <header className="workspace-bar cards-workspace-bar">
         <nav><button className={tab === "library" ? "is-on" : ""} onClick={() => setTab("library")}>Библиотека</button><button className={tab === "templates" ? "is-on" : ""} onClick={() => setTab("templates")}>Шаблоны</button></nav>
-        {!chatMode && <label className="ghost-btn card-import-control">Импорт JSON<input type="file" accept="application/json,.json" hidden onChange={async (event) => {
-          const file = event.target.files?.[0];
-          if (!file) return;
-          if (!selectedTemplate) {
-            onNotice("Сначала выберите шаблон на вкладке «Шаблоны».");
-            event.target.value = "";
-            return;
-          }
-          setBusy(true);
-          try {
-            const parsed = JSON.parse(await file.text()); const objects = Array.isArray(parsed) ? parsed : [parsed];
-            if (!objects.length || objects.some((item) => !item || typeof item !== "object" || Array.isArray(item))) throw new Error("JSON должен содержать object или непустой array объектов");
-            const imported = await importCardDraft(selectedTemplate, Array.isArray(parsed) ? objects : objects[0], checkpointId || undefined);
-            setDraft(imported[0] || null); setDraftQueue(imported.slice(1)); setTab("templates"); onNotice(`Импортировано черновиков: ${imported.length}. Проверьте их перед сохранением.`);
-          } catch (error) { onNotice(error instanceof Error ? error.message : "Ошибка импорта"); }
-          finally { setBusy(false); event.target.value = ""; }
-        }} /></label>}
+
 
         {onClose && <button type="button" className="icon-btn" aria-label="Закрыть карточки" title="Закрыть" onClick={onClose}>×</button>}
       </header>
@@ -209,6 +193,23 @@ export function CardsWorkspace({
                 <div className="card-detail-head">
                   <div><h2>{template.name}</h2><p>{template.description}</p></div>
                   <div className="template-actions">
+        {!chatMode && <label className="ghost-btn card-import-control" title="Загрузить данные для выбранного шаблона">Заполнить из JSON<input type="file" accept="application/json,.json" disabled={busy} onChange={async (event) => {
+          const file = event.target.files?.[0];
+          if (!file) return;
+          if (!selectedTemplate) {
+            onNotice("Сначала выберите шаблон на вкладке «Шаблоны».");
+            event.target.value = "";
+            return;
+          }
+          setBusy(true);
+          try {
+            const parsed = JSON.parse(await file.text()); const objects = Array.isArray(parsed) ? parsed : [parsed];
+            if (!objects.length || objects.some((item) => !item || typeof item !== "object" || Array.isArray(item))) throw new Error("JSON должен содержать object или непустой array объектов");
+            const imported = await importCardDraft(selectedTemplate, Array.isArray(parsed) ? objects : objects[0], checkpointId || undefined);
+            setDraft(imported[0] || null); setDraftQueue(imported.slice(1)); setTab("templates"); onNotice(`Импортировано черновиков: ${imported.length}. Проверьте их перед сохранением.`);
+          } catch (error) { onNotice(error instanceof Error ? error.message : "Ошибка импорта"); }
+          finally { setBusy(false); event.target.value = ""; }
+        }} /></label>}
                     {chatMode && onGenerate && <button type="button" className="primary-btn" disabled={busy || readOnly} onClick={() => onGenerate(template.latestVersion.id)}>Создать</button>}
                     {!chatMode && <button type="button" className="ghost-btn" onClick={() => setEditor("edit")}>Изменить</button>}
                     {!chatMode && !template.system && <button type="button" className="delete-icon-btn" aria-label="Удалить шаблон" title="Удалить шаблон" disabled={busy} onClick={async () => {

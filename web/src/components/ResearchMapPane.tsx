@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useId,
   useEffect,
   useMemo,
   useRef,
@@ -255,12 +256,13 @@ export function ResearchMapPane({
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
+  const arrowId = useId();
   const connectionPath = (source: ResearchStep, targetX: number, targetY: number): string => {
     const sourcePosition = model.cardPosition(source);
     const sourceX = sourcePosition.x + CARD_WIDTH / 2;
     const sourceY = sourcePosition.y + CARD_HEIGHT;
     const destinationX = targetX + CARD_WIDTH / 2;
-    const destinationY = targetY;
+    const destinationY = targetY - 5;
     if (Math.abs(sourceX - destinationX) < 1) return `M ${sourceX} ${sourceY} L ${destinationX} ${destinationY}`;
     const middleY = sourceY + Math.max(26, (destinationY - sourceY) * 0.5);
     return `M ${sourceX} ${sourceY} C ${sourceX} ${middleY}, ${destinationX} ${middleY}, ${destinationX} ${destinationY}`;
@@ -295,13 +297,14 @@ export function ResearchMapPane({
             </div>
 
             <svg className="research-connections" width={model.canvasWidth} height={model.canvasHeight} aria-hidden="true">
+              <defs>{Array.from(model.branchOrder.values()).map((lane) => <marker key={lane} id={`${arrowId}-${lane}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto" markerUnits="userSpaceOnUse"><polygon points="0,0 10,5 0,10" fill={branchColor(lane)} /></marker>)}</defs>
               {model.steps.map((step) => {
                 if (!step.parentStepId) return null;
                 const parent = model.stepById.get(step.parentStepId);
                 if (!parent) return null;
                 const target = model.cardPosition(step);
                 const lane = model.branchOrder.get(step.branchId) || 0;
-                return <path key={step.id} d={connectionPath(parent, target.x, target.y)} stroke={branchColor(lane)} />;
+                return <path key={step.id} d={connectionPath(parent, target.x, target.y)} stroke={branchColor(lane)} markerEnd={`url(#${arrowId}-${lane})`} />;
               })}
               {model.emptyBranches.map((branch) => {
                 const parent = branch.originStepId ? model.stepById.get(branch.originStepId) : undefined;
@@ -310,7 +313,7 @@ export function ResearchMapPane({
                 const row = (model.rowByStep.get(parent.id) || 0) + 1;
                 const targetX = CANVAS_LEFT + lane * COLUMN_PITCH;
                 const targetY = CANVAS_TOP + row * ROW_PITCH + BRANCH_LABEL_HEIGHT;
-                return <path key={branch.id} d={connectionPath(parent, targetX, targetY)} stroke={branchColor(lane)} />;
+                return <path key={branch.id} d={connectionPath(parent, targetX, targetY)} stroke={branchColor(lane)} markerEnd={`url(#${arrowId}-${lane})`} />;
               })}
             </svg>
 

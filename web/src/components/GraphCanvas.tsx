@@ -44,7 +44,7 @@ const NETWORK_OPTIONS = {
   edges: {
     arrows: { to: { enabled: true, scaleFactor: 0.55 } },
     color: { color: "rgba(255,255,255,0.28)", highlight: "#4d9fff" },
-    font: { size: 10, color: "#9a9a9a", strokeWidth: 0 },
+    font: { size: 12, color: "#d4d9e2", strokeWidth: 4, strokeColor: "#17191e", background: "#17191e" },
     smooth: { enabled: true, type: "cubicBezier", roundness: 0.35 },
   },
 };
@@ -127,6 +127,8 @@ export function GraphCanvas({
   const netRef = useRef<Network | null>(null);
   const nodeDataRef = useRef<MutableDataSet | null>(null); // vis-network item shape is intentionally dynamic.
   const edgeDataRef = useRef<MutableDataSet | null>(null);
+  const edgeLabelsVisibleRef = useRef(false);
+  const hoveredEdgeRef = useRef<string | null>(null);
   const filteredRef = useRef<{ nodes: GraphNode[]; edges: GraphEdge[] }>({ nodes: [], edges: [] });
   const interactionRef = useRef(onCanvasInteraction);
   const appendAppliedRef = useRef("");
@@ -233,7 +235,7 @@ export function GraphCanvas({
     id: edge.id,
     from: edge.from,
     to: edge.to,
-    label: edge.label,
+    label: edgeLabelsVisibleRef.current || hoveredEdgeRef.current === edge.id ? edge.label : "",
     title: visibleTripletCaption(edge),
     width: collectedEdgeIds.has(edge.id) ? 2.4 : 1,
     color: collectedEdgeIds.has(edge.id) ? { color: "#8ab4ff", highlight: "#ffffff" } : undefined,
@@ -266,6 +268,28 @@ export function GraphCanvas({
       if (cancelled || network) return;
       network = new Network(host, { nodes, edges }, NETWORK_OPTIONS);
       netRef.current = network;
+      hoveredEdgeRef.current = null;
+      const refreshLabels = () => {
+        edgeDataRef.current?.update(filteredRef.current.edges.map((edge) => ({
+          id: edge.id,
+          label: edgeLabelsVisibleRef.current || hoveredEdgeRef.current === edge.id ? edge.label : "",
+        })));
+      };
+      // Redraw also covers fit/focus and toolbar zoom, not just wheel events.
+      network.on("afterDrawing", () => {
+        const visible = (network?.getScale() || 0) >= 1.2;
+        if (visible === edgeLabelsVisibleRef.current) return;
+        edgeLabelsVisibleRef.current = visible;
+        refreshLabels();
+      });
+      network.on("hoverEdge", (event) => {
+        hoveredEdgeRef.current = String(event.edge);
+        refreshLabels();
+      });
+      network.on("blurEdge", () => {
+        hoveredEdgeRef.current = null;
+        refreshLabels();
+      });
       network.on("selectNode", (event: { nodes: string[] }) => {
         setSuggestionsOpen(false);
         interactionRef.current?.();
