@@ -85,7 +85,7 @@ def test_completeness_claim_fails():
     assert any("полноте базы" in f for f in result.failures)
 
 
-def test_cyrillic_and_question_subquestions_fail():
+def test_cyrillic_subquestions_fail():
     transcript = Transcript(
         answer=GOOD_ANSWER,
         tool_calls=[
@@ -94,7 +94,7 @@ def test_cyrillic_and_question_subquestions_fail():
     )
     result = check_case(_case(), transcript)
     assert any("кириллица" in f for f in result.failures)
-    assert any("вопрос вместо утверждения" in f for f in result.failures)
+    assert not any("вопрос вместо утверждения" in f for f in result.failures)
 
 
 def test_repeat_across_calls_fails():
@@ -196,3 +196,15 @@ def test_staged_missing_tool_still_fails():
 def test_chain_and_relation_leaks_fail(leak):
     result = check_case(_case(), Transcript(answer=leak + "\n" + GOOD_ANSWER))
     assert any("служебная утечка" in failure for failure in result.failures)
+
+
+def test_neutral_english_questions_pass():
+    transcript = Transcript(
+        answer=GOOD_ANSWER,
+        tool_calls=[
+            ToolCall("ask_subgraph", [
+                "How does fermentation temperature affect syneresis in kefir?"
+            ])
+        ],
+    )
+    assert check_case(_case(), transcript).ok

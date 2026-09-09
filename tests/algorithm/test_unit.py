@@ -13,10 +13,10 @@ from server.algorithm.scoring import (
 from server.algorithm.stage3_graphs import _finalize_graph, transition_allowed
 from server.algorithm.stage4_hop_dp import best_path_for_graph
 from server.algorithm.stage5_select import dedup_s4_pool, prepare_s5_batch
-from tests.algorithm.mock_decompose import _fallback_statements, _parse_sq
+from tests.algorithm.mock_decompose import _parse_sq
 
 
-def test_decompose_parse_rejects_questions():
+def test_decompose_parse_preserves_questions_and_legacy_statements():
     raw = """
     {"subquestions":[
       {"id":"sq1","text":"What peptides form from casein?"},
@@ -25,16 +25,9 @@ def test_decompose_parse_rejects_questions():
     ]}
     """
     sqs = _parse_sq(raw)
-    assert len(sqs) == 1
-    assert sqs[0]["id"] == "sq2"
-    assert "?" not in sqs[0]["text"]
-
-
-def test_decompose_fallback_is_declarative():
-    sqs = _fallback_statements("What AMPs from casein?")
-    assert len(sqs) >= 2
-    assert all("?" not in s["text"] for s in sqs)
-    assert all(not s["text"].lower().startswith("what ") for s in sqs)
+    assert [sq["id"] for sq in sqs] == ["sq1", "sq2", "sq3"]
+    assert sqs[0]["text"] == "What peptides form from casein?"
+    assert sqs[2]["text"] == "Which pathogens are inhibited?"
 
 
 def test_edge_prize_weight_uses_ce():

@@ -38,11 +38,11 @@ def normalize_subquestions(
     seen: set[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """
-    Enforce the subquestion contract in code: English declarative statements,
-    no duplicates inside a call or against earlier calls of the same turn,
+    Validate search texts; neutral English questions and legacy statements are accepted.
+    No duplicates inside a call or against earlier calls of the same turn,
     at most MAX_SUBQUESTIONS.
 
-    Returns (usable statements, human-readable problems).
+    Returns (usable search texts, human-readable problems).
     """
     clean: list[str] = []
     problems: list[str] = []
@@ -58,7 +58,6 @@ def normalize_subquestions(
         if _CYRILLIC_RE.search(text):
             problems.append(f"not English, dropped: {text[:60]}")
             continue
-        text = text.rstrip("?").strip()
         key = subquestion_key(text)
         if not key:
             continue
@@ -158,7 +157,7 @@ class SubgraphSearchAgent:
         if not sqs:
             err = (
                 f"{TOOL_ERROR}: no usable subquestions. Send 1-"
-                f"{MAX_SUBQUESTIONS} English declarative statements, each a "
+                f"{MAX_SUBQUESTIONS} standalone neutral English questions, each a "
                 "different aspect of the question."
             )
             if problems:

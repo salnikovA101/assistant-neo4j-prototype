@@ -146,8 +146,6 @@ def _check_tool_usage(case: dict[str, Any], transcript: Transcript) -> list[str]
         for sq in statements:
             if CYRILLIC_RE.search(sq):
                 failures.append(f"вызов {i}: кириллица в sq — {sq[:60]}")
-            if "?" in sq:
-                failures.append(f"вызов {i}: вопрос вместо утверждения — {sq[:60]}")
             key = subquestion_key(sq)
             if key in seen:
                 failures.append(

@@ -158,3 +158,10 @@ async def test_query_passes_ui_depth_to_the_pipeline(monkeypatch):
         "Lactic acid bacteria acidify milk."
     ]
     assert seen["params"].run_id == "corpus-test"
+
+
+def test_normalize_preserves_english_questions():
+    question = "How does fermentation temperature affect syneresis in kefir?"
+    clean, problems = normalize_subquestions([f"  {question}  ", question[:-1]])
+    assert clean == [question]
+    assert any("duplicate" in problem for problem in problems)

@@ -65,7 +65,7 @@ class Tools:
         Search the English knowledge graph (articles, patents, regulations).
 
         Args:
-            subquestions: 1–5 English declarative statements, one per aspect.
+            subquestions: 1–5 standalone neutral English questions, one per aspect.
             ignored: tolerated legacy/hallucinated arguments (e.g. `effort`);
                 search depth comes from the UI, not from the model.
         """
@@ -164,14 +164,14 @@ class Tools:
                         "description": (
                             "Start or continue staged graph search for food technology "
                             "(starter cultures, freshness indicators, smart packaging). "
-                            "Empty research-question list: put the first 1–5 English declarative SQ in "
+                            "Empty research-question list: put the first 1–5 standalone neutral English questions in "
                             "`new_subquestions` and send `open_sq_refs` as []. "
                             "Existing open items: pass their `subquestion:N` refs. "
                             "New search directions also go in `new_subquestions` and need "
                             "user approval. At least one of the two arrays must be non-empty. "
                             "At most 5 total SQ per call. "
-                            "GOOD: 'Lactic acid bacteria acidify milk during cottage cheese "
-                            "production.' BAD: 'What starter cultures are used?'"
+                            "GOOD: 'Which starter cultures are used in cottage cheese "
+                            "production?' BAD: 'What starter cultures are used?' (missing product context)"
                         ),
                         "parameters": {
                             "type": "object",
@@ -190,7 +190,7 @@ class Tools:
                                     "items": {"type": "string"},
                                     "maxItems": 5,
                                     "description": (
-                                        "New English declarative SQ, no '?' and no Russian. "
+                                        "New standalone neutral English questions, preserve user constraints and unknowns; do not assume answers. No Russian. "
                                         "Required when the research-question list is empty or does not cover "
                                         "a necessary search direction. Empty array or omit "
                                         "when only existing open refs are searched."
@@ -225,14 +225,14 @@ class Tools:
                                 "minItems": 1,
                                 "maxItems": 5,
                                 "description": (
-                                    "1–5 English declarative statements, no '?' and "
+                                    "1–5 standalone neutral English questions, "
                                     "no Russian. Each one runs a separate search "
                                     "over evidence texts, so each must cover a different "
                                     "aspect of the question — paraphrases return "
-                                    "the same evidence. "
-                                    "GOOD: 'Lactic acid bacteria acidify milk during "
-                                    "cottage cheese production.' "
-                                    "BAD: 'What starter cultures are used?'"
+                                    "overlapping evidence. Preserve user constraints and unknowns; do not invent answers. "
+                                    "GOOD: 'Which starter cultures are used in "
+                                    "cottage cheese production?' "
+                                    "BAD: 'What starter cultures are used?' (missing product context)"
                                 ),
                             },
                         },
