@@ -13,6 +13,8 @@ declare module "vis-network/standalone" {
     setSize(width: string, height: string): void;
     selectNodes(ids: string[]): void;
     selectEdges(ids: string[]): void;
+    setSelection(selection: { nodes?: string[]; edges?: string[] }, options?: { highlightEdges?: boolean }): void;
+    unselectAll(): void;
     focus(id: string, options?: unknown): void;
     destroy(): void;
   }

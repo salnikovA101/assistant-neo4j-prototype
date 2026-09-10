@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { IconClose } from "./Icons";
 import { MODE_LABELS } from "../uiLabels";
 
@@ -24,7 +24,7 @@ export function ResearchPanelShell({
   children: ReactNode;
 }) {
   return (
-    <aside className="graph-pane research-shell" aria-label="Ход работы">
+    <aside className="graph-pane research-shell" aria-label="Ход работы" style={{ "--research-tab-count": staged ? 3 : 2 } as CSSProperties}>
       <header className="research-shell-header">
         <div className="panel-title">
           <strong>Ход работы</strong>

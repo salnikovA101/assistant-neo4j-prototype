@@ -4,7 +4,7 @@ import "vis-network/styles/vis-network.min.css";
 import type { GraphCollectionItem, GraphEdge, GraphNode, GraphPayload } from "../types";
 import { colorForLabels, DEFAULT_GRAPH_NODE_COLOR } from "../graphColors";
 import { normalizedLabels, visibleNodeRef, visibleTripletCaption } from "../uiLabels";
-import { IconClose, IconSidebar } from "./Icons";
+import { IconClose, IconCopy, IconSidebar } from "./Icons";
 
 type Selected = { kind: "node"; node: GraphNode } | { kind: "edge"; edge: GraphEdge } | null;
 const RESULT_LIST_LIMIT = 200;
@@ -99,6 +99,8 @@ export function GraphCanvas({
   onCanvasInteraction,
   onUseCollection,
   workspaceMode = false,
+  embeddedMode = false,
+  renderToolbar,
   resultEdges = [],
   filtersContent,
   activeFilterCount = 0,
@@ -116,6 +118,8 @@ export function GraphCanvas({
   onCanvasInteraction?: () => void;
   onUseCollection?: (items: GraphCollectionItem[]) => void;
   workspaceMode?: boolean;
+  embeddedMode?: boolean;
+  renderToolbar?: (search: ReactNode) => ReactNode;
   resultEdges?: GraphEdge[];
   filtersContent?: ReactNode;
   activeFilterCount?: number;
@@ -143,6 +147,31 @@ export function GraphCanvas({
   const [inspectorHeight, setInspectorHeight] = useState(220);
   const [workspaceInspectorWidth, setWorkspaceInspectorWidth] = useState(DEFAULT_WORKSPACE_INSPECTOR_WIDTH);
   const [expandDirection, setExpandDirection] = useState<"all" | "incoming" | "outgoing">("all");
+
+  const closeDetail = () => {
+    setSelected(null);
+    netRef.current?.unselectAll();
+    if (inspectorRef.current?.contains(document.activeElement)) hostRef.current?.focus();
+  };
+
+  useEffect(() => {
+    if (!embeddedMode) return;
+    setSelected(null);
+    netRef.current?.unselectAll();
+  }, [embeddedMode, payload, viewId]);
+
+  useEffect(() => {
+    if (!embeddedMode || !selected) return;
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setSuggestionsOpen(false);
+      closeDetail();
+    };
+    document.addEventListener("keydown", dismiss, true);
+    return () => document.removeEventListener("keydown", dismiss, true);
+  }, [embeddedMode, selected]);
 
   interactionRef.current = onCanvasInteraction;
 
@@ -227,6 +256,7 @@ export function GraphCanvas({
         highlight: { background: nodeColor, border: "#ececec" },
       },
       borderWidth: collectedNodeIds.has(node.id) ? 3 : 0,
+      ...(embeddedMode ? { borderWidthSelected: 3 } : {}),
       title: visibleNodeRef(node.labels, captionOf(node)),
       ...(position || {}),
     };
@@ -305,7 +335,11 @@ export function GraphCanvas({
         setSelected(edge ? { kind: "edge", edge } : null);
         setInspectorMode("detail");
       });
-      network.on("click", () => { setSuggestionsOpen(false); interactionRef.current?.(); });
+      network.on("click", (event: { nodes: string[]; edges: string[] }) => {
+        setSuggestionsOpen(false);
+        interactionRef.current?.();
+        if (embeddedMode && !event.nodes.length && !event.edges.length) setSelected(null);
+      });
       network.once("stabilizationIterationsDone", () => {
         if (!network) return;
         const mutableNetwork = network as MutableNetwork;
@@ -333,7 +367,7 @@ export function GraphCanvas({
       if (nodeDataRef.current === nodes) nodeDataRef.current = null;
       if (edgeDataRef.current === edges) edgeDataRef.current = null;
     };
-  }, [layoutKey, hasRenderableGraph]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [layoutKey, hasRenderableGraph, embeddedMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const network = netRef.current;
@@ -379,6 +413,17 @@ export function GraphCanvas({
     activeViewRef.current = viewId;
     network.redraw();
   }, [appendEvent, collectedEdgeIds, collectedNodeIds, filtered, viewId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!embeddedMode || !selected) return;
+    const visible = selected.kind === "edge"
+      ? filtered.edges.some((edge) => edge.id === selected.edge.id)
+      : filtered.nodes.some((node) => node.id === selected.node.id);
+    if (!visible) { closeDetail(); return; }
+    netRef.current?.setSelection(selected.kind === "edge"
+      ? { nodes: [...new Set([selected.edge.from, selected.edge.to])], edges: [selected.edge.id] }
+      : { nodes: [selected.node.id], edges: [] }, { highlightEdges: false });
+  }, [embeddedMode, selected, filtered]);
 
   // UNIT tabs reuse the loaded payload and existing static layout. Only the
   // camera must be refitted after the visible node set changes; restarting
@@ -431,17 +476,22 @@ export function GraphCanvas({
   const selectedExpansion = selected?.kind === "node" ? expansionByNode[`${selected.node.id}:${expandDirection}`] : undefined;
   const selectedLoadedEdges = selected?.kind === "node" ? graph.edges.filter((edge) => edge.from === selected.node.id || edge.to === selected.node.id).length : 0;
 
-  return (
-    <div className={`graph-stage ${workspaceMode ? "is-workspace" : ""}`}>
-      {!hideSearch && (
+  const search = !hideSearch && (
         <div className="graph-local-search">
           <input
             className="graph-search"
             value={query}
             onChange={(event) => { setQuery(event.target.value); setSuggestionsOpen(true); }}
             onFocus={() => setSuggestionsOpen(true)}
-            placeholder="Поиск сущностей, связей и данных — на английском"
+            placeholder={embeddedMode ? "Поиск на графе · EN" : "Поиск сущностей, связей и данных — на английском"}
+            title="Поиск сущностей, связей и подтверждающего текста на английском"
             aria-label="Поиск на схеме по английским именам и evidence"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") { event.stopPropagation(); setSuggestionsOpen(false); }
+            }}
+            onBlur={(event) => {
+              if (!event.currentTarget.parentElement?.contains(event.relatedTarget)) setSuggestionsOpen(false);
+            }}
           />
           {suggestionsOpen && q && hits.length > 0 && (
             <div className="edge-suggestions" role="listbox" aria-label="Связи на схеме">
@@ -454,18 +504,22 @@ export function GraphCanvas({
             </div>
           )}
         </div>
-      )}
+      );
+
+  return (
+    <div className={`graph-stage ${workspaceMode ? "is-workspace" : ""} ${embeddedMode ? "is-embedded-graph" : ""}`}>
+      {renderToolbar ? renderToolbar(search) : search}
       {!workspaceMode && !filtered.nodes.length && !collection.length ? <div className="graph-empty">{emptyHint || "Ничего не найдено"}</div> : (
         <div
           ref={bodyRef}
           className={`graph-body ${workspaceMode && !inspectorOpen ? "is-inspector-hidden" : ""}`}
           style={workspaceMode
             ? ({ "--graph-inspector-width": `${workspaceInspectorWidth}px` } as CSSProperties)
-            : { gridTemplateRows: `minmax(180px, 1fr) 7px ${inspectorHeight}px` }}
+            : embeddedMode ? undefined : { gridTemplateRows: `minmax(180px, 1fr) 7px ${inspectorHeight}px` }}
         >
           <div className="graph-canvas-wrap">
             {filtered.nodes.length ? <>
-              <div ref={hostRef} className="graph-canvas" />
+              <div ref={hostRef} className="graph-canvas" tabIndex={embeddedMode ? 0 : undefined} aria-label={embeddedMode ? "Граф данных" : undefined} />
               <div className="graph-viewport-tools" role="group" aria-label="Масштаб графа">
                 <button type="button" aria-label="Уменьшить граф" title="Уменьшить" onClick={() => { const net = netRef.current; if (net) net.moveTo({ scale: Math.max(.05, net.getScale() / 1.3), animation: false }); }}>−</button>
                 <button type="button" onClick={() => { const net = netRef.current; if (net) fitVisibleGraph(net, filtered.nodes.length); }}>Вписать</button>
@@ -477,7 +531,7 @@ export function GraphCanvas({
             )}
             {workspaceMode && !inspectorOpen && <button type="button" className="inspector-reopen" onClick={() => setInspectorOpen(true)}><IconSidebar /> Показать панель</button>}
           </div>
-          {!workspaceMode && <div
+          {!workspaceMode && !embeddedMode && <div
             className="graph-resize-handle"
             role="separator"
             tabIndex={0}
@@ -543,7 +597,8 @@ export function GraphCanvas({
               window.addEventListener("pointercancel", stop);
             }}
           ><span /></div>}
-          {(!workspaceMode || inspectorOpen) && <aside ref={inspectorRef} className="graph-inspector">
+          {(embeddedMode ? Boolean(selected) : !workspaceMode || inspectorOpen) && <aside ref={inspectorRef} className={`graph-inspector${embeddedMode ? " graph-detail-popover" : ""}`} aria-label={embeddedMode ? "Детали выбранного объекта" : undefined}>
+            {embeddedMode && <button type="button" className="icon-btn graph-detail-close" aria-label="Закрыть детали" title="Закрыть детали (Escape)" onClick={closeDetail}><IconClose /></button>}
             {(workspaceMode || onUseCollection) && <div className="inspector-tabs">
               {workspaceMode && <button type="button" className={inspectorMode === "filters" ? "is-on" : ""} onClick={() => setInspectorMode("filters")}>Фильтры {activeFilterCount || ""}</button>}
               {workspaceMode && <button type="button" className={inspectorMode === "results" ? "is-on" : ""} onClick={() => setInspectorMode("results")}>Результаты {resultEdges.length || ""}</button>}
@@ -576,7 +631,7 @@ export function GraphCanvas({
                   </button>
                 </div>}
               </div>}
-              {selected?.kind === "edge" && <EdgeCard edge={selected.edge} inCollection={collectedEdgeIds.has(selected.edge.id)} onToggleCollection={onUseCollection ? () => toggleEdge(selected.edge) : undefined} />}
+              {selected?.kind === "edge" && <EdgeCard key={embeddedMode ? selected.edge.id : undefined} edge={selected.edge} compact={embeddedMode} inCollection={collectedEdgeIds.has(selected.edge.id)} onToggleCollection={onUseCollection ? () => toggleEdge(selected.edge) : undefined} />}
             </> : <div className="evidence-collection">
               <div className="collection-intro"><h3>Контекст для чата</h3><p>Соберите нужные сущности и связи, затем вставьте их в сообщение ассистенту. Подборка временная — вставьте её в чат, чтобы сохранить выбранные данные.</p></div>
               {!collection.length && <p className="collection-empty">Выберите объект на графе и нажмите «Добавить в подборку».</p>}
@@ -606,7 +661,7 @@ function NodeClasses({ labels }: { labels: string[] | undefined }) {
   </div>;
 }
 
-function EdgeCard({ edge, inCollection, onToggleCollection }: { edge: GraphEdge; inCollection: boolean; onToggleCollection?: () => void }) {
+function EdgeCard({ edge, inCollection, onToggleCollection, compact = false }: { edge: GraphEdge; inCollection: boolean; onToggleCollection?: () => void; compact?: boolean }) {
   const properties = edge.properties || {};
   const evidence = String(properties.evidence || "");
   const source = String(properties.source_file || "");
@@ -615,10 +670,11 @@ function EdgeCard({ edge, inCollection, onToggleCollection }: { edge: GraphEdge;
     <p className="inspector-kicker">Связь <span className="relation-code">{edge.label}</span></p>
     <h3>{visibleTripletCaption(edge)}</h3>
     {evidence && <blockquote className="inspector-quote">{evidence}</blockquote>}
-    <dl className="inspector-meta">{source && <><dt>Источник</dt><dd>{source}</dd></>}{confidence != null && confidence !== "" && <><dt>Уверенность экстракции</dt><dd>{Number(confidence).toFixed(2)}</dd></>}</dl>
+    <dl className="inspector-meta">{source && <><dt>Источник</dt><dd>{source}</dd></>}{!compact && confidence != null && confidence !== "" && <><dt>Уверенность экстракции</dt><dd>{Number(confidence).toFixed(2)}</dd></>}</dl>
     <div className="inspector-actions">
+      {compact && confidence != null && confidence !== "" && <details className="graph-detail-more"><summary>Подробнее</summary><dl className="inspector-meta"><dt>Уверенность экстракции</dt><dd>{Number(confidence).toFixed(2)}</dd></dl></details>}
       {onToggleCollection && <button type="button" className="collection-toggle" aria-pressed={inCollection} onClick={onToggleCollection}>{inCollection ? "✓ В подборке" : "+ Добавить в подборку"}</button>}
-      {evidence && <button type="button" className="ghost-btn" onClick={() => copyText(evidence)}>Копировать данные</button>}
+      {evidence && <button type="button" className={compact ? "icon-btn graph-copy-icon" : "ghost-btn"} aria-label="Копировать данные" title="Копировать данные" onClick={() => copyText(evidence)}>{compact ? <IconCopy /> : "Копировать данные"}</button>}
     </div>
   </div>;
 }

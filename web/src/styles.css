@@ -979,6 +979,44 @@ input::placeholder,textarea::placeholder { color:var(--faint); opacity:1; }
 .graph-pane.is-embedded .graph-viewport-tools { top:12px; left:12px; padding:2px; }
 .graph-pane.is-embedded .graph-viewport-tools button { min-height:28px; min-width:28px; font-size:11px; }
 .graph-pane.is-embedded .graph-inspector > .muted { margin:0; padding:8px 2px; font-size:12px; }
+/* Chat graph: one toolbar, full canvas, details only when an object is selected. */
+.graph-pane.is-embedded { container-type:inline-size; container-name:chat-graph; }
+.research-shell-header { grid-template-columns:minmax(0,1fr) 28px; min-height:84px; }
+.research-shell-header > .panel-title { grid-column:1; grid-row:1; }
+.research-shell-header > .icon-btn { grid-column:2; grid-row:1; }
+.research-shell-header > .side-pane-tabs { display:grid; grid-template-columns:repeat(var(--research-tab-count,3),minmax(0,1fr)); grid-column:1/-1; grid-row:2; width:100%; gap:2px; }
+.research-shell-header .side-pane-tabs button { min-width:0; justify-content:center; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.is-embedded-graph > .graph-pane-bar { display:grid; grid-template-columns:repeat(var(--research-tab-count,3),minmax(0,1fr)); min-height:54px; gap:2px; padding:9px 16px; }
+.is-embedded-graph .graph-pane-bar .graph-local-search { grid-column:1 / -2; }
+.is-embedded-graph .graph-pane-bar .graph-local-search { flex:1; min-width:0; }
+.is-embedded-graph .graph-pane-bar .graph-search { display:block; width:100%; height:36px; margin:0; }
+.is-embedded-graph .graph-pane-bar .graph-view-picker { width:auto; min-width:0; flex-direction:row; align-items:center; gap:3px; }
+.is-embedded-graph .graph-view-picker select { flex:1; width:0; max-width:none; height:36px; padding:7px 6px; text-overflow:ellipsis; }
+.graph-chain-arrow { flex:0 0 30px; height:36px; border:1px solid transparent; border-radius:7px; background:transparent; color:var(--soft); font-size:16px; cursor:pointer; }
+.graph-chain-arrow:hover:not(:disabled) { border-color:var(--border); background:var(--hover); }
+.graph-chain-arrow:disabled { opacity:.3; cursor:default; }
+.graph-chain-arrow:focus-visible,.graph-detail-close:focus-visible { outline:2px solid var(--accent-strong); outline-offset:1px; }
+.is-embedded-graph .graph-body { position:relative; grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,1fr); }
+.is-embedded-graph .graph-inspector.graph-detail-popover { position:absolute; z-index:5; top:12px; right:12px; width:min(350px,calc(100% - 24px)); height:auto; max-height:50%; overflow:auto; overscroll-behavior:contain; border:1px solid var(--border-strong); border-radius:10px; padding:16px; background:var(--panel); box-shadow:0 8px 28px #0005; }
+.graph-detail-popover .graph-detail-close { position:sticky; z-index:1; top:0; float:right; width:28px; height:28px; margin:-7px -7px 0 8px; background:var(--panel); }
+.graph-detail-popover h3 { margin:8px 0 0; font-size:15px; line-height:1.45; }
+.graph-detail-popover .inspector-kicker { padding-right:22px; }
+.graph-detail-popover .inspector-quote { color:var(--soft); font-size:12px; }
+.graph-detail-popover .inspector-meta { font-size:11px; }
+.graph-detail-more { margin:10px 0; color:var(--muted); font-size:11px; }
+.graph-detail-more > summary { width:max-content; cursor:pointer; }
+.graph-detail-popover .inspector-actions { align-items:flex-start; justify-content:space-between; gap:8px; }
+.graph-detail-popover .graph-detail-more { flex:1; min-width:0; margin:0; }
+.graph-detail-popover .graph-detail-more > summary { padding-block:6px; }
+.graph-detail-popover .graph-copy-icon { flex:0 0 28px; width:28px; height:28px; margin-left:auto; }
+.graph-copy-icon:focus-visible { outline:2px solid var(--accent-strong); outline-offset:1px; }
+.graph-pane.is-embedded .graph-viewport-tools { top:auto; right:12px; bottom:12px; left:auto; }
+.graph-pane.is-embedded .graph-canvas-hint { max-width:calc(100% - 145px); }
+@container chat-graph (max-width:480px) {
+  .is-embedded-graph .graph-pane-bar .graph-search { padding-inline:7px; font-size:11px; }
+  .is-embedded-graph .graph-view-picker select { font-size:11px; }
+  .graph-chain-arrow { flex-basis:25px; }
+}
 .agenda-drawer.is-embedded .agenda-item { padding:18px 3px; }
 .agenda-drawer.is-embedded .agenda-item p { font-size:13px; line-height:1.65; }
 .agenda-drawer.is-embedded .agenda-reason { font-size:12px; line-height:1.6; margin-top:9px; }

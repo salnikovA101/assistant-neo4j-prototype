@@ -27,7 +27,8 @@ def test_explorer_search_uses_english_graph_language():
 
 def test_graph_canvas_local_search_uses_english_graph_language():
     source = (WEB / "components" / "GraphCanvas.tsx").read_text(encoding="utf-8")
-    assert SEARCH_PLACEHOLDER in source
+    assert '"Поиск сущностей, связей и данных — на английском"' in source
+    assert '"Поиск на графе · EN"' in source
     assert SEARCH_HINT not in source
     assert "по английским именам и evidence" in source
     assert '? edge.label : ""' in source
