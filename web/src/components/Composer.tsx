@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import type { SearchDepth, UiModel } from "../types";
 import { effortLabel } from "../format";
 import { MODE_LABELS } from "../uiLabels";
-import { IconCards, IconChevron, IconMic, IconPlus, IconSend, IconStop } from "./Icons";
+import { IconCards, IconChevron, IconMic, IconSend, IconStop } from "./Icons";
 
 export function Composer({
   text,
@@ -118,21 +118,21 @@ export function Composer({
       />
       <div className="composer-actions">
         {cardsEnabled && (
-          <details className="composer-menu composer-add-menu" onToggle={(event) => {
-            if (!event.currentTarget.open) return;
-            formRef.current?.querySelectorAll("details[open]").forEach((menu) => {
-              if (menu !== event.currentTarget) (menu as HTMLDetailsElement).open = false;
-            });
-          }}>
-            <summary title="Карточки" aria-label="Карточки"><IconPlus /></summary>
-            <div className="composer-popover composer-action-popover">
-              <p className="composer-popover-title">Карточки</p>
-              <button type="button" disabled={!cardActionsEnabled} onClick={(event) => { onOpenCards(); closeMenu(event.currentTarget); }}>
-                <IconCards /><span><strong>Открыть карточки</strong><small>Создать новую или вставить сохранённую</small></span>
-              </button>
-              {!cardActionsEnabled && <p className="popover-note">Доступно после первого ответа и вне активной генерации.</p>}
-            </div>
-          </details>
+          <button
+            type="button"
+            className="chip-btn composer-cards-button"
+            aria-label="Открыть карточки"
+            title={cardActionsEnabled ? "Открыть карточки" : "Карточки доступны после первого ответа и вне активной генерации."}
+            disabled={!cardActionsEnabled}
+            onClick={() => {
+              formRef.current?.querySelectorAll("details[open]").forEach((menu) => {
+                (menu as HTMLDetailsElement).open = false;
+              });
+              onOpenCards();
+            }}
+          >
+            <IconCards />
+          </button>
         )}
         {audioEnabled && (
           <button

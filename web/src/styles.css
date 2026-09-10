@@ -526,15 +526,6 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 .approval-sqs h4 { margin:7px 0 1px; color:var(--faint); font-size:9px; font-weight:600; letter-spacing:.07em; text-transform:uppercase; }
 .approval-existing > strong { color:var(--muted); font-size:9px; font-weight:600; text-transform:uppercase; }
 
-.composer-add-menu > summary { width:32px; justify-content:center; padding:0; }
-.composer-add-menu > summary svg { margin:0; }
-.composer-action-popover { width:290px; }
-.composer-action-popover > button { display:flex; width:100%; align-items:flex-start; gap:9px; border:0; border-radius:6px; padding:9px; background:transparent; color:var(--soft); text-align:left; cursor:pointer; }
-.composer-action-popover > button:hover:not(:disabled) { background:var(--hover); }
-.composer-action-popover > button > svg { flex:0 0 auto; margin-top:2px; color:var(--muted); }
-.composer-action-popover > button > span { display:flex; min-width:0; flex-direction:column; gap:2px; }
-.composer-action-popover strong { font-size:11px; font-weight:500; }
-.composer-action-popover small { color:var(--faint); font-size:9px; line-height:1.35; }
 .schema-fold { margin-top:18px; border-top:1px solid var(--border); padding-top:10px; }
 .schema-fold > summary { width:max-content; color:var(--muted); font-size:10px; cursor:pointer; }
 
@@ -821,7 +812,7 @@ input::placeholder,textarea::placeholder { color:var(--faint); opacity:1; }
 .composer:focus-within { border-color:var(--accent-strong); box-shadow:0 0 0 3px var(--accent-tint); }
 .composer textarea { line-height:1.6; font-size:15px; }
 .composer-menu > summary { height:36px; border-color:var(--border); background:var(--elevated); color:var(--soft); font-size:12px; }
-.composer-add-menu > summary { width:36px; }
+.composer-cards-button { flex:0 0 36px; width:36px; height:36px; padding:0; background:var(--elevated); color:var(--soft); }
 .send-btn { width:36px; height:36px; border-radius:9px; background:var(--accent-strong); color:#13213a; }
 .send-btn:hover:not(:disabled) { background:#b4d0ff; }
 .demo-access { border-color:var(--border); background:transparent; color:var(--muted); font-size:12px; padding:8px 2px; border-width:0; }
@@ -906,6 +897,21 @@ input::placeholder,textarea::placeholder { color:var(--faint); opacity:1; }
 .library-card.is-preview .visual-card-answer { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; max-height:4.95em; }
 .library-card.is-editing { grid-column:1/-1; }
 .library-card.is-editing .visual-card { max-width:100%; }
+.card-planned-actions { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); align-items:start; gap:8px; padding:12px 16px 16px; border-top:1px solid var(--border); }
+.card-planned-button { display:flex; width:100%; min-height:40px; align-items:center; justify-content:center; gap:8px; border:1px solid var(--border-strong); border-radius:8px; padding:9px 12px; background:var(--elevated); color:var(--soft); font-size:12px; line-height:1.4; cursor:pointer; }
+.card-planned-button:hover,.card-planned-button[aria-pressed="true"] { background:var(--hover); border-color:var(--accent); }
+.card-planned-button:disabled { cursor:pointer; opacity:1; }
+.card-soon-badge { border-radius:999px; padding:2px 7px; background:var(--accent-tint); color:var(--accent); font-size:10px; }
+.card-planned-panel { grid-column:1/-1; min-width:0; border-radius:8px; padding:10px 12px; background:var(--elevated); color:var(--muted); font-size:12px; line-height:1.55; }
+.card-planned-panel > p { margin:0; }
+.library-card > footer.saved-card-footer { gap:4px; padding:8px 12px; border-top:0; }
+.card-text-action { min-height:36px; border:0; border-radius:6px; padding:8px 6px; background:transparent; color:var(--muted); font-size:12px; cursor:pointer; }
+.card-text-action:hover:not(:disabled) { background:var(--hover); color:var(--text); }
+.card-text-action.danger-btn:hover:not(:disabled) { color:var(--danger); }
+.document-library-tabs { display:flex; flex-wrap:wrap; gap:4px; width:fit-content; max-width:100%; margin-top:24px; border:1px solid var(--border); border-radius:9px; padding:3px; background:var(--sidebar); }
+.document-library-tabs > button { flex:1 1 auto; border:0; border-radius:6px; padding:9px 12px; background:transparent; color:var(--muted); font-size:12px; cursor:pointer; }
+.document-library-tabs > button[aria-selected="true"] { background:var(--hover); color:var(--text); }
+.document-library-tabs > button:hover { color:var(--text); }
 .builder-field,.builder-preview .visual-card { border-radius:12px; }
 @media (max-width:1100px) {
 }

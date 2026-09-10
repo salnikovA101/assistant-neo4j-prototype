@@ -300,10 +300,17 @@ export type CardDraft = {
   savedRevisionId?: string;
 };
 
+export type CardActionId = "digital_experiment" | "regulations";
+export type CardActionState = {
+  activeAction: CardActionId | null;
+  actions: Record<CardActionId, { status: string; logs: unknown[] }>;
+};
+
 export type SavedCard = {
   id: string;
   title: string;
   templateVersionId: string;
+  actionState?: CardActionState;
   template?: {
     name: string;
     version: number;

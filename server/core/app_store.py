@@ -38,6 +38,13 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def default_card_action_data() -> dict[str, Any]:
+    return {
+        action: {"status": "not_ready", "logs": []}
+        for action in ("digital_experiment", "regulations")
+    }
+
+
 def normalize_username(value: str) -> str:
     username = (value or "").strip().lower()
     if not 3 <= len(username) <= 64:
@@ -379,6 +386,13 @@ CREATE TABLE IF NOT EXISTS cards (
 );
 CREATE INDEX IF NOT EXISTS idx_cards_user
     ON cards(user_id, archived_at, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS card_action_states (
+    card_id TEXT PRIMARY KEY REFERENCES cards(id) ON DELETE CASCADE,
+    active_action TEXT CHECK(active_action IN ('digital_experiment', 'regulations')),
+    actions_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS card_revisions (
     id TEXT PRIMARY KEY,
@@ -3702,10 +3716,12 @@ class AppStore:
         rows = await (await self._conn().execute(
             """SELECT c.id,c.title,c.template_version_id,c.created_at,c.updated_at,
                       r.id AS revision_id,r.revision,r.data_json,r.provenance_json,r.gaps_json,
-                      r.origin_snapshot_json,v.version,v.schema_json,v.ui_json,t.name AS template_name
+                      r.origin_snapshot_json,v.version,v.schema_json,v.ui_json,t.name AS template_name,
+                      s.active_action,s.actions_json
                FROM cards c JOIN card_revisions r ON r.card_id=c.id
                JOIN card_template_versions v ON v.id=c.template_version_id
                JOIN card_templates t ON t.id=v.template_id
+               LEFT JOIN card_action_states s ON s.card_id=c.id
                WHERE c.user_id=? AND c.archived_at IS NULL
                  AND r.revision=(SELECT MAX(r2.revision) FROM card_revisions r2 WHERE r2.card_id=c.id)
                ORDER BY c.updated_at DESC,c.id""",
@@ -3731,6 +3747,10 @@ class AppStore:
                     )
             cards.append({
                 "id": str(row["id"]),
+                "actionState": {
+                    "activeAction": row["active_action"],
+                    "actions": _loads(row["actions_json"], default_card_action_data()),
+                },
                 "title": str(row["title"]),
                 "templateVersionId": str(row["template_version_id"]),
                 "template": {
@@ -3754,6 +3774,36 @@ class AppStore:
                 "updatedAt": int(row["updated_at"]),
             })
         return cards
+
+    async def update_card_action_state(
+        self, user_id: str, card_id: str, active_action: str | None,
+    ) -> dict[str, Any]:
+        if active_action not in (None, "digital_experiment", "regulations"):
+            raise ValueError("Unknown card action")
+        async with self._write_lock:
+            await self._conn().execute("BEGIN IMMEDIATE")
+            try:
+                card = await (await self._conn().execute(
+                    "SELECT 1 FROM cards WHERE id=? AND user_id=? AND archived_at IS NULL",
+                    (card_id, user_id),
+                )).fetchone()
+                if card is None:
+                    raise KeyError(card_id)
+                # Switching or hiding a panel must never replace its stored logs.
+                await self._conn().execute(
+                    """INSERT INTO card_action_states(card_id,active_action,actions_json,updated_at)
+                       VALUES(?,?,?,?) ON CONFLICT(card_id) DO UPDATE SET
+                       active_action=excluded.active_action,updated_at=excluded.updated_at""",
+                    (card_id, active_action, _json(default_card_action_data()), now_ms()),
+                )
+                row = await (await self._conn().execute(
+                    "SELECT actions_json FROM card_action_states WHERE card_id=?", (card_id,),
+                )).fetchone()
+                await self._conn().commit()
+            except Exception:
+                await self._conn().rollback()
+                raise
+        return {"activeAction": active_action, "actions": _loads(row["actions_json"], {})}
 
     async def card_for_edit(self, user_id: str, card_id: str) -> dict[str, Any] | None:
         row = await (await self._conn().execute(

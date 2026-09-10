@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from server.core.app import (
+    CardActionStateBody,
+    card_action_state_update,
     _alias_sources_for_model,
     _card_generation_events,
     _discover_card_source_files,
@@ -17,6 +19,89 @@ from server.core.card_schema import validate_card_data, validate_template_schema
 from server.core.http_api import TextProcessBody
 from server.llm.stream_events import StreamEvent
 from server.tools.source_registry import present_source_aliases_in_value
+
+
+@pytest.mark.asyncio
+async def test_card_action_state_survives_reopen_and_keeps_logs_when_hidden(tmp_path) -> None:
+    store = AppStore(str(tmp_path / "card-actions.db"))
+    await store.open()
+    try:
+        user = await store.create_user("action-owner", "long action owner password")
+        template = (await store.list_card_templates(user.id))[0]
+        cards = []
+        for title in ("First", "Second"):
+            draft = await store.create_card_draft(
+                user.id, checkpoint_id=None,
+                template_version_id=template["latestVersion"]["id"], data={"title": title},
+            )
+            cards.append(await store.save_card_draft(user.id, draft["id"], title=title))
+        original = {card["id"]: card for card in await store.list_cards(user.id)}
+        assert original[cards[0]["id"]]["actionState"]["activeAction"] is None
+        state = await store.update_card_action_state(user.id, cards[0]["id"], "digital_experiment")
+        assert state["actions"]["digital_experiment"] == {"status": "not_ready", "logs": []}
+
+        # Simulate future worker data; UI selection is only allowed to change active_action.
+        state["actions"]["digital_experiment"]["logs"] = [{"message": "Stored worker log", "revisionId": cards[0]["latestRevision"]["id"]}]
+        await store._conn().execute(
+            "UPDATE card_action_states SET actions_json=? WHERE card_id=?",
+            (json.dumps(state["actions"]), cards[0]["id"]),
+        )
+        await store._conn().commit()
+        await store.update_card_action_state(user.id, cards[0]["id"], "regulations")
+        hidden = await store.update_card_action_state(user.id, cards[0]["id"], None)
+        assert hidden["actions"] == state["actions"]
+        await store.close()
+        await store.open()
+        restored = {card["id"]: card for card in await store.list_cards(user.id)}
+        assert restored[cards[0]["id"]]["actionState"] == hidden
+        assert restored[cards[1]["id"]]["actionState"]["actions"]["digital_experiment"]["logs"] == []
+        assert restored[cards[1]["id"]]["actionState"]["activeAction"] is None
+        assert restored[cards[0]["id"]]["updatedAt"] == original[cards[0]["id"]]["updatedAt"]
+        await store.update_card_action_state(user.id, cards[0]["id"], "digital_experiment")
+        await store.close()
+        await store.open()
+        restored = {card["id"]: card for card in await store.list_cards(user.id)}
+        assert restored[cards[0]["id"]]["actionState"]["activeAction"] == "digital_experiment"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_card_action_state_api_rejects_other_users_and_archived_cards(tmp_path) -> None:
+    from fastapi import HTTPException
+    from pydantic import ValidationError
+
+    store = AppStore(str(tmp_path / "card-actions-access.db"))
+    await store.open()
+    try:
+        owner = await store.create_user("action-owner", "long action owner password")
+        other = await store.create_user("action-other", "long action other password")
+        template = (await store.list_card_templates(owner.id))[0]
+        draft = await store.create_card_draft(
+            owner.id, checkpoint_id=None,
+            template_version_id=template["latestVersion"]["id"], data={"title": "Private"},
+        )
+        card = await store.save_card_draft(owner.id, draft["id"], title="Private")
+        request = SimpleNamespace(state=SimpleNamespace(account_user=owner), app=SimpleNamespace(state=SimpleNamespace(app_store=store)))
+        body = CardActionStateBody(active_action="regulations")
+        state = await card_action_state_update(request, card["id"], body)
+        assert state["activeAction"] == "regulations"
+        request.state.account_user = other
+        with pytest.raises(HTTPException) as error:
+            await card_action_state_update(request, card["id"], body)
+        assert error.value.status_code == 404
+        assert await store.list_cards(other.id) == []
+        request.state.account_user = owner
+        await store.archive_card(owner.id, card["id"])
+        with pytest.raises(HTTPException) as error:
+            await card_action_state_update(request, card["id"], body)
+        assert error.value.status_code == 404
+        with pytest.raises(ValidationError):
+            CardActionStateBody(active_action="unknown")
+        with pytest.raises(ValidationError):
+            CardActionStateBody()
+    finally:
+        await store.close()
 
 
 def test_card_arguments_accept_json_fence_and_surrounding_text() -> None:

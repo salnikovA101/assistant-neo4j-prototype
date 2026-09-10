@@ -1,14 +1,67 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   archiveCard, archiveCardTemplate, createCardTemplate,
   createCardTemplateVersion, fetchCards, fetchCardTemplates, importCardDraft,
-  reviseCard, saveCardDraft, updateCardDraft,
+  reviseCard, saveCardDraft, updateCardActionState, updateCardDraft,
 } from "../api";
 import { blankData, fallbackSchemaForData } from "../cardModel";
-import type { CardDraft, CardTemplate, SavedCard } from "../types";
+import type { CardActionId, CardActionState, CardDraft, CardTemplate, SavedCard } from "../types";
 import { CardTemplateBuilder, type TemplateBuilderValue } from "./CardTemplateBuilder";
 import { CardVisual } from "./CardVisual";
 import { IconTrash } from "./Icons";
+
+const plannedCardActions = [
+  { id: "digital_experiment", label: "Цифровой эксперимент", description: "Цифровой эксперимент пока недоступен. Здесь появятся результаты проверки карточки." },
+  { id: "regulations", label: "Проверить по нормативам", description: "Проверка по нормативным документам в разработке." },
+] as const;
+
+const emptyCardActionState: CardActionState = {
+  activeAction: null,
+  actions: {
+    digital_experiment: { status: "not_ready", logs: [] },
+    regulations: { status: "not_ready", logs: [] },
+  },
+};
+
+function PlannedCardActions({ card, onState, onNotice }: {
+  card: SavedCard;
+  onState: (state: CardActionState) => void;
+  onNotice: (text: string) => void;
+}) {
+  const state = card.actionState || emptyCardActionState;
+  const activeAction = state.activeAction;
+  const [saving, setSaving] = useState(false);
+  const saveInFlight = useRef(false);
+  const panelId = useId();
+  const selectAction = async (action: CardActionId) => {
+    if (saveInFlight.current) return;
+    saveInFlight.current = true;
+    setSaving(true);
+    const nextAction = activeAction === action ? null : action;
+    onState({ ...state, activeAction: nextAction });
+    try {
+      onState(await updateCardActionState(card.id, nextAction));
+    } catch (error) {
+      onState(state);
+      onNotice(error instanceof Error ? error.message : "Не удалось сохранить состояние проверки карточки");
+    } finally {
+      saveInFlight.current = false;
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="card-planned-actions" aria-label="Будущие возможности карточки">
+      {plannedCardActions.map((action) => (
+        <button key={action.id} id={`${panelId}-${action.id}`} type="button" className="card-planned-button" disabled={saving} aria-pressed={activeAction === action.id} aria-expanded={activeAction === action.id} aria-controls={panelId} onClick={() => void selectAction(action.id)}>
+          <span>{action.label}</span><span className="card-soon-badge">Скоро</span>
+        </button>
+      ))}
+      <div id={panelId} className="card-planned-panel" role="region" aria-labelledby={activeAction === null ? undefined : `${panelId}-${activeAction}`} hidden={activeAction === null}>
+        <p>{plannedCardActions.find((action) => action.id === activeAction)?.description}</p>
+      </div>
+    </div>
+  );
+}
 
 function templateForVersion(templates: CardTemplate[], versionId: string): CardTemplate | undefined {
   return templates.find((item) => item.latestVersion.id === versionId);
@@ -243,7 +296,7 @@ export function CardsWorkspace({
         <div className="library-shell">
           <div className="library-tools"><label className="library-search"><span className="sr-only">Поиск по карточкам</span><input type="search" placeholder="Найти карточку по названию или содержанию" value={cardQuery} onChange={(event) => setCardQuery(event.target.value)} /></label><span className="library-count">{visibleCards.length} из {cards.length}</span></div>
           <div className="library-grid">
-            {cards.length === 0 && <div className="cards-empty-state"><strong>Сохранённых карточек пока нет</strong><p>Откройте диалог, нажмите <code>+</code> у поля сообщения и выберите «Открыть карточки».</p></div>}
+            {cards.length === 0 && <div className="cards-empty-state"><strong>Сохранённых карточек пока нет</strong><p>Откройте диалог и нажмите значок карточек у поля сообщения.</p></div>}
             {cards.length > 0 && visibleCards.length === 0 && <div className="cards-empty-state"><strong>Карточки не найдены</strong><p>Попробуйте другое название или слово из содержимого.</p></div>}
             {visibleCards.map((card) => {
               const cardTemplate = templateForVersion(templates, card.templateVersionId);
@@ -255,11 +308,11 @@ export function CardsWorkspace({
               }} />;
               return <article key={card.id} className={`library-card ${chatMode ? "chat-library-card" : ""} ${expandedCards.has(card.id) ? "is-expanded" : "is-preview"}`}>
                 <CardVisual templateName={cardTemplate?.name || card.template?.name || "Карточка"} version={cardTemplate?.latestVersion.version || card.template?.version} schema={cardTemplate?.latestVersion.schema || card.template?.schema || fallbackSchemaForData(card.latestRevision.data)} ui={cardTemplate?.latestVersion.ui || card.template?.ui || {}} data={{ ...card.latestRevision.data, title: card.title }} provenance={card.latestRevision.provenance} status={`Правка ${card.latestRevision.revision}`} />
-                <footer>
-                  <button type="button" className="ghost-btn card-expand" aria-expanded={expandedCards.has(card.id)} onClick={() => setExpandedCards((current) => { const next = new Set(current); if (next.has(card.id)) next.delete(card.id); else next.add(card.id); return next; })}>{expandedCards.has(card.id) ? "Свернуть" : "Открыть полностью"}</button>
+                <footer className="saved-card-footer">
+                  <button type="button" className="card-text-action card-expand" aria-expanded={expandedCards.has(card.id)} onClick={() => setExpandedCards((current) => { const next = new Set(current); if (next.has(card.id)) next.delete(card.id); else next.add(card.id); return next; })}>{expandedCards.has(card.id) ? "Свернуть" : "Открыть полностью"}</button>
                   {chatMode && onInsert && <button className="primary-btn" disabled={!branchId || !checkpointId || busy || readOnly} onClick={() => onInsert(card)}>Вставить в диалог</button>}
-                  {!chatMode && <button className="ghost-btn" onClick={() => setEditingCardId(card.id)}>Изменить</button>}
-                  {!chatMode && <button type="button" className="ghost-btn danger-btn" disabled={busy} onClick={async () => {
+                  {!chatMode && <button type="button" className="card-text-action" onClick={() => setEditingCardId(card.id)}>Изменить</button>}
+                  {!chatMode && <button type="button" className="card-text-action danger-btn" disabled={busy} onClick={async () => {
                     if (!window.confirm(`Убрать карточку «${card.title}» из библиотеки?`)) return;
                     setBusy(true);
                     try { await archiveCard(card.id); await reload(); onNotice("Карточка убрана из библиотеки."); }
@@ -267,6 +320,7 @@ export function CardsWorkspace({
                     finally { setBusy(false); }
                   }}>Удалить</button>}
                 </footer>
+                <PlannedCardActions card={card} onNotice={onNotice} onState={(actionState) => setCards((current) => current.map((item) => item.id === card.id ? { ...item, actionState } : item))} />
               </article>;
             })}
           </div>

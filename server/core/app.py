@@ -295,6 +295,10 @@ class CardRevisionBody(BaseModel):
     edited_fields: list[str] = Field(default_factory=list, max_length=100)
 
 
+class CardActionStateBody(BaseModel):
+    active_action: Literal["digital_experiment", "regulations"] | None = Field(...)
+
+
 class CardGenerateBody(BaseModel):
     checkpoint_id: str
     template_version_id: str
@@ -2820,6 +2824,16 @@ async def cards_list(request: Request):
     user = _current_user(request)
     store: AppStore = request.app.state.app_store
     return await store.list_cards(user.id)
+
+
+@app.put("/api/cards/{card_id}/action-state")
+async def card_action_state_update(request: Request, card_id: str, body: CardActionStateBody):
+    user = _current_user(request)
+    store: AppStore = request.app.state.app_store
+    try:
+        return await store.update_card_action_state(user.id, card_id, body.active_action)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Card not found") from exc
 
 
 @app.patch("/api/cards/{card_id}")

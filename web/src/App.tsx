@@ -1300,7 +1300,7 @@ export function App() {
       <div ref={mainColRef} className="main-col">
         <header className="topbar">
           <div className="topbar-title">
-            <span>{workspace === "graph" ? "Вся база" : workspace === "library" ? "Статьи · Скоро" : workspace === "help" ? "Помощь" : workspace === "cards" ? "Карточки" : current?.title || "Новый чат"}</span>
+            <span>{workspace === "graph" ? "Вся база" : workspace === "library" ? "Документы · Скоро" : workspace === "help" ? "Помощь" : workspace === "cards" ? "Карточки" : current?.title || "Новый чат"}</span>
             {workspace === "chat" && branches.length > 0 && (
               <BranchMenu
                 branches={branches}

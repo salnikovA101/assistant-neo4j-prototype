@@ -2,6 +2,8 @@ import type {
   Account,
   AgendaItem,
   Branch,
+  CardActionId,
+  CardActionState,
   CardDraft,
   CardTemplate,
   ChatMessage,
@@ -359,6 +361,14 @@ export async function fetchCardTemplates(): Promise<CardTemplate[]> {
 
 export async function fetchCards(): Promise<SavedCard[]> {
   return json(await apiFetch("/api/cards"), "Не удалось загрузить карточки");
+}
+
+export async function updateCardActionState(cardId: string, activeAction: CardActionId | null): Promise<CardActionState> {
+  return json(await apiFetch(`/api/cards/${encodeURIComponent(cardId)}/action-state`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ active_action: activeAction }),
+  }), "Не удалось сохранить состояние проверки карточки");
 }
 
 export async function createCardTemplate(input: {

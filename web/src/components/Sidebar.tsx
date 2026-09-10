@@ -78,9 +78,9 @@ export function Sidebar({
         <IconGraph />
         {!collapsed && <span>Вся база</span>}
       </button>
-      <button type="button" className={`sidebar-action ${activeWorkspace === "library" ? "is-active" : ""}`} onClick={onLibrary} title="Открыть статьи">
+      <button type="button" className={`sidebar-action ${activeWorkspace === "library" ? "is-active" : ""}`} onClick={onLibrary} title="Открыть документы">
         <IconLibrary />
-        {!collapsed && <><span>Статьи</span><span className="sidebar-nav-badge">Скоро</span></>}
+        {!collapsed && <><span>Документы</span><span className="sidebar-nav-badge">Скоро</span></>}
       </button>
       {cardsEnabled && <button type="button" className={`sidebar-action ${activeWorkspace === "cards" ? "is-active" : ""}`} onClick={onCards} title="Карточки">
         <IconCards />
