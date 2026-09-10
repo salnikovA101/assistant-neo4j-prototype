@@ -2,6 +2,7 @@ import {
   lazy,
   Suspense,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ComponentType,
@@ -186,6 +187,10 @@ function PanelResizer({
 }
 
 const GRAPH_PANEL_MIN = 380;
+// Matches the reading column in styles.css; opening the panel first consumes
+// the chat's unused horizontal space, including its actual padding/scrollbar.
+const CHAT_READING_WIDTH = 820;
+const PANEL_RESIZER_WIDTH = 9;
 
 export function App() {
   const [config, setConfig] = useState<UiConfig | null>(null);
@@ -193,6 +198,8 @@ export function App() {
   const [collapsed, setCollapsed] = useState(() => window.innerWidth <= 680);
   const [sidebarWidth, setSidebarWidth] = useState(252);
   const [graphWidth, setGraphWidth] = useState(432);
+  const mainColRef = useRef<HTMLDivElement>(null);
+  const rightPanelWasOpenRef = useRef(false);
   const [sessions, setSessions] = useState<ConversationSummary[]>([]);
   const [currentId, setCurrentId] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -361,6 +368,23 @@ export function App() {
   useEffect(() => {
     setGraphWidth((value) => Math.min(value, maxGraphWidth));
   }, [maxGraphWidth]);
+
+  useLayoutEffect(() => {
+    const justOpened = rightPanelOpen && !rightPanelWasOpenRef.current;
+    rightPanelWasOpenRef.current = rightPanelOpen;
+    if (!justOpened || window.innerWidth <= 1200) return;
+    const main = mainColRef.current;
+    const thread = main?.querySelector<HTMLElement>(".thread");
+    if (!main || !thread) return;
+    const style = getComputedStyle(thread);
+    const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    const scrollbar = thread.offsetWidth - thread.clientWidth;
+    // The panel already participates in layout here; add its width back to
+    // recover the available space before opening it. Later dragging is free.
+    const available = main.clientWidth + graphWidth + PANEL_RESIZER_WIDTH;
+    const spareWidth = available - CHAT_READING_WIDTH - padding - scrollbar - PANEL_RESIZER_WIDTH;
+    setGraphWidth(clamp(spareWidth, GRAPH_PANEL_MIN, maxGraphWidth));
+  }, [rightPanelOpen, graphWidth, maxGraphWidth]);
 
   useEffect(() => {
     if (!currentId) {
@@ -1273,7 +1297,7 @@ export function App() {
           onChange={setSidebarWidth}
         />
       )}
-      <div className="main-col">
+      <div ref={mainColRef} className="main-col">
         <header className="topbar">
           <div className="topbar-title">
             <span>{workspace === "graph" ? "Вся база" : workspace === "library" ? "Статьи · Скоро" : workspace === "help" ? "Помощь" : workspace === "cards" ? "Карточки" : current?.title || "Новый чат"}</span>
