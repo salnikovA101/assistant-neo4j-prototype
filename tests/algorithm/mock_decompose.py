@@ -29,19 +29,15 @@ def _resolve_slm_base_url(raw: str | None) -> str:
 def _resolve_tool_llm_profile(config: Any) -> Any:
     profile_name = config.llm.tool_profile
     llm_profile = getattr(config.llm.profiles, profile_name, None)
-    return llm_profile or config.llm.profiles.other
+    if llm_profile is None:
+        raise RuntimeError(f"unknown tool_profile {profile_name!r}")
+    return llm_profile
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ASSISTANT_LOGIC_PATH = _REPO_ROOT / "prompts" / "assistant_logic.md"
 
-_QUESTION_START_RE = re.compile(
-    r"^(what|which|who|whom|whose|where|when|why|how|do|does|did|is|are|was|were|"
-    r"can|could|should|would|will|may|might)\b",
-    re.IGNORECASE,
-)
-
 _DECOMPOSE_TEST_FOOTER = """
-# РЕЖИМ ТЕСТА (только evaluate_v6)
+# Test mode (eval harness only)
 
 Сейчас проверяется только модуль SUBQUESTIONS. Не вызывай ask_subgraph, не
 выбирай effort, не пиши научную заметку и не заполняй GAPS.
@@ -49,22 +45,13 @@ _DECOMPOSE_TEST_FOOTER = """
 
 {"subquestions":[{"id":"sq1","text":"..."},{"id":"sq2","text":"..."}]}
 
-1–6 элементов. Каждый text — готовый sq по правилам модуля SUBQUESTIONS.
+1–5 элементов. Каждый text — готовый sq по правилам модуля SUBQUESTIONS.
 """.strip()
 
 
 def _load_decompose_prompt() -> str:
     logic = _ASSISTANT_LOGIC_PATH.read_text(encoding="utf-8").strip()
     return logic + "\n\n" + _DECOMPOSE_TEST_FOOTER
-
-
-def _looks_like_question(text: str) -> bool:
-    t = (text or "").strip()
-    if not t:
-        return True
-    if "?" in t:
-        return True
-    return bool(_QUESTION_START_RE.match(t))
 
 
 def _parse_sq(content: str) -> list[dict[str, str]]:
@@ -86,39 +73,11 @@ def _parse_sq(content: str) -> list[dict[str, str]]:
         if not isinstance(item, dict):
             continue
         t = str(item.get("text") or "").strip()
-        if not t or _looks_like_question(t):
+        if not t or re.search(r"[А-Яа-яЁё]", t):
             continue
         sid = str(item.get("id") or f"sq{i+1}")
         out.append({"id": sid, "text": t})
     return out
-
-
-def _fallback_statements(question: str) -> list[dict[str, str]]:
-    """Deterministic declarative fallbacks when the SLM fails or returns questions."""
-    q = question.strip().rstrip("?")
-    return [
-        {
-            "id": "sq1",
-            "text": (
-                "produces Proteolytic lactic acid bacteria produce antimicrobial "
-                f"peptides related to: {q}."
-            ),
-        },
-        {
-            "id": "sq2",
-            "text": (
-                "inhibits Casein-derived antimicrobial peptides inhibit "
-                "bacterial and fungal pathogens."
-            ),
-        },
-        {
-            "id": "sq3",
-            "text": (
-                "requires Hydrolysis conditions and medium support release of "
-                "antimicrobial peptides from casein."
-            ),
-        },
-    ]
 
 
 async def mock_decompose(question: str) -> list[dict[str, str]]:
@@ -145,9 +104,10 @@ async def mock_decompose(question: str) -> list[dict[str, str]]:
         resp = await client.chat.completions.create(**params)
         raw = resp.choices[0].message.content or ""
         sqs = _parse_sq(raw)
-        if sqs:
-            return sqs
-        logger.warning("mock_decompose parse/filter fail; using declarative fallbacks")
+        if not sqs:
+            raise RuntimeError("mock_decompose: SLM returned no usable subquestions")
+        return sqs
+    except RuntimeError:
+        raise
     except Exception as e:
-        logger.warning("mock_decompose failed: %s", e)
-    return _fallback_statements(question)
+        raise RuntimeError(f"mock_decompose failed: {e}") from e

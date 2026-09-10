@@ -63,6 +63,35 @@ def test_remap_from_accepted_edges():
     assert reg.resolve(1) == "Hashim et al. Anthocyanins.pdf"
 
 
+def test_render_citations_strips_leaked_filenames_in_groups():
+    reg = SourceRegistry()
+    reg.register("one.pdf")
+    reg.register("Priyadarshi R. colorants.pdf")
+    display = render_citations(
+        "Антоцианы (source:2; Priyadarshi R. colorants.pdf) и контроль (source:1).",
+        reg,
+    )
+    body, biblio = display.split("### Источники", 1)
+    assert "Антоцианы [1] и контроль [2]." in body
+    assert "Priyadarshi R. colorants.pdf)" not in body
+    assert "(source:" not in body
+    assert "[1] Priyadarshi R. colorants.pdf" in biblio
+    assert "[2] one.pdf" in biblio
+
+
+def test_live_answer_events_keep_source_aliases():
+    from server.tools.source_registry import present_live_event_data
+
+    sources = [(1, "paper.pdf")]
+    delta = {"delta": "факт (source:1)"}
+    assert present_live_event_data("content", delta, sources) == delta
+    assert present_live_event_data("thinking", delta, sources) == delta
+    presented = present_live_event_data(
+        "tool_result", {"result": "факт (source:1)"}, sources
+    )
+    assert presented["result"] == "факт (paper.pdf)"
+
+
 def test_render_citations_groups_and_bibliography():
     reg = SourceRegistry()
     reg.register("one.pdf")

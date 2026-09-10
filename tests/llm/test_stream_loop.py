@@ -139,6 +139,73 @@ async def test_generate_response_stream_tool_loop(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_uncited_final_answer_is_streamed_without_grounding_gate():
+    profile = OpenAIProfile(
+        model="test-model",
+        base_url="http://localhost",
+        api_key="x",
+        think=False,
+        max_turns=1,
+    )
+    provider = OpenAIProvider(profile)
+    calls: List[dict[str, Any]] = []
+    streams = [_aiter([_Chunk(_Delta(content="Неподтверждённое длинное утверждение без ссылки."))])]
+
+    async def fake_create(**kwargs):
+        calls.append(kwargs)
+        return streams.pop(0)
+
+    provider.client.chat.completions.create = AsyncMock(side_effect=fake_create)
+    events = [event async for event in provider.generate_response_stream(user_text="q", prompt="sys")]
+
+    assert len(calls) == 1
+    assert any(event.type == "content" for event in events)
+    assert events[-1].type == "done"
+    assert events[-1].data["final_content"] == "Неподтверждённое длинное утверждение без ссылки."
+
+
+@pytest.mark.asyncio
+async def test_tool_call_after_budget_returns_error_without_second_execution():
+    profile = OpenAIProfile(
+        model="test-model",
+        base_url="http://localhost",
+        api_key="x",
+        think=False,
+        max_turns=1,
+    )
+    provider = OpenAIProvider(profile)
+    tool_delta = _Delta(tool_calls=[{
+        "index": 0,
+        "id": "call_1",
+        "type": "function",
+        "function": {"name": "ask_subgraph", "arguments": '{"subquestions":["a"]}'},
+    }])
+    streams = [_aiter([_Chunk(tool_delta)]), _aiter([_Chunk(tool_delta)])]
+    provider.client.chat.completions.create = AsyncMock(
+        side_effect=lambda **_kwargs: streams.pop(0)
+    )
+    calls = {"n": 0}
+
+    async def fake_tool(**_kwargs):
+        calls["n"] += 1
+        return "UNIT evidence"
+
+    events = [
+        event
+        async for event in provider.generate_response_stream(
+            user_text="q",
+            prompt="sys",
+            tools=[{"type": "function", "function": {"name": "ask_subgraph"}}],
+            tool_map={"ask_subgraph": fake_tool},
+        )
+    ]
+    assert calls["n"] == 1
+    assert not any(event.type == "done" for event in events)
+    assert events[-1].type == "error"
+    assert events[-1].data["code"] == "tool_budget_exhausted"
+
+
+@pytest.mark.asyncio
 async def test_stream_override_uses_with_options():
     profile = OpenAIProfile(
         model="test-model",
@@ -229,3 +296,58 @@ async def test_stream_maps_401_to_settings_hint():
     msg = events[-1].data["message"]
     assert "настройки" in msg.lower()
     assert "sk-secret" not in msg
+
+
+@pytest.mark.asyncio
+async def test_invalid_tool_json_does_not_call_tool():
+    profile = OpenAIProfile(
+        model="test-model",
+        base_url="http://localhost",
+        api_key="x",
+        think=False,
+        max_turns=1,
+    )
+    provider = OpenAIProvider(profile)
+    called = {"n": 0}
+
+    turn0 = [
+        _Chunk(
+            _Delta(
+                tool_calls=[
+                    {
+                        "index": 0,
+                        "id": "call_bad",
+                        "type": "function",
+                        "function": {
+                            "name": "ask_subgraph",
+                            "arguments": "{not-json",
+                        },
+                    }
+                ]
+            )
+        ),
+    ]
+
+    async def fake_create(**_kwargs):
+        return _aiter(turn0)
+
+    provider.client.chat.completions.create = AsyncMock(side_effect=fake_create)
+
+    async def fake_tool(**_kwargs):
+        called["n"] += 1
+        return "should not run"
+
+    events: List[Any] = []
+    async for ev in provider.generate_response_stream(
+        user_text="q",
+        prompt="sys",
+        history=[],
+        tools=[{"type": "function", "function": {"name": "ask_subgraph"}}],
+        tool_map={"ask_subgraph": fake_tool},
+    ):
+        events.append(ev)
+
+    assert called["n"] == 0
+    tool_result = next(e for e in events if e.type == "tool_result")
+    assert tool_result.data["ok"] is False
+    assert "invalid tool arguments" in str(tool_result.data.get("result") or "").lower()

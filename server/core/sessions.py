@@ -26,6 +26,7 @@ class ConversationSession:
     sources: SourceRegistry
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     last_used: float = field(default_factory=time.monotonic)
+    hydrated: bool = False
 
 
 _current_session: ContextVar[ConversationSession | None] = ContextVar(
@@ -98,6 +99,30 @@ class SessionStore:
         sess.sources.clear()
         sess.last_used = time.monotonic()
         return True
+
+    def hydrate(
+        self,
+        session_id: str,
+        history_len: int,
+        turns: list[dict],
+        sources: list[tuple[int, str]],
+    ) -> ConversationSession:
+        sess = self.get_or_create(session_id, history_len)
+        sess.sources.restore(sources)
+        if sess.hydrated:
+            return sess
+        sess.history.clear_history()
+        for turn in turns:
+            sess.history.add_entry(
+                str(turn.get("user") or ""),
+                str(turn.get("assistant") or ""),
+                tool_messages=turn.get("tool_messages") or [],
+            )
+        sess.hydrated = True
+        return sess
+
+    def drop(self, session_id: str) -> None:
+        self._sessions.pop(session_id, None)
 
 
 session_store = SessionStore()

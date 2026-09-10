@@ -25,3 +25,8 @@ class TTSModes(StrEnum):
     SPEED = "speed"
     QUALITY = "quality"
     CLOUD = "cloud"
+
+
+# Written on retrieval snapshots. Older checkpoints used "v6-checkpoint-1".
+RETRIEVAL_STATE_VERSION = "retrieval-carousel-v1"
+LEGACY_RETRIEVAL_STATE_VERSIONS = frozenset({"v6-checkpoint-1"})

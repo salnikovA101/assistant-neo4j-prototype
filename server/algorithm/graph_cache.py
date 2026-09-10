@@ -8,16 +8,23 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from server.algorithm.models import CandidateGraph, EdgeRecord, SubQuestion
+from server.algorithm.models import (
+    CandidateGraph,
+    EdgeRecord,
+    SubQuestion,
+    normalize_labels,
+    parse_confidence,
+)
 from server.algorithm.params import Params
 from server.algorithm.stage3_graphs import _finalize_graph
 
 logger = logging.getLogger(__name__)
 
-# Bump when cache edge schema or framing id meaning changes.
-GRAPH_CACHE_VERSION = 2
+# Disk schema for cached S3 graphs. Increment when EdgeRecord JSON or the
+# rerank query template below changes (mismatched files are rebuilt).
+GRAPH_CACHE_VERSION = 3
 
-# Hardcoded S2b query template id (framing is not a Params field yet).
+# Cross-encoder query template id stored in the cache fingerprint.
 RERANK_FRAMING_ID = "claim_v1"
 
 # Params that change the S3 edge pool / transition topology.
@@ -43,6 +50,8 @@ def edge_to_cache_dict(e: EdgeRecord) -> dict[str, Any]:
         "end_name": e.end_name,
         "start_label": e.start_label,
         "end_label": e.end_label,
+        "start_labels": list(e.start_labels),
+        "end_labels": list(e.end_labels),
         "sim": float(e.sim),
         "rerank_score": (
             None if e.rerank_score is None else float(e.rerank_score)
@@ -51,7 +60,10 @@ def edge_to_cache_dict(e: EdgeRecord) -> dict[str, Any]:
         "evidence": e.evidence or "",
         "source_file": e.source_file or "",
         "source": e.source or "ann",
-        "confidence": float(e.confidence) if e.confidence is not None else 1.0,
+        "confidence": (
+            None if e.confidence is None else float(e.confidence)
+        ),
+        "run_id": e.run_id,
     }
 
 
@@ -64,8 +76,8 @@ def edge_from_cache_dict(d: dict[str, Any]) -> EdgeRecord:
         end_id=str(d.get("end_id") or ""),
         start_name=str(d.get("start_name") or d.get("start") or ""),
         end_name=str(d.get("end_name") or d.get("end") or ""),
-        start_label=str(d.get("start_label") or ""),
-        end_label=str(d.get("end_label") or ""),
+        start_labels=normalize_labels(d.get("start_labels") or d.get("start_label")),
+        end_labels=normalize_labels(d.get("end_labels") or d.get("end_label")),
         sim=float(d.get("sim") or 0.0),
         rerank_score=(
             None
@@ -76,7 +88,8 @@ def edge_from_cache_dict(d: dict[str, Any]) -> EdgeRecord:
         evidence=str(d.get("evidence") or ""),
         source_file=str(d.get("source_file") or ""),
         source=str(d.get("source") or "ann"),
-        confidence=float(d.get("confidence") or 1.0),
+        confidence=parse_confidence(d.get("confidence")),
+        run_id=str(d.get("run_id") or ""),
     )
 
 

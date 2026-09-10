@@ -28,9 +28,12 @@ def current_graph_collector() -> list[dict[str, Any]] | None:
 
 
 def chain_unit_index(chain: dict[str, Any], fallback: int) -> int:
-    """UNIT [n] from chain_id ``a{n}``; else ``fallback``."""
+    """UNIT [n] from chain_id ``a{n}``/``u{n}`` or explicit unit_no."""
+    explicit = chain.get("unit_no")
+    if isinstance(explicit, int) and explicit > 0:
+        return explicit
     cid = str(chain.get("chain_id") or "")
-    if len(cid) > 1 and cid[0] == "a" and cid[1:].isdigit():
+    if len(cid) > 1 and cid[0] in {"a", "u"} and cid[1:].isdigit():
         return int(cid[1:])
     return fallback
 
@@ -45,8 +48,12 @@ def record_accepted_chains(chains: list[dict[str, Any]] | None) -> list[dict[str
         if not isinstance(chain, dict):
             continue
         item = copy.deepcopy(chain)
-        n = (len(collector) if collector is not None else len(out)) + 1
-        item["chain_id"] = f"a{n}"
+        explicit = item.get("unit_no")
+        if isinstance(explicit, int) and explicit > 0:
+            n = explicit
+        else:
+            n = (len(collector) if collector is not None else len(out)) + 1
+            item["chain_id"] = f"a{n}"
         if collector is not None:
             collector.append(item)
         out.append(item)
@@ -80,7 +87,7 @@ class GraphRunStore:
         if not snapshot:
             return ""
         self._prune()
-        run_id = f"gr_{uuid.uuid4().hex[:12]}"
+        run_id = f"gr_{uuid.uuid4().hex}"
         self._runs[run_id] = (time.monotonic(), copy.deepcopy(snapshot))
         return run_id
 

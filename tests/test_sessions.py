@@ -14,6 +14,21 @@ from server.core.sessions import (
     resolve_session_id,
     session_store,
 )
+
+
+def test_account_conversation_cache_key_is_valid_and_isolated():
+    from server.core.app import _conversation_session_key
+
+    first = _conversation_session_key(
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+    )
+    second = _conversation_session_key(
+        "33333333-3333-4333-8333-333333333333",
+        "22222222-2222-4222-8222-222222222222",
+    )
+    assert resolve_session_id(first) == first
+    assert first != second
 from server.tools.source_registry import SourceRegistry
 
 

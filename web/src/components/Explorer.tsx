@@ -1,0 +1,300 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { GraphCollectionItem, GraphFacetItem, GraphFacets, GraphFilters, GraphPayload } from "../types";
+import { fetchGraphExpand, fetchGraphExplore, fetchGraphFacets, fetchGraphSchema } from "../api";
+import { colorForLabel } from "../graphColors";
+import { GraphCanvas, type GraphAppendEvent, type GraphExpansionUi } from "./GraphCanvas";
+import { visibleNodeRef, visibleTripletCaption } from "../uiLabels";
+
+const DEFAULT_LIMIT = 100;
+const MIN_LIMIT = 1;
+const MAX_LIMIT = 5000;
+const FACET_PREVIEW_LIMIT = 10;
+const FACET_SOURCE_PAGE = 200;
+const EMPTY_FILTERS: GraphFilters = {
+  node_labels: [],
+  relationship_types: [],
+  sources: [],
+  min_confidence: null,
+};
+
+function hasFilters(filters: GraphFilters): boolean {
+  return Boolean(filters.node_labels.length || filters.relationship_types.length || filters.sources.length || filters.min_confidence != null);
+}
+
+function toggleValue(values: string[], value: string): string[] {
+  return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
+}
+
+function mergeFacetValues(values: string[], items: GraphFacetItem[]): GraphFacetItem[] {
+  const counts = new Map(items.map((item) => [item.value, item.count]));
+  return [...new Set([...values, ...items.map((item) => item.value)])]
+    .map((value) => ({ value, count: counts.get(value) || 0 }))
+    .sort((left, right) => right.count - left.count || left.value.localeCompare(right.value));
+}
+
+function facetPreviewKey(items: GraphFacetItem[]): string {
+  return items.slice(0, FACET_PREVIEW_LIMIT).map((item) => item.value).join("\n");
+}
+
+function takeFacetPreview(items: GraphFacetItem[], selected: string[]): GraphFacetItem[] {
+  if (items.length <= FACET_PREVIEW_LIMIT) return items;
+  const head = items.slice(0, FACET_PREVIEW_LIMIT);
+  const seen = new Set(head.map((item) => item.value));
+  const extra = items.filter((item) => selected.includes(item.value) && !seen.has(item.value));
+  return extra.length ? [...head, ...extra] : head;
+}
+
+function collectionDraft(items: GraphCollectionItem[]): string {
+  const nodes = items.filter((item): item is Extract<GraphCollectionItem, { kind: "node" }> => item.kind === "node");
+  const edges = items.filter((item): item is Extract<GraphCollectionItem, { kind: "edge" }> => item.kind === "edge");
+  const lines = ["Используй эту подборку из базы знаний как данные для ответа."];
+  if (nodes.length) {
+    lines.push("", "Сущности:");
+    for (const item of nodes) lines.push(`- ${visibleNodeRef(item.node.labels, item.node.caption || item.node.id)}`);
+  }
+  if (edges.length) {
+    lines.push("", "Данные по связям:");
+    for (const item of edges) {
+      const edge = item.edge;
+      lines.push(`- ${visibleTripletCaption(edge)}`);
+      const evidence = String(edge.properties?.evidence || "").trim();
+      const source = String(edge.properties?.source_file || "").trim();
+      const confidence = edge.properties?.confidence;
+      if (evidence) lines.push(`  Данные: ${evidence}`);
+      if (source) lines.push(`  Источник: ${source}`);
+      if (confidence != null && confidence !== "") lines.push(`  Уверенность экстракции: ${Number(confidence).toFixed(2)}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+export function Explorer({ onUseCollection }: { onUseCollection?: (draft: string) => void }) {
+  const [q, setQ] = useState("");
+  const [limitText, setLimitText] = useState(String(DEFAULT_LIMIT));
+  const [filters, setFilters] = useState<GraphFilters>(EMPTY_FILTERS);
+  const [payload, setPayload] = useState<GraphPayload | null>(null);
+  const [facets, setFacets] = useState<GraphFacets | null>(null);
+  const [schema, setSchema] = useState<{ nodeLabels: string[]; relationshipTypes: string[] }>({ nodeLabels: [], relationshipTypes: [] });
+  const [sourceQuery, setSourceQuery] = useState("");
+  const [sourceBusy, setSourceBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [layoutRevision, setLayoutRevision] = useState(0);
+  const [appendEvent, setAppendEvent] = useState<GraphAppendEvent | null>(null);
+  const [expansionByNode, setExpansionByNode] = useState<Record<string, GraphExpansionUi>>({});
+
+  const parsedLimit = Number(limitText);
+  const limit = Number.isInteger(parsedLimit) && parsedLimit >= MIN_LIMIT && parsedLimit <= MAX_LIMIT ? parsedLimit : null;
+  const activeFilterCount = filters.node_labels.length + filters.relationship_types.length + filters.sources.length + Number(filters.min_confidence != null);
+
+  useEffect(() => { void fetchGraphSchema().then(setSchema).catch(() => undefined); }, []);
+
+  useEffect(() => {
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      void fetchGraphFacets(q, filters, sourceQuery, "", FACET_PREVIEW_LIMIT).then((next) => {
+        if (alive) setFacets(next);
+      }).catch((err: Error) => { if (alive) setError(err.message); });
+    }, 280);
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [filters, q, sourceQuery]);
+
+  useEffect(() => {
+    if (limit == null) return undefined;
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      if (!q.trim() && !hasFilters(filters)) {
+        setPayload(null);
+        setExpansionByNode({});
+        setAppendEvent(null);
+        setLayoutRevision((value) => value + 1);
+        setError("");
+        return;
+      }
+      setBusy(true);
+      setError("");
+      void fetchGraphExplore(q, limit, "all", "", filters).then((next) => {
+        if (!alive) return;
+        setPayload(next);
+        setExpansionByNode({});
+        setAppendEvent(null);
+        setLayoutRevision((value) => value + 1);
+      }).catch((err: Error) => { if (alive) setError(err.message); })
+        .finally(() => { if (alive) setBusy(false); });
+    }, 280);
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [filters, limit, q]);
+
+  const expandNode = useCallback((nodeId: string, direction: "all" | "incoming" | "outgoing") => {
+    const currentPayload = payload;
+    const expansionKey = `${nodeId}:${direction}`;
+    if (!currentPayload || expansionByNode[expansionKey]?.busy) return;
+    const incident = currentPayload.all.edges.filter((edge) => edge.from === nodeId || edge.to === nodeId);
+    const excluded = incident.map((edge) => edge.id).slice(0, 5000);
+    setExpansionByNode((current) => ({
+      ...current,
+      [expansionKey]: { loaded: incident.length, total: current[expansionKey]?.total || 0, hasMore: true, busy: true },
+    }));
+    void fetchGraphExpand(nodeId, limit ?? DEFAULT_LIMIT, excluded, direction, filters).then((next) => {
+      const existingNodeIds = new Set(currentPayload.all.nodes.map((node) => node.id));
+      const existingEdgeIds = new Set(currentPayload.all.edges.map((edge) => edge.id));
+      const addedNodes = next.all.nodes.filter((node) => !existingNodeIds.has(node.id));
+      const addedEdges = next.all.edges.filter((edge) => !existingEdgeIds.has(edge.id));
+      setPayload((current) => {
+        if (!current) return next;
+        const nodes = new Map([...current.all.nodes, ...next.all.nodes].map((node) => [node.id, node]));
+        const edges = new Map([...current.all.edges, ...next.all.edges].map((edge) => [edge.id, edge]));
+        return { ...current, all: { nodes: [...nodes.values()], edges: [...edges.values()] } };
+      });
+      const expansion = next.expansion;
+      setAppendEvent({ id: `${Date.now()}:${nodeId}`, anchorNodeId: nodeId, nodes: addedNodes, edges: addedEdges });
+      setExpansionByNode((current) => ({
+        ...current,
+        [expansionKey]: {
+          loaded: incident.length + addedEdges.length,
+          total: expansion?.totalMatching || incident.length + addedEdges.length,
+          hasMore: Boolean(expansion?.hasMore),
+          busy: false,
+        },
+      }));
+    }).catch((err: Error) => {
+      setError(err.message);
+      setExpansionByNode((current) => ({
+        ...current,
+        [expansionKey]: { ...(current[expansionKey] || { loaded: incident.length, total: 0, hasMore: true }), busy: false },
+      }));
+    });
+  }, [expansionByNode, filters, limit, payload]);
+
+  const normalizeLimit = () => {
+    const raw = limitText.trim();
+    const next = Number(raw);
+    setLimitText(String(raw && Number.isInteger(next) ? Math.max(MIN_LIMIT, Math.min(next, MAX_LIMIT)) : DEFAULT_LIMIT));
+  };
+
+  const nodeFacets = useMemo(() => mergeFacetValues(schema.nodeLabels, facets?.nodeLabels || []), [facets?.nodeLabels, schema.nodeLabels]);
+  const relationshipFacets = useMemo(() => mergeFacetValues(schema.relationshipTypes, facets?.relationshipTypes || []), [facets?.relationshipTypes, schema.relationshipTypes]);
+  const sourceFacets = useMemo(() => mergeFacetValues(filters.sources, facets?.sources.items || []), [facets?.sources.items, filters.sources]);
+
+  const loadAllSources = () => {
+    const startCursor = facets?.sources.nextCursor;
+    if (!startCursor || sourceBusy) return;
+    setSourceBusy(true);
+    void (async () => {
+      let cursor: string | null | undefined = startCursor;
+      let acc = facets?.sources.items || [];
+      let pages = 0;
+      while (cursor && pages < 20) {
+        pages += 1;
+        const next = await fetchGraphFacets(q, filters, sourceQuery, cursor, FACET_SOURCE_PAGE);
+        acc = mergeFacetValues([], [...acc, ...next.sources.items]);
+        const hasMore = Boolean(next.sources.hasMore);
+        cursor = hasMore ? next.sources.nextCursor : "";
+        setFacets((current) => current ? {
+          ...current,
+          sources: { ...next.sources, items: acc, hasMore, nextCursor: cursor || null },
+        } : { ...next, sources: { ...next.sources, items: acc, hasMore, nextCursor: cursor || null } });
+      }
+    })().catch((err: Error) => setError(err.message)).finally(() => setSourceBusy(false));
+  };
+
+  return <div className="explorer">
+    <header className="explorer-bar">
+      <div className="edge-search-wrap">
+        <input
+          value={q}
+          onChange={(event) => setQ(event.target.value)}
+          placeholder="Поиск сущностей, связей и данных — на английском"
+          aria-label="Поиск по всей базе по английским именам и evidence"
+          autoFocus
+        />
+      </div>
+      <label className="explorer-limit" title={`Сколько связей показать, от ${MIN_LIMIT} до ${MAX_LIMIT}`}><span>Количество связей</span><input type="number" min={MIN_LIMIT} max={MAX_LIMIT} step={1} inputMode="numeric" value={limitText} onChange={(event) => setLimitText(event.target.value)} onBlur={normalizeLimit} aria-label="Сколько связей показать" /></label>
+      {busy && <span className="search-spinner">поиск…</span>}
+    </header>
+    {activeFilterCount > 0 && <div className="active-filters">
+      {filters.node_labels.map((value) => <button key={`node:${value}`} type="button" onClick={() => setFilters((current) => ({ ...current, node_labels: toggleValue(current.node_labels, value) }))}>{value} ×</button>)}
+      {filters.relationship_types.map((value) => <button key={`rel:${value}`} type="button" onClick={() => setFilters((current) => ({ ...current, relationship_types: toggleValue(current.relationship_types, value) }))}>{value} ×</button>)}
+      {filters.sources.map((value) => <button key={`source:${value}`} type="button" onClick={() => setFilters((current) => ({ ...current, sources: toggleValue(current.sources, value) }))}>{value} ×</button>)}
+      {filters.min_confidence != null && <button type="button" onClick={() => setFilters((current) => ({ ...current, min_confidence: null }))}>уверенность экстракции ≥ {filters.min_confidence} ×</button>}
+      <button type="button" className="active-filters-clear" onClick={() => setFilters(EMPTY_FILTERS)}>Сбросить всё</button>
+    </div>}
+    {error && <p className="explorer-status is-error">{error}</p>}
+    <div className="explorer-content">
+      <GraphCanvas
+        payload={payload}
+        viewId="all"
+        emptyHint={q.trim() || hasFilters(filters) ? "По всей базе не найдено подходящих данных." : "Введите английское название, тип связи или фрагмент данных."}
+        hideSearch
+        layoutKey={`explorer:${layoutRevision}`}
+        appendEvent={appendEvent}
+        expansionByNode={expansionByNode}
+        onExpandNode={expandNode}
+        onUseCollection={onUseCollection ? (items) => onUseCollection(collectionDraft(items)) : undefined}
+        workspaceMode
+        resultEdges={payload?.all.edges || []}
+        activeFilterCount={activeFilterCount}
+        statusHint={(payload || facets) && !error ? `Показано связей: ${payload?.all.edges.length || 0} из ${facets?.matchingRelationships || 0} · сущностей: ${facets?.matchingNodes || 0}` : ""}
+        filtersContent={<>
+          <FacetSection title="Тип сущности" items={nodeFacets} selected={filters.node_labels} onToggle={(value) => setFilters((current) => ({ ...current, node_labels: toggleValue(current.node_labels, value) }))} showColors />
+          <FacetSection title="Тип отношения" items={relationshipFacets} selected={filters.relationship_types} onToggle={(value) => setFilters((current) => ({ ...current, relationship_types: toggleValue(current.relationship_types, value) }))} />
+          <section className="facet-section"><h3>Источник</h3><input className="facet-search" value={sourceQuery} onChange={(event) => setSourceQuery(event.target.value)} placeholder="Найти статью" />
+            <FacetList
+              items={sourceFacets}
+              selected={filters.sources}
+              onToggle={(value) => setFilters((current) => ({ ...current, sources: toggleValue(current.sources, value) }))}
+              hasMore={Boolean(facets?.sources.hasMore)}
+              moreBusy={sourceBusy}
+              onLoadMore={loadAllSources}
+            />
+          </section>
+          <section className="facet-section" title="Порог уверенности извлечения связи; это не оценка истинности данных"><h3>Минимальная уверенность экстракции</h3>
+            <label className="confidence-field"><input type="number" min="0" max="1" step="0.05" value={filters.min_confidence ?? ""} placeholder="Без ограничения" aria-label="Минимальная уверенность экстракции" onChange={(event) => { const value = event.target.value; setFilters((current) => ({ ...current, min_confidence: value === "" ? null : Math.max(0, Math.min(1, Number(value))) })); }} /></label>
+          </section>
+          {activeFilterCount > 0 && <button type="button" className="filter-reset" onClick={() => setFilters(EMPTY_FILTERS)}>Сбросить всё</button>}
+        </>}
+      />
+    </div>
+  </div>;
+}
+
+function FacetSection({ title, items, selected, onToggle, showColors = false }: { title: string; items: GraphFacetItem[]; selected: string[]; onToggle: (value: string) => void; showColors?: boolean }) {
+  return <section className="facet-section"><h3>{title}</h3><FacetList items={items} selected={selected} onToggle={onToggle} showColors={showColors} /></section>;
+}
+
+function FacetList({
+  items,
+  selected,
+  onToggle,
+  showColors = false,
+  hasMore = false,
+  moreBusy = false,
+  onLoadMore,
+}: {
+  items: GraphFacetItem[];
+  selected: string[];
+  onToggle: (value: string) => void;
+  showColors?: boolean;
+  hasMore?: boolean;
+  moreBusy?: boolean;
+  onLoadMore?: () => void;
+}) {
+  const previewKey = facetPreviewKey(items);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [previewKey]);
+
+  const visible = expanded ? items : takeFacetPreview(items, selected);
+  const hasHidden = items.length > FACET_PREVIEW_LIMIT || hasMore;
+
+  return <>
+    <div className="facet-list">{visible.map((item) => <label key={item.value} className={item.count === 0 && !selected.includes(item.value) ? "is-disabled" : ""}><input type="checkbox" checked={selected.includes(item.value)} disabled={item.count === 0 && !selected.includes(item.value)} onChange={() => onToggle(item.value)} /><span className="facet-value" title={item.value}>{showColors && <i className="facet-color-dot" style={{ backgroundColor: colorForLabel(item.value) }} aria-hidden="true" />}<span className="facet-value-text">{item.value}</span></span><b>{item.count.toLocaleString("ru-RU")}</b></label>)}</div>
+    {!expanded && hasHidden && <button type="button" className="facet-more" disabled={moreBusy} onClick={() => {
+      setExpanded(true);
+      if (hasMore) onLoadMore?.();
+    }}>{moreBusy ? "Загрузка…" : "Показать ещё"}</button>}
+    {expanded && hasHidden && <button type="button" className="facet-more" disabled={moreBusy} onClick={() => setExpanded(false)}>{moreBusy ? "Загрузка…" : "Свернуть"}</button>}
+  </>;
+}

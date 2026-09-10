@@ -90,6 +90,25 @@ def test_build_chain_views_roles_and_merge_dedupe() -> None:
     assert merged_spine["role"] == "spine"
 
 
+def test_merge_views_unions_all_node_and_edge_labels() -> None:
+    first = _edge("5:1")
+    first["start_labels"] = ["Entity", "CustomClass"]
+    second = _edge("5:1")
+    second["start_labels"] = ["Entity", "AnotherClass"]
+
+    merged = merge_views(build_chain_views([
+        {"chain_id": "a1", "edges": [first], "fans": {}},
+        {"chain_id": "a2", "edges": [second], "fans": {}},
+    ]))
+
+    node = next(item for item in merged["nodes"] if item["id"] == "node-A")
+    edge = next(item for item in merged["edges"] if item["id"] == "5:1")
+    expected = ["AnotherClass", "CustomClass", "Entity"]
+    assert node["labels"] == expected
+    assert node["properties"]["labels"] == expected
+    assert edge["from_labels"] == expected
+
+
 def test_build_chain_views_uniquifies_duplicate_chain_ids() -> None:
     views = build_chain_views(
         [
@@ -101,6 +120,41 @@ def test_build_chain_views_uniquifies_duplicate_chain_ids() -> None:
     assert [v["label"] for v in views] == ["Цепь 1", "Цепь 2"]
     assert views[0]["edges"][0]["chain_ids"] == ["a1"]
     assert views[1]["edges"][0]["chain_ids"] == ["a2"]
+
+
+def test_checkpoint_unit_views_use_stable_labels_and_new_marker() -> None:
+    views = build_chain_views([
+        {"chain_id": "u1", "unit_no": 1, "is_new": False, "edges": [_edge("5:1")], "fans": {}},
+        {"chain_id": "u2", "unit_no": 2, "is_new": True, "edges": [_edge("5:2")], "fans": {}},
+    ])
+
+    assert [(view["id"], view["label"], view["unit_no"], view["is_new"]) for view in views] == [
+        ("u1", "UNIT 1", 1, False),
+        ("u2", "UNIT 2", 2, True),
+    ]
+    assert views[1]["edges"][0]["chain_ids"] == ["u2"]
+
+
+def test_checkpoint_unit_view_preserves_question_origin() -> None:
+    origin = {
+        "step_id": "turn-1",
+        "step_no": 1,
+        "question": "Какая культура подходит?",
+        "branch_id": "branch-1",
+        "branch_name": "Основная версия",
+        "answer_checkpoint_id": "checkpoint-1",
+    }
+    view = build_chain_views([
+        {
+            "chain_id": "u1",
+            "unit_no": 1,
+            "origin": origin,
+            "edges": [_edge("5:1")],
+            "fans": {},
+        }
+    ])[0]
+
+    assert view["origin"] == origin
 
 
 def test_record_accepted_chains_renumbers_across_tool_calls() -> None:
@@ -180,8 +234,8 @@ def test_edge_without_element_id_keeps_stable_id() -> None:
     assert views[0]["edges"][0]["id"] == "ek:key-5:1"
     assert views[0]["edges"][0]["from_name"] == "A"
     assert views[0]["edges"][0]["to_name"] == "B"
-    assert views[0]["edges"][0]["from_group"] == "Microbe"
-    assert views[0]["edges"][0]["to_group"] == "Metabolite"
+    assert views[0]["edges"][0]["from_group"] == "Вершина"
+    assert views[0]["edges"][0]["to_group"] == "Вершина"
 
 
 def test_missing_confidence_stays_none() -> None:
@@ -191,7 +245,7 @@ def test_missing_confidence_stays_none() -> None:
     assert views[0]["edges"][0]["properties"]["confidence"] is None
     assert "edge_key" not in views[0]["edges"][0]["properties"]
     assert "hub_id" not in views[0]["edges"][0]["properties"]
-    assert "run_id" not in views[0]["edges"][0]["properties"]
+    assert views[0]["edges"][0]["properties"]["run_id"] == ""
 
 
 def test_hub_name_from_fan_hub_names() -> None:

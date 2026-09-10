@@ -29,9 +29,9 @@ def _incident(e: EdgeRecord, hub_id: str) -> bool:
 def _hub_name(hub_id: str, edges: list[EdgeRecord]) -> str:
     for e in edges:
         if e.start_id == hub_id and e.start_name:
-            return format_node_ref(e.start_label, e.start_name, hub_id)
+            return format_node_ref(e.start_labels, e.start_name, hub_id)
         if e.end_id == hub_id and e.end_name:
-            return format_node_ref(e.end_label, e.end_name, hub_id)
+            return format_node_ref(e.end_labels, e.end_name, hub_id)
     return hub_id
 
 
@@ -40,19 +40,22 @@ def hub_display_name(
     edges: list[EdgeRecord],
     names: dict[str, str] | None = None,
 ) -> str:
-    """Prefer reshape `fan_hub_names`, else `Label: name` from an incident edge."""
+    """Prefer the current node name; persisted hub text is only a fallback."""
+    current = _hub_name(hub_id, edges)
+    if current != hub_id:
+        return current
     if names:
         got = (names.get(hub_id) or "").strip()
         if got:
             return got
-    return _hub_name(hub_id, edges)
+    return current
 
 
 def linger_hubs(path_edges: list[EdgeRecord]) -> list[str]:
     """Hub id to prefix `@Hub` on each walk edge, or `""`.
 
     Star segment (≥3 edges sharing H): entry unmarked; rays **and** exit tagged
-    H. Pure through pairs (bamboo) stay unmarked.
+    H. Through pairs stay unmarked.
     """
     n = len(path_edges)
     tags = [""] * n
@@ -132,7 +135,7 @@ def reshape_star_walk(
     while i < n - 1:
         hub = _shared_id(path_edges[i], path_edges[i + 1])
         if not hub:
-            # Broken stitch: treat next edge as new spine start
+            # Discontinuous walk: treat the next edge as a new spine start
             spine.append(path_edges[i + 1])
             i += 1
             continue

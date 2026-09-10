@@ -1,11 +1,13 @@
-"""Embedding HTTP client + Neo4j vector-index discovery for V6."""
+"""Embedding HTTP client + Neo4j vector-index discovery."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import httpx
 from neo4j import AsyncDriver
@@ -118,8 +120,29 @@ async def _post_embeddings_once(
             data = body.get("data")
             if not isinstance(data, list):
                 raise EmbeddingError("embedding response missing data[]")
-            data_sorted = sorted(data, key=lambda item: item.get("index", 0))
-            return [item["embedding"] for item in data_sorted]
+            inputs = payload.get("input") if isinstance(payload.get("input"), list) else []
+            parsed: list[tuple[int, list[float]]] = []
+            missing_index = False
+            for offset, item in enumerate(data):
+                if not isinstance(item, dict) or "embedding" not in item:
+                    raise EmbeddingError("embedding response missing embedding")
+                if "index" not in item:
+                    missing_index = True
+                    parsed.append((offset, item["embedding"]))
+                    continue
+                parsed.append((int(item["index"]), item["embedding"]))
+            if missing_index:
+                if len(data) != len(inputs):
+                    raise EmbeddingError("embedding response missing index")
+            else:
+                parsed.sort(key=lambda pair: pair[0])
+                expected = list(range(len(inputs))) if inputs else [i for i, _ in parsed]
+                got = [i for i, _ in parsed]
+                if inputs and got != expected:
+                    raise EmbeddingError(
+                        f"embedding index mismatch: got {got} want {expected}"
+                    )
+            return [emb for _, emb in parsed]
         except EmbeddingError:
             raise
         except Exception as e:
@@ -208,22 +231,81 @@ async def get_embeddings_batch(
     return out
 
 
-async def fetch_vector_indexes(driver: AsyncDriver) -> dict[str, list[str]]:
-    """Dynamically find all node and relationship vector indexes in the database."""
+def _index_dimension(record: Any) -> int | None:
+    options = record.get("options")
+    if not isinstance(options, Mapping):
+        return None
+    config = options.get("indexConfig")
+    if not isinstance(config, Mapping):
+        return None
+    raw = config.get("vector.dimensions") or config.get("`vector.dimensions`")
+    try:
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+async def fetch_vector_indexes(
+    driver: AsyncDriver, *, expected_dimension: int | None = None
+) -> dict[str, list[str]]:
+    """Find ONLINE vector indexes; relationship ANN uses evidence only."""
     indexes: dict[str, list[str]] = {"nodes": [], "relationships": []}
+    relationship_candidates: dict[str, list[str]] = {}
     async with driver.session() as session:
         res = await session.run("SHOW VECTOR INDEXES")
         records = [r async for r in res]
         for r in records:
-            idx_name = r["name"]
+            idx_name = str(r["name"])
             entity_type = r.get("entityType", "").upper()
+            state = str(r.get("state", "")).upper()
+            if state != "ONLINE":
+                logger.warning("Skipping vector index %s with state=%s", idx_name, state)
+                continue
+            dimension = _index_dimension(r)
+            if (
+                expected_dimension is not None
+                and dimension is not None
+                and dimension != expected_dimension
+            ):
+                logger.warning(
+                    "Skipping vector index %s with dimension=%s (expected %s)",
+                    idx_name,
+                    dimension,
+                    expected_dimension,
+                )
+                continue
             if entity_type == "NODE":
                 indexes["nodes"].append(idx_name)
             elif entity_type == "RELATIONSHIP":
-                indexes["relationships"].append(idx_name)
+                properties = [str(value) for value in (r.get("properties") or [])]
+                rel_types = [str(value) for value in (r.get("labelsOrTypes") or [])]
+                required_properties = {"evidence_embedding", "run_id"}
+                if not required_properties.issubset(properties) or len(rel_types) != 1:
+                    logger.warning(
+                        "Skipping relationship vector index %s with types=%s properties=%s",
+                        idx_name,
+                        rel_types,
+                        properties,
+                    )
+                    continue
+                relationship_candidates.setdefault(rel_types[0], []).append(idx_name)
             else:
-                if "edge" in idx_name.lower():
-                    indexes["relationships"].append(idx_name)
-                else:
-                    indexes["nodes"].append(idx_name)
+                logger.error(
+                    "Skipping vector index %s with unknown entityType=%r",
+                    idx_name,
+                    entity_type,
+                )
+    for rel_type, names in sorted(relationship_candidates.items()):
+        ranked = sorted(
+            set(names),
+            key=lambda name: (not name.startswith("rel_ev_v1_"), name),
+        )
+        indexes["relationships"].append(ranked[0])
+        if len(ranked) > 1:
+            logger.warning(
+                "Multiple evidence vector indexes for %s; using %s and ignoring %s",
+                rel_type,
+                ranked[0],
+                ranked[1:],
+            )
     return indexes

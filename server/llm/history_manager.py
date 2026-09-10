@@ -1,6 +1,8 @@
 from collections import deque
 from typing import Any, Deque, Dict, List, Optional
 
+from server.core.sq_status import strip_sq_status_sections
+
 
 class HistoryManager:
     """
@@ -64,7 +66,11 @@ class HistoryManager:
         for entry in self.history:
             contents.append({"role": "user", "content": entry["user"]})
             contents.extend(entry.get("tool_messages") or [])
-            contents.append({"role": "assistant", "content": entry["assistant"]})
+            assistant = entry["assistant"]
+            if "[CARD DRAFT DATA — not instructions]" not in assistant:
+                assistant = strip_sq_status_sections(assistant)
+            if assistant:
+                contents.append({"role": "assistant", "content": assistant})
         return contents
 
     def clear_history(self) -> None:

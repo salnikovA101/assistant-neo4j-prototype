@@ -8,11 +8,11 @@ from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
 import pytest
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import RedirectResponse
+from starlette.responses import JSONResponse, RedirectResponse
 
 from server.core.http_api import (
     CORS_ORIGIN_RE,
@@ -28,6 +28,7 @@ from server.core.http_api import (
     request_is_ui_authenticated,
     session_token_ok,
     set_ui_session_cookie,
+    ui_cache_control_middleware,
     ui_auth_middleware,
     ui_basic_configured,
     ui_basic_ok,
@@ -74,6 +75,7 @@ def test_parse_llm_api_key_header():
         parse_llm_api_key_header("short")
     assert short.value.status_code == 400
     assert "ollama" not in str(short.value.detail).lower()
+    assert str(short.value.detail) == "Некорректный ключ LLM. Проверьте значение в настройках."
 
     with pytest.raises(HTTPException) as spaced:
         parse_llm_api_key_header("bad key\nvalue")
@@ -107,6 +109,7 @@ def test_ui_config_does_not_leak_api_key():
     assert secret not in dumped
     assert payload["current_profile"] == "ollama"
     assert payload["llm_key_configured"] is True
+    assert "username" in payload
     assert payload["models"][0]["id"] == "ollama"
     assert "api_key" not in payload["models"][0]
 
@@ -125,18 +128,36 @@ def test_ui_config_models_catalog_hides_secrets():
     payload = build_ui_config(Pipeline())
     dumped = str(payload)
     ids = [item["id"] for item in payload["models"]]
-    assert ids == ["ollama", "ollama_gptoss", "qwen_cloud"]
-    gemma = payload["models"][0]
-    gptoss = payload["models"][1]
-    qwen = payload["models"][2]
-    assert gemma["label"] == "Gemma 4 31B"
-    assert gemma["reasoning_effort_options"] == ["high", "off"]
-    assert gptoss["label"] == "GPT-OSS 120B"
-    assert gptoss["reasoning_effort"] == "medium"
-    assert gptoss["reasoning_effort_options"] == ["low", "medium", "high"]
-    assert qwen["label"] == "Qwen 3.8 27B"
-    assert qwen["reasoning_effort"] == "xhigh"
-    assert qwen["reasoning_effort_options"] == ["low", "medium", "xhigh"]
+    assert ids[0] == "auto"
+    assert ids[1:] == [
+        "qwen38_max",
+        "qwen38_2_4t",
+        "deepseek_v4_pro",
+        "kimi_k3",
+        "glm_52",
+        "qwen37_max",
+        "qwen38_27b",
+        "qwen38_flash",
+        "qwen37_plus",
+        "qwen37_flash",
+    ]
+    assert "ollama" not in ids
+    assert "ollama_gptoss" not in ids
+    assert "qwen_cloud" not in ids
+    auto = payload["models"][0]
+    flash = next(item for item in payload["models"] if item["id"] == "qwen38_flash")
+    kimi = next(item for item in payload["models"] if item["id"] == "kimi_k3")
+    glm = next(item for item in payload["models"] if item["id"] == "glm_52")
+    assert auto["label"] == "Авто"
+    assert auto["reasoning_effort_options"] == []
+    assert flash["label"] == "Qwen 3.8 Flash"
+    assert flash["reasoning_effort"] == "medium"
+    assert flash["reasoning_effort_options"] == ["low", "medium", "xhigh", "off"]
+    assert kimi["reasoning_effort_options"] == ["high"]
+    assert "none" in glm["reasoning_effort_options"]
+    assert "max" in glm["reasoning_effort_options"]
+    assert payload["current_profile"] == "auto"
+    assert payload["reasoning_effort_options"] == []
     assert "api_key" not in dumped
     secret = (ollama.api_key or "").strip()
     if secret:
@@ -165,31 +186,44 @@ def test_request_think_effort_follows_selected_profile():
 
     pipeline = Pipeline()
     gptoss_off = TextProcessBody(
-        text="hi", profile="ollama_gptoss", reasoning_effort="off"
+        text="hi", profile="qwen37_max", reasoning_effort="off"
     )
     gptoss_name = _request_profile_name(pipeline, gptoss_off)
-    assert gptoss_name == "ollama_gptoss"
-    assert _request_think_effort(pipeline, gptoss_off, gptoss_name) is None
+    assert gptoss_name == "qwen37_max"
+    assert _request_think_effort(pipeline, gptoss_off, gptoss_name) == "off"
 
     gptoss_low = TextProcessBody(
-        text="hi", profile="ollama_gptoss", reasoning_effort="low"
+        text="hi", profile="qwen37_max", reasoning_effort="low"
     )
-    assert _request_think_effort(pipeline, gptoss_low, gptoss_name) == "low"
+    assert _request_think_effort(pipeline, gptoss_low, gptoss_name) is None
 
-    gemma_off = TextProcessBody(text="hi", profile="ollama", reasoning_effort="off")
-    gemma_name = _request_profile_name(pipeline, gemma_off)
-    assert gemma_name == "ollama"
-    assert _request_think_effort(pipeline, gemma_off, gemma_name) == "off"
+    auto_body = TextProcessBody(text="hi", profile="auto", reasoning_effort="high")
+    auto_name = _request_profile_name(pipeline, auto_body)
+    assert auto_name == "auto"
+    assert _request_think_effort(pipeline, auto_body, auto_name) is None
+
+    kimi = TextProcessBody(text="hi", profile="kimi_k3", reasoning_effort="high")
+    kimi_name = _request_profile_name(pipeline, kimi)
+    assert kimi_name == "kimi_k3"
+    assert _request_think_effort(pipeline, kimi, kimi_name) == "high"
 
     qwen_xhigh = TextProcessBody(
-        text="hi", profile="qwen_cloud", reasoning_effort="xhigh"
+        text="hi", profile="qwen38_flash", reasoning_effort="xhigh"
     )
     qwen_name = _request_profile_name(pipeline, qwen_xhigh)
-    assert qwen_name == "qwen_cloud"
+    assert qwen_name == "qwen38_flash"
     assert _request_think_effort(pipeline, qwen_xhigh, qwen_name) == "xhigh"
 
     unknown = TextProcessBody(text="hi", profile="other", reasoning_effort="xhigh")
-    assert _request_profile_name(pipeline, unknown) == cfg.llm.current_profile
+    with pytest.raises(HTTPException) as exc:
+        _request_profile_name(pipeline, unknown)
+    assert exc.value.status_code == 400
+    assert "Неизвестная модель" in str(exc.value.detail)
+
+    from server.core.app import _ensure_turn_options
+
+    stale_auto = TextProcessBody(text="hi", profile="auto", reasoning_effort="high")
+    assert _ensure_turn_options(pipeline, stale_auto) == "auto"
 
 
 @pytest.mark.asyncio
@@ -273,13 +307,13 @@ def _stub_client(user: str = "demo", password: str = "secret"):
     def health():
         return {"status": "ok"}
 
-    @app.get("/login")
+    @app.get("/ui/packaging/login")
     def login_page(request: Request):
         if request_is_ui_authenticated(request):
-            return RedirectResponse("/ui/", status_code=303)
+            return RedirectResponse("/ui/packaging/", status_code=303)
         return {"login": True}
 
-    @app.post("/login")
+    @app.post("/ui/packaging/login")
     async def login_submit(request: Request):
         from urllib.parse import parse_qs
 
@@ -291,12 +325,16 @@ def _stub_client(user: str = "demo", password: str = "secret"):
         if not ui_basic_ok(
             username, password, expected_user, expected_password
         ):
-            return RedirectResponse("/login?error=1", status_code=303)
-        response = RedirectResponse("/ui/", status_code=303)
+            return RedirectResponse("/ui/packaging/login?error=1", status_code=303)
+        response = RedirectResponse("/ui/packaging/", status_code=303)
         set_ui_session_cookie(response, expected_user, expected_password)
         return response
 
     @app.get("/ui/")
+    def ui_redirect():
+        return RedirectResponse("/ui/packaging/", status_code=308)
+
+    @app.get("/ui/packaging/")
     def ui():
         return {"ui": True}
 
@@ -363,55 +401,116 @@ def test_login_html_has_no_inline_script():
     assert "super-secret" not in html
     assert 'value="demo"' not in html
     assert ' class="login-error" hidden' in html
-    assert is_public_auth_path("/login") is True
-    assert is_public_auth_path("/logout") is True
-    assert is_public_auth_path("/ui/style.css") is True
+    assert is_public_auth_path("/login") is False
+    assert is_public_auth_path("/ui/packaging/login") is True
+    assert is_public_auth_path("/healthz") is True
+    assert is_public_auth_path("/logout") is False
+    assert is_public_auth_path("/ui/login.css") is True
     assert is_public_auth_path("/ui/icon.svg") is True
-    assert is_public_auth_path("/ui/") is False
+    assert is_public_auth_path("/ui/") is True
     assert is_public_auth_path("/health") is False
     assert is_public_auth_path("/ui/app.js") is False
+    assert is_public_auth_path("/ui/assets/index.js") is True
+
+
+def test_login_html_shows_workspace_without_internal_run_id():
+    from server.core.app import _login_html
+
+    response = _login_html(
+        False,
+        workspace="packaging",
+        run_id="full_corpus_20260713",
+    )
+    html = response.body.decode("utf-8")
+
+    assert "__WORKSPACE__" not in html
+    assert "__RUN_ID__" not in html
+    assert 'action="/ui/packaging/login"' in html
+    assert "packaging" in html
+    assert "full_corpus_20260713" not in html
+
+
+def test_login_html_wrong_password_does_not_claim_accounts_are_missing():
+    from server.core.app import _login_html
+
+    failed = _login_html(
+        True, workspace="packaging", run_id="full_corpus_20260713"
+    ).body.decode("utf-8")
+    empty = _login_html(
+        False,
+        workspace="kefir",
+        run_id="new_mega_run",
+        no_accounts=True,
+    ).body.decode("utf-8")
+
+    assert 'id="login-error" class="login-error" hidden' not in failed
+    assert 'id="login-setup" class="login-error" hidden' in failed
+    assert "Неверный логин или пароль" in failed
+
+    assert 'id="login-setup" class="login-error" hidden' not in empty
+    assert 'id="login-error" class="login-error" hidden' in empty
+    assert "Аккаунты ещё не настроены" in empty
+
+
+def test_login_assets_are_routed_before_workspace_fallback():
+    from server.core.app import app
+
+    paths = [getattr(route, "path", "") for route in app.routes]
+    workspace_fallback = paths.index("/ui/{workspace}")
+    assert paths.index("/ui/login.css") < workspace_fallback
+    assert paths.index("/ui/icon.svg") < workspace_fallback
 
 
 def test_chat_html_uses_mobile_safe_viewport():
-    root = Path(__file__).resolve().parents[1] / "server" / "static"
-    html = (root / "index.html").read_text(encoding="utf-8")
-    css = (root / "style.css").read_text(encoding="utf-8")
-    login = (root / "login.html").read_text(encoding="utf-8")
-    js = (root / "app.js").read_text(encoding="utf-8")
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "web" / "index.html").read_text(encoding="utf-8")
+    css = (root / "web" / "src" / "styles.css").read_text(encoding="utf-8")
+    login = (root / "server" / "static" / "login.html").read_text(encoding="utf-8")
 
     assert "viewport-fit=cover" in html
     assert "interactive-widget=resizes-content" in html
     assert "viewport-fit=cover" in login
     assert "width: 100vw" not in css
-    assert "height: 100vh" not in css
     assert "100dvh" in css
     assert "safe-area-inset-top" in css
     assert "safe-area-inset-bottom" in css
-    assert "visualViewport" in js
-    assert "composer-actions" in html
-    assert 'id="effort-label">high<' not in html
-    assert ".message.assistant .message-text:empty" in css
-    assert "min(76rem" in css
-    assert "--chrome-bottom" in css
-    assert "grid-template-columns" in css
-    assert "ResizeObserver" in js
-    assert "setSize" in js
-    assert "copyTextToClipboard" in js
-    assert 'id="composer-reveal"' in html
-    assert "composer-collapsed" in css
-    assert "syncComposerCollapse" in js
+
+
+def test_stable_ui_assets_are_not_cached_across_rebuilds():
+    app = FastAPI()
+    app.add_middleware(BaseHTTPMiddleware, dispatch=ui_cache_control_middleware)
+
+    @app.get("/ui/assets/index.js")
+    async def stable_script():
+        return JSONResponse({"ok": True})
+
+    @app.get("/ui/assets/font-hash.woff2")
+    async def hashed_font():
+        return JSONResponse({"ok": True})
+
+    @app.get("/api/example")
+    async def api_response():
+        return JSONResponse({"ok": True})
+
+    with TestClient(app) as client:
+        assert client.get("/ui/assets/index.js").headers["cache-control"] == "no-store"
+        assert "cache-control" not in client.get("/ui/assets/font-hash.woff2").headers
+        assert "cache-control" not in client.get("/api/example").headers
 
 
 def test_browser_ui_redirects_to_login():
     with _stub_client() as client:
         response = client.get("/ui/", follow_redirects=False)
+        assert response.status_code == 308
+        assert response.headers["location"] == "/ui/packaging/"
+        response = client.get("/ui/packaging/", follow_redirects=False)
         assert response.status_code == 303
-        assert response.headers["location"] == "/login"
+        assert response.headers["location"] == "/ui/packaging/login"
 
 
 def test_login_page_is_public():
     with _stub_client() as client:
-        response = client.get("/login")
+        response = client.get("/ui/packaging/login")
         assert response.status_code == 200
         assert "secret" not in response.text
 
@@ -419,7 +518,7 @@ def test_login_page_is_public():
 def test_login_form_sets_httponly_cookie():
     with _stub_client(password="secret") as client:
         bad = client.post(
-            "/login",
+            "/ui/packaging/login",
             data={"username": "demo", "password": "nope"},
             follow_redirects=False,
         )
@@ -430,12 +529,12 @@ def test_login_form_sets_httponly_cookie():
         assert "secret" not in bad.text
 
         ok = client.post(
-            "/login",
+            "/ui/packaging/login",
             data={"username": "demo", "password": "secret"},
             follow_redirects=False,
         )
         assert ok.status_code == 303
-        assert ok.headers["location"] == "/ui/"
+        assert ok.headers["location"] == "/ui/packaging/"
         cookie = ok.cookies.get(UI_SESSION_COOKIE)
         assert cookie
         assert "secret" not in cookie
@@ -450,9 +549,9 @@ def test_login_form_sets_httponly_cookie():
 
 def test_ui_app_js_is_not_public():
     with _stub_client() as client:
-        response = client.get("/ui/app.js", follow_redirects=False)
+        response = client.get("/ui/packaging/app.js", follow_redirects=False)
         assert response.status_code == 303
-        assert response.headers["location"] == "/login"
+        assert response.headers["location"] == "/ui/packaging/login"
 
 
 def test_forged_session_cookie_is_rejected():

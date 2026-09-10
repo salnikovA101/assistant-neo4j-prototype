@@ -6,10 +6,17 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     env_file: .env
     environment:
       # Used when rerank_enabled=true. Hostname exists only if profile `rerank` is up.
       - RERANK_URL=http://reranker:7997
+      - APP_DB_PATH=/app/data/assistant.db
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -17,10 +24,10 @@ services:
       - ./prompts:/app/prompts:ro
       - ./voices:/app/voices:ro
       - ./server/static:/app/server/static:ro
+      - assistant_data:/app/data
       - hf_cache:/root/.cache/huggingface
 
   # Not started by `docker compose up`. Enable with `--profile rerank`.
-  # CPU default (this Dockerfile). GPU later: Dockerfile.gpu + a separate profile.
   reranker:
     profiles: ["rerank"]
     container_name: reranker
@@ -34,5 +41,6 @@ services:
       - reranker_hf_cache:/root/.cache/huggingface
 
 volumes:
+  assistant_data:
   hf_cache:
   reranker_hf_cache:

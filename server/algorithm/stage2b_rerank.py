@@ -13,11 +13,12 @@ from server.algorithm.params import Params
 logger = logging.getLogger(__name__)
 
 
+class RerankError(RuntimeError):
+    """Cross-encoder failed; do not fall back to cosine order."""
+
+
 def _doc_text(edge: EdgeRecord) -> str:
-    ev = (edge.evidence or "").strip()
-    if ev:
-        return ev
-    return f"{edge.start_ref()} {edge.rel_type} {edge.end_ref()}".strip()
+    return (edge.evidence or "").strip()
 
 
 def _pool_by_sim(hits: dict[str, EdgeRecord], pool: int) -> list[EdgeRecord]:
@@ -39,6 +40,7 @@ async def _score_texts(
     scores = [0.0] * len(texts)
     if not texts:
         return scores
+    covered = [False] * len(texts)
     base = url.rstrip("/")
     endpoint = f"{base}/rerank"
     bs = max(1, int(batch_size))
@@ -49,18 +51,29 @@ async def _score_texts(
             "texts": chunk,
             "raw_scores": raw_scores,
         }
-        resp = await client.post(endpoint, json=payload, timeout=timeout_s)
-        resp.raise_for_status()
-        items = resp.json()
+        try:
+            resp = await client.post(endpoint, json=payload, timeout=timeout_s)
+            resp.raise_for_status()
+            items = resp.json()
+        except RerankError:
+            raise
+        except Exception as exc:
+            raise RerankError(f"rerank request failed: {exc}") from exc
         if not isinstance(items, list):
-            raise ValueError(f"unexpected rerank response type: {type(items)}")
+            raise RerankError(f"unexpected rerank response type: {type(items)}")
         for item in items:
             if not isinstance(item, dict):
-                continue
-            rel = int(item.get("index", 0))
+                raise RerankError(f"rerank item is not an object: {type(item)}")
+            if "index" not in item or "score" not in item:
+                raise RerankError("rerank item missing index or score")
+            rel = int(item["index"])
             abs_i = start + rel
-            if 0 <= abs_i < len(scores):
-                scores[abs_i] = float(item.get("score", 0.0))
+            if not (0 <= abs_i < len(scores)):
+                raise RerankError(f"rerank index out of range: {rel}")
+            scores[abs_i] = float(item["score"])
+            covered[abs_i] = True
+        if not all(covered[start : start + len(chunk)]):
+            raise RerankError("rerank response did not cover every input text")
     return scores
 
 
@@ -70,6 +83,11 @@ def _keep_top(pool: list[EdgeRecord], keep: int) -> dict[str, EdgeRecord]:
     for e in pool[: max(0, keep)]:
         out[e.edge_key] = e
     return out
+
+
+def _ce_sort_key(edge: EdgeRecord) -> tuple[float, float]:
+    ce = float("-inf") if edge.rerank_score is None else float(edge.rerank_score)
+    return (ce, float(edge.sim))
 
 
 async def rerank_ann_by_sq(
@@ -116,7 +134,7 @@ async def rerank_ann_by_sq(
             rerank_keys[sq.id] = list(kept.keys())
             out[sq.id] = kept
             logger.info(
-                "V6 S2b sq=%s rerank=off pool=%s keep=%s",
+                "S2b sq=%s rerank=off pool=%s keep=%s",
                 sq.id,
                 len(pool),
                 len(kept),
@@ -125,7 +143,9 @@ async def rerank_ann_by_sq(
 
     timeout = float(params.rerank_timeout_s)
     batch_size = int(params.rerank_batch_size)
-    url = (params.rerank_url or "http://127.0.0.1:7997").strip()
+    url = (params.rerank_url or "").strip()
+    if not url:
+        raise RerankError("rerank_enabled but rerank_url is empty")
 
     async with httpx.AsyncClient() as client:
         for sq in sqs:
@@ -139,46 +159,46 @@ async def rerank_ann_by_sq(
                 if claim
                 else ""
             )
-            if not pool or not query:
+            if not pool:
                 kept = _keep_top(pool, keep_n)
                 rerank_keys[sq.id] = list(kept.keys())
                 out[sq.id] = kept
                 continue
+            if not query:
+                raise RerankError(f"sq={sq.id}: empty claim text")
 
-            texts = [_doc_text(e) for e in pool]
-            try:
-                scores = await _score_texts(
-                    client,
-                    url,
-                    query,
-                    texts,
-                    batch_size=batch_size,
-                    timeout_s=timeout,
-                    raw_scores=True,
-                )
-                for e, sc in zip(pool, scores):
-                    e.rerank_score = float(sc)
-                ordered = sorted(
-                    pool,
-                    key=lambda e: (float(e.rerank_score), float(e.sim)),
-                    reverse=True,
-                )
-                kept = _keep_top(ordered, keep_n)
-                logger.info(
-                    "V6 S2b sq=%s pool=%s keep=%s top_ce=%.3f",
-                    sq.id,
-                    len(pool),
-                    len(kept),
-                    float(ordered[0].rerank_score) if ordered else 0.0,
-                )
-            except Exception as e:
-                logger.warning(
-                    "V6 S2b sq=%s rerank failed (%s); fallback top-%s by sim",
-                    sq.id,
-                    e,
-                    keep_n,
-                )
-                kept = _keep_top(pool, keep_n)
+            texts: list[str] = []
+            scored: list[EdgeRecord] = []
+            for edge in pool:
+                doc = _doc_text(edge)
+                if not doc:
+                    continue
+                scored.append(edge)
+                texts.append(doc)
+            if not texts:
+                raise RerankError(f"sq={sq.id}: no evidence text to rerank")
+            scores = await _score_texts(
+                client,
+                url,
+                query,
+                texts,
+                batch_size=batch_size,
+                timeout_s=timeout,
+                raw_scores=True,
+            )
+            for edge, sc in zip(scored, scores):
+                edge.rerank_score = float(sc)
+            ordered = sorted(pool, key=_ce_sort_key, reverse=True)
+            kept = _keep_top(ordered, keep_n)
+            logger.info(
+                "S2b sq=%s pool=%s keep=%s top_ce=%.3f",
+                sq.id,
+                len(pool),
+                len(kept),
+                float(ordered[0].rerank_score)
+                if ordered and ordered[0].rerank_score is not None
+                else 0.0,
+            )
             rerank_keys[sq.id] = list(kept.keys())
             out[sq.id] = kept
 

@@ -4,28 +4,43 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
     <meta name="color-scheme" content="dark">
-    <meta name="theme-color" content="#212121">
+    <meta name="theme-color" content="#17191e">
     <title>Вход — Neo4j Assistant</title>
     <meta name="robots" content="noindex">
-    <link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
+    <link rel="icon" href="/ui/icon.svg?v=2" type="image/svg+xml">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/ui/style.css">
+    <link rel="stylesheet" href="/ui/login.css?v=4">
 </head>
 <body class="login-page">
-    <main class="login-card">
-        <div class="welcome-logo"><img src="/ui/icon.svg" alt="" width="40" height="40"></div>
-        <h1>Neo4j Assistant</h1>
-        <p class="login-lead">Введите логин и пароль стенда, чтобы открыть чат.</p>
-        <p id="login-error" class="login-error" hidden>Неверный логин или пароль</p>
-        <form class="login-form" method="post" action="/login" autocomplete="on">
-            <label class="login-label" for="username">Логин</label>
-            <input id="username" name="username" type="text" required autocomplete="username" spellcheck="false" autocapitalize="off" autocorrect="off" autofocus>
-            <label class="login-label" for="password">Пароль</label>
-            <input id="password" name="password" type="password" required autocomplete="current-password" spellcheck="false">
-            <button type="submit" class="login-submit">Войти</button>
-        </form>
+    <main class="login-shell">
+        <section class="login-card">
+            <header class="login-brand">
+                <img class="login-logo" src="/ui/icon.svg?v=2" alt="" width="32" height="32">
+                <span>Neo4j Assistant</span>
+            </header>
+
+            <div class="login-copy">
+                <h1>Вход в аккаунт</h1>
+                <p class="login-lead">Введите логин и пароль.</p>
+            </div>
+
+            <p id="login-error" class="login-error" hidden>Неверный логин или пароль</p>
+            <p id="login-setup" class="login-error" hidden>Аккаунты ещё не настроены. Обратитесь к администратору.</p>
+
+            <form class="login-form" method="post" action="__LOGIN_ACTION__" autocomplete="on">
+                <label class="login-label" for="username">Логин</label>
+                <input id="username" name="username" type="text" required autocomplete="username" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="Ваш логин" autofocus>
+                <label class="login-label" for="password">Пароль</label>
+                <input id="password" name="password" type="password" required autocomplete="current-password" spellcheck="false" placeholder="Ваш пароль">
+                <button type="submit" class="login-submit"><span>Войти</span><span aria-hidden="true">→</span></button>
+            </form>
+
+            <footer class="login-footer">
+                Рабочая область <strong>__WORKSPACE__</strong>
+            </footer>
+        </section>
     </main>
 </body>
 </html>

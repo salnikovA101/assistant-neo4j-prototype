@@ -118,6 +118,9 @@ def thinking_is_on(
 ) -> bool:
     if not profile.think:
         return False
+    family = (profile.think_family or "").strip().lower()
+    if family == "kimi":
+        return True
     effort = (think_effort or profile.think_effort or "").strip().lower()
     return effort not in _THINK_OFF_EFFORTS
 
@@ -134,6 +137,26 @@ def public_llm_error_message(exc: BaseException) -> str:
             "Лимит ключа исчерпан. Откройте настройки и вставьте свой ключ."
         )
     return "Ошибка LLM. Попробуйте ещё раз."
+
+
+def _map_qwen38_effort(effort: str) -> str:
+    if effort in ("low", "medium", "xhigh"):
+        return effort
+    if effort == "max":
+        return "xhigh"
+    if effort == "high":
+        return "xhigh"
+    if effort == "minimal":
+        return "low"
+    return "xhigh"
+
+
+def _map_deepseek_effort(effort: str) -> str:
+    if effort in ("low", "medium", "high"):
+        return "high"
+    if effort in ("xhigh", "max"):
+        return "max"
+    return "high"
 
 
 def _reasoning_kwargs(
@@ -153,6 +176,7 @@ def _reasoning_kwargs(
     UI "off" is mapped to reasoning_effort=none (Ollama /v1 rejects "off").
     LM Studio Gemma: "on" omits top-level reasoning_effort (LMS warns on high).
     """
+    family = (profile.think_family or "").strip().lower()
     if not profile.think:
         return {
             "reasoning_effort": "none",
@@ -164,6 +188,11 @@ def _reasoning_kwargs(
         }
 
     effort = (effort_override or profile.think_effort or "high").strip().lower()
+    if family == "kimi":
+        extra = {"enable_thinking": True}
+        _apply_preserve_thinking(extra, {}, profile)
+        return {"extra_body": extra}
+
     extra: Dict[str, Any]
     if effort in _THINK_OFF_EFFORTS:
         template_kwargs: Dict[str, Any] = {"enable_thinking": False}
@@ -179,6 +208,35 @@ def _reasoning_kwargs(
             "extra_body": extra,
         }
 
+    if family == "qwen37":
+        template_kwargs = {"enable_thinking": True}
+        extra = {
+            "enable_thinking": True,
+            "chat_template_kwargs": template_kwargs,
+        }
+        _apply_preserve_thinking(extra, template_kwargs, profile)
+        return {"extra_body": extra}
+
+    if family == "qwen38":
+        mapped = _map_qwen38_effort(effort)
+        template_kwargs = {"enable_thinking": True}
+        extra = {
+            "enable_thinking": True,
+            "reasoning_effort": mapped,
+            "chat_template_kwargs": template_kwargs,
+        }
+        _apply_preserve_thinking(extra, template_kwargs, profile)
+        return {"extra_body": extra}
+
+    if family == "deepseek_v4":
+        mapped = _map_deepseek_effort(effort)
+        extra = {"enable_thinking": True, "reasoning_effort": mapped}
+        return {"reasoning_effort": mapped, "extra_body": extra}
+
+    if family == "glm":
+        extra = {"enable_thinking": True, "reasoning_effort": effort}
+        return {"extra_body": extra}
+
     if effort == "on":
         template_kwargs = {"enable_thinking": True}
         extra = {
@@ -189,7 +247,7 @@ def _reasoning_kwargs(
         }
         _apply_preserve_thinking(extra, template_kwargs, profile)
         # Omit top-level reasoning_effort: LM Studio Gemma only accepts on/off
-        # and warns on high/medium; extra_body is enough (verified).
+        # and warns on high/medium; extra_body is enough.
         return {"extra_body": extra}
 
     if effort not in _GRADED_THINK_EFFORTS:
@@ -290,8 +348,7 @@ def _tool_result_content(
     """
     Gemma/LM Studio: after tool results the chat template often does not reopen
     the think channel. Prefixing the tool message with think_token forces a new
-    reasoning block over the REAL tool output (verified: plain tool → rt=0,
-    '<|think|>\\n'+tool → rt>0).
+    reasoning block over the tool output.
     """
     text = str(result)
     token = (profile.think_token or "").strip()
@@ -334,7 +391,6 @@ def _assistant_message_dict(message: Any, profile: OpenAIProfile | None = None) 
     into content so the post-tool generation reopens the think channel.
     """
     dumped = message.model_dump(exclude_none=True)
-    # Belt-and-suspenders: some SDK builds park extras only in model_extra.
     extra = getattr(message, "model_extra", None) or {}
     for key in ("reasoning_content", "reasoning", "reasoning_details"):
         if key not in dumped and key in extra and extra[key] is not None:
@@ -385,6 +441,8 @@ class BaseLLMProvider(ABC):
         tool_map: Optional[Dict[str, Callable]] = None,
         think_effort: Optional[str] = None,
         api_key: Optional[str] = None,
+        tool_choice: Optional[str] = None,
+        resume_messages: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Stream thinking / tool_call / tool_result / content events for one user turn.
@@ -405,8 +463,11 @@ class BaseLLMProvider(ABC):
             if history:
                 messages.extend(history)
 
-            content: List[Dict[str, Any]] = [{"type": "text", "text": user_text}]
-            messages.append({"role": "user", "content": content})
+            if resume_messages:
+                messages.extend(resume_messages)
+            else:
+                content: List[Dict[str, Any]] = [{"type": "text", "text": user_text}]
+                messages.append({"role": "user", "content": content})
 
             kwargs: Dict[str, Any] = _merge_request_kwargs(
                 {
@@ -419,7 +480,7 @@ class BaseLLMProvider(ABC):
             )
             if tools:
                 kwargs["tools"] = tools
-                kwargs["tool_choice"] = "auto"
+                kwargs["tool_choice"] = tool_choice or "auto"
 
             turns = 0
             max_turns = max(1, int(self.profile.max_turns))
@@ -433,6 +494,7 @@ class BaseLLMProvider(ABC):
                 reasoning_parts: List[str] = []
                 usage_holder: Any = None
                 yielded_content = ""
+                candidate_content = ""
                 saw_tool_deltas = False
 
                 stream = await self._create_chat_stream(kwargs, client=stream_client)
@@ -446,25 +508,28 @@ class BaseLLMProvider(ABC):
                         reasoning_parts.append(norm.thinking)
                         yield StreamEvent("thinking", {"delta": norm.thinking})
                     if norm.tool_call_deltas:
-                        if not saw_tool_deltas and yielded_content:
+                        if not saw_tool_deltas and candidate_content:
                             joined = "".join(final_content_parts)
-                            if joined.endswith(yielded_content):
-                                rest = joined[: -len(yielded_content)]
+                            if joined.endswith(candidate_content):
+                                rest = joined[: -len(candidate_content)]
                                 final_content_parts = [rest] if rest else []
                             else:
                                 final_content_parts = [
-                                    joined.replace(yielded_content, "", 1)
+                                    joined.replace(candidate_content, "", 1)
                                 ]
-                            yield StreamEvent(
-                                "content_rewind", {"text": yielded_content}
-                            )
+                            if yielded_content:
+                                yield StreamEvent(
+                                    "content_rewind", {"text": yielded_content}
+                                )
                             yielded_content = ""
+                            candidate_content = ""
                         saw_tool_deltas = True
                         assembler.push(norm.tool_call_deltas)
                     if norm.content:
                         content_acc += norm.content
                         if not saw_tool_deltas:
                             final_content_parts.append(norm.content)
+                            candidate_content += norm.content
                             yielded_content += norm.content
                             yield StreamEvent("content", {"delta": norm.content})
 
@@ -477,21 +542,57 @@ class BaseLLMProvider(ABC):
                     content_acc += flush_content
                     if not saw_tool_deltas:
                         final_content_parts.append(flush_content)
+                        candidate_content += flush_content
                         yielded_content += flush_content
                         yield StreamEvent("content", {"delta": flush_content})
 
                 self._log_stream_usage(label, usage_holder, reasoning_parts)
 
                 tool_calls = assembler.finish()
-                if not tool_calls or turns >= max_turns:
-                    if tool_calls and turns >= max_turns:
-                        logger.warning(
-                            "LLM still requested tools after budget exhausted "
-                            "(turns=%s max_turns=%s); returning partial content",
-                            turns,
-                            max_turns,
+                if not tool_calls:
+                    text = strip_leaked_cot_preamble("".join(final_content_parts))
+                    if not text:
+                        yield StreamEvent(
+                            "error",
+                            {
+                                "code": "empty_response",
+                                "message": "Модель вернула пустой ответ. Вопрос возвращён в поле ввода.",
+                            },
                         )
-                    break
+                        return
+
+                    logger.debug(
+                        f"[{self.__class__.__name__}] Ответ за {time.perf_counter() - start:.2f}s"
+                    )
+                    yield StreamEvent(
+                        "done",
+                        {
+                            "final_content": text,
+                            "history_tool_messages": history_tool_messages,
+                        },
+                    )
+                    return
+
+                if turns >= max_turns:
+                    logger.warning(
+                        "LLM still requested tools after budget exhausted "
+                        "(turns=%s max_turns=%s); failing the turn",
+                        turns,
+                        max_turns,
+                    )
+                    if yielded_content:
+                        yield StreamEvent("content_rewind", {"text": yielded_content})
+                    yield StreamEvent(
+                        "error",
+                        {
+                            "code": "tool_budget_exhausted",
+                            "message": (
+                                "Модель исчерпала лимит обращений к инструментам и не "
+                                "сформировала финальный ответ. Вопрос возвращён в поле ввода."
+                            ),
+                        },
+                    )
+                    return
 
                 turns += 1
                 label = f"turn{turns}"
@@ -500,15 +601,17 @@ class BaseLLMProvider(ABC):
                 # Content from a tool-calling turn is for replay only. Speculative
                 # tokens were rewound when tool deltas arrived; this is a fallback
                 # if the assembler found calls without streaming those deltas.
-                if yielded_content:
+                if candidate_content:
                     joined = "".join(final_content_parts)
-                    if joined.endswith(yielded_content):
-                        rest = joined[: -len(yielded_content)]
+                    if joined.endswith(candidate_content):
+                        rest = joined[: -len(candidate_content)]
                         final_content_parts = [rest] if rest else []
                     else:
-                        final_content_parts = [joined.replace(yielded_content, "", 1)]
-                    yield StreamEvent("content_rewind", {"text": yielded_content})
+                        final_content_parts = [joined.replace(candidate_content, "", 1)]
+                    if yielded_content:
+                        yield StreamEvent("content_rewind", {"text": yielded_content})
                     yielded_content = ""
+                    candidate_content = ""
 
                 messages.append(
                     build_assistant_replay(
@@ -529,19 +632,22 @@ class BaseLLMProvider(ABC):
                 budget_footer = _tool_budget_footer(turns, max_turns)
 
                 for tc in tool_calls:
+                    parse_error = ""
                     try:
                         args = json.loads(tc.arguments) if tc.arguments else {}
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as exc:
                         args = {}
-                    if not isinstance(args, dict):
-                        args = {}
+                        parse_error = f"invalid tool arguments: {exc}"
+                    if not parse_error and not isinstance(args, dict):
+                        parse_error = "tool arguments must be a JSON object"
 
                     yield StreamEvent(
                         "tool_call",
                         {
                             "id": tc.id,
                             "name": tc.name,
-                            "arguments": args if args else tc.arguments,
+                            "arguments": args if not parse_error else tc.arguments,
+                            "_assistant_replay": messages[-1],
                         },
                     )
 
@@ -549,6 +655,8 @@ class BaseLLMProvider(ABC):
                     ok = True
                     display_result = ""
                     try:
+                        if parse_error:
+                            raise ValueError(parse_error)
                         if not fn:
                             raise KeyError(f"function '{tc.name}' not found")
                         logger.debug(f"Вызов инструмента '{tc.name}', args={args}")
@@ -598,20 +706,6 @@ class BaseLLMProvider(ABC):
                 kwargs["messages"] = messages
                 kwargs["tool_choice"] = "none" if turns >= max_turns else "auto"
 
-            text = "".join(final_content_parts)
-            text = strip_leaked_cot_preamble(text)
-
-            logger.debug(
-                f"[{self.__class__.__name__}] Ответ за {time.perf_counter() - start:.2f}s"
-            )
-            yield StreamEvent(
-                "done",
-                {
-                    "final_content": text,
-                    "history_tool_messages": history_tool_messages,
-                },
-            )
-
         except Exception as e:
             status = getattr(e, "status_code", None)
             logger.error(
@@ -620,7 +714,15 @@ class BaseLLMProvider(ABC):
                 status,
                 type(e).__name__,
             )
-            yield StreamEvent("error", {"message": public_llm_error_message(e)})
+            from server.llm.model_router import classify_llm_error
+
+            yield StreamEvent(
+                "error",
+                {
+                    "message": public_llm_error_message(e),
+                    "code": classify_llm_error(e),
+                },
+            )
 
     async def _create_chat_stream(
         self, kwargs: Dict[str, Any], client: Any | None = None
@@ -635,14 +737,13 @@ class BaseLLMProvider(ABC):
             return await chat.create(**with_usage)
         except Exception as e:
             msg = str(e).lower()
-            if "stream_options" in msg or "include_usage" in msg or "unexpected" in msg:
+            status = getattr(e, "status_code", None)
+            if status in (401, 403, 429) or status and int(status) >= 500:
+                raise
+            if "stream_options" in msg or "include_usage" in msg:
                 logger.debug("Retrying stream without stream_options: %s", e)
                 return await chat.create(**kwargs)
-            # Some servers reject unknown fields with a generic 400 — retry once.
-            try:
-                return await chat.create(**kwargs)
-            except Exception:
-                raise e
+            raise
 
     def _log_stream_usage(
         self, label: str, usage: Any, reasoning_parts: List[str]

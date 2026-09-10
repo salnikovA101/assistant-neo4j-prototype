@@ -1,4 +1,4 @@
-"""V6 orchestration: S1→S3 once → S4 carousel → S5 spine dedup."""
+"""Retrieval orchestration: S1→S3 once → S4 carousel → S5 spine dedup."""
 
 from __future__ import annotations
 
@@ -13,9 +13,9 @@ from server.algorithm.models import CandidateGraph, Chain, SessionState, SubQues
 from server.algorithm.params import Params, merge_params
 from server.algorithm.stage1_embed import embed_subquestions
 from server.algorithm.stage2_ann import AnnError, ann_for_subquestions
-from server.algorithm.stage2b_rerank import rerank_ann_by_sq
+from server.algorithm.stage2b_rerank import RerankError, rerank_ann_by_sq
 from server.algorithm.stage3_graphs import build_all_graphs
-from server.algorithm.stage4_hop_dp import run_s4_carousel
+from server.algorithm.stage4_hop_dp import CarouselState, continue_s4_carousel
 from server.algorithm.stage5_select import hydrate_chains, prepare_s5_batch
 
 logger = logging.getLogger(__name__)
@@ -25,9 +25,8 @@ def _normalize_subquestions(
     raw: list[dict[str, Any]] | list[SubQuestion] | None,
     query: str = "",
 ) -> list[SubQuestion]:
+    del query
     if not raw:
-        if query.strip():
-            return [SubQuestion(id="sq1", text=query.strip())]
         return []
     out: list[SubQuestion] = []
     for i, item in enumerate(raw):
@@ -38,8 +37,6 @@ def _normalize_subquestions(
         sid = str(item.get("id") or item.get("sq_id") or f"sq{i+1}")
         if text:
             out.append(SubQuestion(id=sid, text=text))
-    if not out and query.strip():
-        out = [SubQuestion(id="sq1", text=query.strip())]
     return out
 
 
@@ -63,7 +60,7 @@ def _graphs_for_sqs(
     graphs: dict[str, CandidateGraph],
     sqs: list[SubQuestion],
 ) -> dict[str, CandidateGraph]:
-    """Slice cached S3 graphs to current subquestion ids (drop leftover global)."""
+    """Keep cached S3 graphs whose ids match current subquestions; ignore id `global`."""
     out: dict[str, CandidateGraph] = {}
     for sq in sqs:
         if sq.id == "global":
@@ -124,6 +121,10 @@ async def run(
     s3_bundle: dict[str, Any] | None = None,
     emit_s3_bundle: bool = False,
     cache_qid: str = "",
+    carousel_state: dict[str, Any] | CarouselState | None = None,
+    prior_signatures: list[str] | set[str] | None = None,
+    manual_round: bool = False,
+    budget_override: int | None = None,
 ) -> dict[str, Any]:
     """
     Run the retrieval pipeline (wired by ask_subgraph).
@@ -139,6 +140,13 @@ async def run(
 
     if not state.subquestions:
         return _empty_run_result(p, error="no_subquestions")
+    if not (p.run_id or "").strip():
+        return _empty_run_result(
+            p,
+            error="run_id_required",
+            subquestions=state.subquestions,
+            error_detail="Unscoped Neo4j retrieval is disabled",
+        )
 
     from_graph_cache = False
     s3_bundle_out: dict[str, Any] | None = None
@@ -149,6 +157,17 @@ async def run(
 
     if s3_bundle is not None:
         graphs = load_s3_bundle_graphs(s3_bundle, branch_cap=p.branch_cap)
+        for graph in graphs.values():
+            for edge in graph.edges.values():
+                if edge.run_id and edge.run_id != p.run_id:
+                    return _empty_run_result(
+                        p,
+                        error="cache_run_id_mismatch",
+                        subquestions=state.subquestions,
+                        error_detail="Cached graph belongs to another run_id",
+                    )
+                if not edge.run_id:
+                    edge.run_id = p.run_id
         ann_keys = {
             str(k): list(v) for k, v in (s3_bundle.get("ann_keys") or {}).items()
         }
@@ -161,7 +180,7 @@ async def run(
         }
         from_graph_cache = True
         logger.info(
-            "V6 S1–S3 from graph-cache (%s graphs, %s edges)",
+            "S1–S3 from graph-cache (%s graphs, %s edges)",
             len(graphs),
             sum(len(g.edges) for g in graphs.values()),
         )
@@ -199,7 +218,7 @@ async def run(
                     ann_edge_sims=ann_edge_sims,
                 )
         except EmbeddingError as e:
-            logger.exception("V6 embed failed")
+            logger.exception("S1 embed failed")
             return _empty_run_result(
                 p,
                 error="embed_failed",
@@ -207,10 +226,18 @@ async def run(
                 error_detail=str(e),
             )
         except AnnError as e:
-            logger.exception("V6 ANN failed")
+            logger.exception("S2 ANN failed")
             return _empty_run_result(
                 p,
                 error="ann_failed",
+                subquestions=state.subquestions,
+                error_detail=str(e),
+            )
+        except RerankError as e:
+            logger.exception("S2b rerank failed")
+            return _empty_run_result(
+                p,
+                error="rerank_failed",
                 subquestions=state.subquestions,
                 error_detail=str(e),
             )
@@ -220,24 +247,32 @@ async def run(
 
     graphs_s4 = _graphs_for_sqs(graphs, state.subquestions)
     s3_keys_s4 = _s3_edge_keys(graphs_s4)
-    budget = p.effort_max_paths()
+    budget = (
+        max(0, int(budget_override))
+        if budget_override is not None
+        else (len(graphs_s4) if manual_round else p.effort_max_paths())
+    )
 
-    s4_pool = run_s4_carousel(
+    carousel = continue_s4_carousel(
         graphs_s4,
         params=p,
         budget=budget,
+        state=carousel_state,
+        one_per_graph=manual_round,
+        prior_signatures=set(prior_signatures or []),
     )
-    batch = prepare_s5_batch(s4_pool, params=p)
+    s4_pool = carousel.chains
+    batch = prepare_s5_batch(s4_pool)
     stop_reason = ""
 
     if not batch:
-        logger.info("V6 S5 empty batch; nothing to accept")
+        logger.info("S5 empty batch; nothing to accept")
         stop_reason = "empty_batch"
     else:
-        await hydrate_chains(driver, batch)
+        await hydrate_chains(driver, batch, run_id=p.run_id)
         state.accepted = label_chains_for_assistant(list(batch))
         logger.info(
-            "V6 accept %s chains (carousel order, budget=%s)",
+            "S5 accept %s chains (carousel order, budget=%s)",
             len(state.accepted),
             budget,
         )
@@ -245,6 +280,8 @@ async def run(
     trace: dict[str, Any] = {
         "s3_sizes": {k: len(v) for k, v in s3_keys_s4.items()},
         "s4_pool": len(s4_pool),
+        "s4_mined": carousel.mined,
+        "s4_duplicate_mined": carousel.duplicate_mined,
         "batch": [c.to_dict() for c in batch],
         "accepted": [c.to_dict() for c in state.accepted],
         "s3_keys": {k: sorted(v) for k, v in s3_keys_s4.items()},
@@ -280,6 +317,8 @@ async def run(
         "effort": p.effort,
         "params": p.to_dict(),
         "from_graph_cache": from_graph_cache,
+        "carousel_state": carousel.state.to_dict(),
+        "manual_round": manual_round,
     }
     if s3_bundle_out is not None:
         out["s3_bundle"] = s3_bundle_out

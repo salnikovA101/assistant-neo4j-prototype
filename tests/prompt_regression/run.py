@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +56,12 @@ def _parse_sse(chunk_lines: list[str]) -> tuple[str, dict[str, Any]] | None:
     return event, payload
 
 
+def _str_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
 def _tool_call_from_event(payload: dict[str, Any]) -> ToolCall:
     args = payload.get("arguments")
     if isinstance(args, str):
@@ -65,9 +71,18 @@ def _tool_call_from_event(payload: dict[str, Any]) -> ToolCall:
             args = {}
     if not isinstance(args, dict):
         args = {}
-    raw = args.get("subquestions") or []
-    sqs = [str(s) for s in raw] if isinstance(raw, list) else []
-    return ToolCall(name=str(payload.get("name") or ""), subquestions=sqs)
+    name = str(payload.get("name") or "")
+    new_sq = _str_list(args.get("new_subquestions"))
+    refs = _str_list(args.get("open_sq_refs"))
+    sqs = _str_list(args.get("subquestions"))
+    if name == "advance_research":
+        sqs = new_sq
+    return ToolCall(
+        name=name,
+        subquestions=sqs,
+        open_sq_refs=refs,
+        new_subquestions=new_sq,
+    )
 
 
 def run_turn(
@@ -76,10 +91,11 @@ def run_turn(
     session_id: str,
     question: str,
     depth: str,
+    mode: str = "auto",
 ) -> Transcript:
     """Send one user turn, collect tool calls and the final rendered answer."""
     transcript = Transcript(answer="")
-    body = {"text": question, "search_depth": depth}
+    body = {"text": question, "search_depth": depth, "mode": mode}
     with client.stream(
         "POST",
         f"{base_url}/process_text_stream",
@@ -99,6 +115,8 @@ def run_turn(
             event, payload = parsed
             if event == "tool_call":
                 transcript.tool_calls.append(_tool_call_from_event(payload))
+            elif event == "approval_required":
+                transcript.approval_required = True
             elif event == "done":
                 transcript.answer = str(payload.get("final_content") or "")
             elif event == "error":
@@ -111,14 +129,19 @@ def run_case(
     base_url: str,
     case: dict[str, Any],
 ) -> tuple[CaseResult, Transcript]:
-    session_id = uuid.uuid4().hex
+    mode = str(case.get("mode") or "auto")
+    created = client.post(f"{base_url}/api/conversations", json={"mode": mode})
+    created.raise_for_status()
+    session_id = str(created.json()["id"])
     depth = str(case.get("depth") or "medium")
     transcript = run_turn(
-        client, base_url, session_id, str(case["question"]), depth
+        client, base_url, session_id, str(case["question"]), depth, mode
     )
     follow_up = case.get("follow_up")
     if follow_up:
-        transcript = run_turn(client, base_url, session_id, str(follow_up), depth)
+        transcript = run_turn(
+            client, base_url, session_id, str(follow_up), depth, mode
+        )
     return check_case(case, transcript), transcript
 
 
@@ -140,9 +163,19 @@ def render_report(
         lines.append("")
         searches = transcript.searches()
         lines.append(f"Вызовов поиска: {len(searches)}")
+        if transcript.approval_required:
+            lines.append("Заявка approval: да")
         for i, call in enumerate(searches, 1):
-            for sq in call.subquestions:
-                lines.append(f"- вызов {i}: `{sq}`")
+            if call.name == "advance_research":
+                if call.open_sq_refs:
+                    lines.append(
+                        f"- вызов {i} refs: `{', '.join(call.open_sq_refs)}`"
+                    )
+                for sq in call.new_subquestions:
+                    lines.append(f"- вызов {i} new: `{sq}`")
+            else:
+                for sq in call.subquestions:
+                    lines.append(f"- вызов {i}: `{sq}`")
         lines.append("")
         if result.failures:
             lines.append("**Ошибки:**")
@@ -171,6 +204,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cases", default=str(CASES_PATH))
     parser.add_argument("--case", default="", help="run a single case id")
     parser.add_argument("--timeout", type=float, default=600.0)
+    parser.add_argument("--username", default=os.getenv("ASSISTANT_USER", ""))
+    parser.add_argument("--password", default=os.getenv("ASSISTANT_PASSWORD", ""))
     parser.add_argument("--list", action="store_true", help="print case ids and exit")
     args = parser.parse_args(argv)
 
@@ -182,9 +217,12 @@ def main(argv: list[str] | None = None) -> int:
         for case in cases:
             print(case["id"])
         return 0
+    if not args.username or not args.password:
+        print("Задайте ASSISTANT_USER и ASSISTANT_PASSWORD", file=sys.stderr)
+        return 2
 
     results: list[tuple[CaseResult, Transcript]] = []
-    with httpx.Client(timeout=args.timeout) as client:
+    with httpx.Client(timeout=args.timeout, auth=(args.username, args.password)) as client:
         for case in cases:
             print(f"→ {case['id']}", flush=True)
             result, transcript = run_case(client, args.base_url, case)

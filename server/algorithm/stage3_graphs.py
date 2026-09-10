@@ -8,7 +8,7 @@ from neo4j import AsyncDriver
 
 from server.algorithm.cypher.edges import fetch_induced_bridges_by_sim
 from server.algorithm.edge_keys import compute_edge_key
-from server.algorithm.models import CandidateGraph, EdgeRecord, SubQuestion
+from server.algorithm.models import CandidateGraph, EdgeRecord, SubQuestion, parse_confidence
 from server.algorithm.params import Params
 
 logger = logging.getLogger(__name__)
@@ -77,14 +77,15 @@ def _row_to_bridge(b: dict) -> EdgeRecord:
         end_id=b.get("end_id") or "",
         start_name=start_name,
         end_name=end_name,
-        start_label=b.get("start_label") or "",
-        end_label=b.get("end_label") or "",
+        start_labels=b.get("start_labels") or [],
+        end_labels=b.get("end_labels") or [],
         sim=float(b.get("score") or 0.0),
         chunk_id=chunk_id,
         evidence=evidence,
         source_file=b.get("source_file") or "",
         source="bridge",
-        confidence=float(b.get("confidence") or 1.0),
+        confidence=parse_confidence(b.get("confidence")),
+        run_id=str(b.get("run_id") or ""),
     )
 
 
@@ -94,8 +95,10 @@ async def _add_bridges(
     sq_vec: list[float],
     params: Params,
 ) -> dict[str, EdgeRecord]:
-    if not anchors or not sq_vec:
+    if not anchors:
         return {}
+    if not sq_vec:
+        raise ValueError("cannot fetch induced bridges without a subquestion embedding")
     nodes: set[str] = set()
     for e in anchors.values():
         if e.start_id:
@@ -103,16 +106,21 @@ async def _add_bridges(
         if e.end_id:
             nodes.add(e.end_id)
     exclude = [e.element_id for e in anchors.values() if e.element_id]
+    run_id = (params.run_id or "").strip()
+    if not run_id:
+        raise ValueError("run_id is required for induced bridges")
     rows = await fetch_induced_bridges_by_sim(
         driver,
         nodes,
         sq_vec,
         exclude_ids=exclude,
         limit=params.bridge_top,
-        run_id=(params.run_id or "").strip(),
+        run_id=run_id,
     )
     out: dict[str, EdgeRecord] = {}
     for b in rows:
+        if str(b.get("run_id") or "").strip() != run_id:
+            raise ValueError("induced bridge crossed the requested run_id")
         e = _row_to_bridge(b)
         if e.edge_key in anchors:
             continue
@@ -146,7 +154,7 @@ async def build_sq_graph(
     merged = dict(anchors)
     merged.update(bridges)
     logger.info(
-        "V6 S3 sq=%s anchors=%s bridges=%s total=%s",
+        "S3 sq=%s anchors=%s bridges=%s total=%s",
         sq.id,
         len(anchors),
         len(bridges),
@@ -164,11 +172,14 @@ async def build_all_graphs(
 ) -> dict[str, CandidateGraph]:
     graphs: dict[str, CandidateGraph] = {}
     for sq in sqs:
+        emb = sq_embeddings.get(sq.id) or []
+        if not emb:
+            raise ValueError(f"empty embedding for subquestion {sq.id}")
         g = await build_sq_graph(
             driver,
             sq,
             ann_by_sq.get(sq.id) or {},
-            sq_embeddings.get(sq.id) or [],
+            emb,
             params,
         )
         graphs[sq.id] = g

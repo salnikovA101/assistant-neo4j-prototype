@@ -1,10 +1,10 @@
-"""V6 evaluation harness: mock decompose → run → gold metrics + full MD trace.
+"""Retrieval eval harness: mock decompose → run → gold metrics + full MD trace.
 
 Primary metrics match on evidence *text* (unique stripped strings), not edge_keys.
 
 Default dataset: tests/qa_open_20.json. Close pack: tests/qa_evidence_50.json
 ({id, question, evidence[], ...}). Legacy gold_edge_keys still supported.
-Open SQ cache: tests/reports/v6_cache/sq_open20_grok46.json.
+Open SQ cache directory: tests/reports/v6_cache/.
 """
 
 from __future__ import annotations
@@ -34,6 +34,8 @@ from server.utils.config import load_config, retrieval_param_overrides
 from tests.algorithm.mock_decompose import mock_decompose
 
 logger = logging.getLogger(__name__)
+
+INFRA_ERRORS = frozenset({"embed_failed", "ann_failed", "rerank_failed"})
 
 DEFAULT_DATASET = Path("tests/qa_open_20.json")
 DEFAULT_OUT_DIR = Path("tests/reports/v6")
@@ -178,6 +180,11 @@ def effort_for_item(item: dict[str, Any], effort_arg: str) -> str:
         return arg
     diff = str(item.get("difficulty") or "").strip().lower()
     return _DIFFICULTY_EFFORT.get(diff, "medium")
+
+
+def scored_reports(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop infrastructure failures so they do not enter mean recall as zeros."""
+    return [r for r in reports if str(r.get("error") or "") not in INFRA_ERRORS]
 
 
 def mean_metrics(reports: list[dict[str, Any]]) -> dict[str, float | int]:
@@ -646,7 +653,7 @@ def write_trace_md(
     metrics: dict[str, Any],
 ) -> None:
     lines: list[str] = [
-        f"# V6 eval trace — {qid}",
+        f"# Retrieval eval trace — {qid}",
         "",
         "## Question",
         question,
@@ -840,7 +847,9 @@ async def eval_one(
     if not gold_ev_direct:
         need_resolve |= set(gold_keys)
 
-    key_to_ev = await fetch_evidences_for_edge_keys(driver, need_resolve)
+    key_to_ev = await fetch_evidences_for_edge_keys(
+        driver, need_resolve, run_id=params.run_id
+    )
     if gold_ev_direct:
         gold_ev = gold_ev_direct
         missing_gold: list[str] = []
@@ -1064,7 +1073,7 @@ async def main_async(args: argparse.Namespace) -> None:
                 gu.get("n_gold_rerank", 0),
                 n_tot,
             )
-            stem = f"v6_{one['qid']}"
+            stem = f"{one['qid']}"
             (out_dir / f"{stem}.json").write_text(
                 json.dumps(
                     {
@@ -1104,11 +1113,12 @@ async def main_async(args: argparse.Namespace) -> None:
     finally:
         await close_driver()
 
-    overall = mean_metrics(reports)
-    by_diff = metrics_by_difficulty(reports)
+    scored = scored_reports(reports)
+    overall = mean_metrics(scored)
+    by_diff = metrics_by_difficulty(scored)
     for band in ("easy", "medium", "hard"):
         band_reports = [
-            r for r in reports if str(r.get("difficulty") or "").strip().lower() == band
+            r for r in scored if str(r.get("difficulty") or "").strip().lower() == band
         ]
         by_diff[band]["recall_at_k"] = mean_at_k(band_reports)
     chain_length_stats = _aggregate_chain_length_stats(all_chain_gold)
@@ -1126,7 +1136,8 @@ async def main_async(args: argparse.Namespace) -> None:
         "mean_recall_vector_topk": overall["mean_recall_vector_topk"],
         "mean_n_accepted": overall["mean_n_accepted"],
         "mean_n_accepted_all": overall["mean_n_accepted_all"],
-        "recall_at_k": mean_at_k(reports),
+        "n_infra_excluded": len(reports) - len(scored),
+        "recall_at_k": mean_at_k(scored),
         "vector_topk": {
             "k_policy": "VECTOR_BASELINE_K",
             "pool": "ann_union_pre_rerank",
@@ -1135,12 +1146,10 @@ async def main_async(args: argparse.Namespace) -> None:
         },
         "chain_length_stats": chain_length_stats,
         "by_difficulty": by_diff,
+        "n_infra_excluded": len(reports) - len(scored),
         "reports": reports,
     }
-    # --skip-judge is ignored (judge removed); keep the historical filename
-    # when the flag is passed so existing eval commands still find the summary.
-    summary_name = "v6_summary_noj.json" if args.skip_judge else "v6_summary.json"
-    summary_path = out_dir / summary_name
+    summary_path = out_dir / "retrieval_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
     atk = summary["recall_at_k"]
     logger.info(
@@ -1215,7 +1224,7 @@ async def main_async(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Evaluate Algorithm V6 (evidence-text metrics)")
+    p = argparse.ArgumentParser(description="Evaluate retrieval (evidence-text metrics)")
     p.add_argument(
         "--dataset",
         default=str(DEFAULT_DATASET),
@@ -1229,11 +1238,6 @@ def build_parser() -> argparse.ArgumentParser:
             "Path budget (max_paths_*). auto (default): easy→low, medium→medium, hard→high; "
             "low|medium|high forces the same effort for every item"
         ),
-    )
-    p.add_argument(
-        "--skip-judge",
-        action="store_true",
-        help="Deprecated: judge was removed; flag is ignored",
     )
     p.add_argument(
         "--sq-cache",
@@ -1259,7 +1263,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Cache S3 CandidateGraphs per question id (skip ANN/CE/bridges on hit). "
             f"Optional DIR (default: {DEFAULT_GRAPH_CACHE}). "
-            "Safe to sweep S4/S5/S6 params; rebuilds if L/framing/sq change."
+            "Safe to sweep S4/S5 params; rebuilds if L/framing/sq change."
         ),
     )
     p.add_argument(

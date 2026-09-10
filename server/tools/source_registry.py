@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable
 
 # Shown instead of silently deleting a citation the session never registered:
 # an unsupported claim must stay visible, not lose its marker.
@@ -46,12 +46,28 @@ class SourceRegistry:
     def known_files(self) -> list[str]:
         return list(self._file_to_id.keys())
 
+    def snapshot(self) -> list[tuple[int, str]]:
+        return sorted(self._id_to_file.items())
 
-# (source:1), (source:1; source:3), (source 1), mixed whitespace
+    def restore(self, items: Iterable[tuple[int, str]]) -> None:
+        self.clear()
+        for raw_id, raw_file in items:
+            sid = int(raw_id)
+            source_file = str(raw_file).strip()
+            if sid < 1 or not source_file or sid in self._id_to_file:
+                continue
+            self._id_to_file[sid] = source_file
+            self._file_to_id[source_file] = sid
+            self._next_id = max(self._next_id, sid + 1)
+
+
+# (source:1), (source:1; source:3), and mixed leftovers such as
+# (source:3; leaked-filename.pdf). Keep this in sync with densifyCitations.
 _SOURCE_GROUP_RE = re.compile(
-    r"\(\s*source\s*:?\s*\d+(?:\s*;\s*source\s*:?\s*\d+)*\s*\)",
+    r"\(\s*source\s*:?\s*\d+[^)]*\)",
     flags=re.IGNORECASE,
 )
+ANSWER_STREAM_EVENT_TYPES = frozenset({"content", "thinking", "content_rewind", "done"})
 _SOURCE_ID_RE = re.compile(r"source\s*:?\s*(\d+)", flags=re.IGNORECASE)
 
 _ISTOCHNIKI_SECTION_RE = re.compile(
@@ -234,6 +250,84 @@ def remap_filenames_to_source_ids(text: str, registry: SourceRegistry) -> str:
             continue
         out = out.replace(fname, f"source:{sid}")
     return out
+
+
+def alias_source_files_in_value(
+    value: Any, sources: Iterable[tuple[int, str]]
+) -> Any:
+    """Replace known source filenames with stable source:N aliases recursively."""
+    replacements: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for raw_id, raw_file in sources:
+        source_file = str(raw_file or "").strip()
+        if not source_file:
+            continue
+        alias = f"source:{int(raw_id)}"
+        # Retrieval can persist either a basename or a path. The model should
+        # receive the same alias for both representations.
+        basename = source_file.replace("\\", "/").rsplit("/", 1)[-1]
+        for variant in (source_file, basename):
+            if variant and variant not in seen:
+                replacements.append((variant, alias))
+                seen.add(variant)
+    replacements.sort(key=lambda item: len(item[0]), reverse=True)
+
+    def replace(item: Any) -> Any:
+        if isinstance(item, str):
+            text = item
+            for source_file, alias in replacements:
+                text = text.replace(source_file, alias)
+            return text
+        if isinstance(item, list):
+            return [replace(child) for child in item]
+        if isinstance(item, tuple):
+            return tuple(replace(child) for child in item)
+        if isinstance(item, dict):
+            return {key: replace(child) for key, child in item.items()}
+        return item
+
+    return replace(value)
+
+
+def present_live_event_data(
+    event_type: str, data: Any, sources: Iterable[tuple[int, str]]
+) -> Any:
+    """Show filenames in tool traces, but keep source:N in the live answer.
+
+    The frontend densifier turns `(source:N)` into `[n]` while tokens arrive.
+    Resolving aliases in content/thinking/done first would leak PDF names
+    into the bubble and break mixed groups such as `(source:3; file.pdf)`.
+    """
+    if event_type in ANSWER_STREAM_EVENT_TYPES:
+        return data
+    return present_source_aliases_in_value(data, sources)
+
+
+def present_source_aliases_in_value(
+    value: Any, sources: Iterable[tuple[int, str]]
+) -> Any:
+    """Resolve source:N aliases to real filenames recursively for presentation."""
+    source_map = {
+        int(raw_id): str(raw_file).strip()
+        for raw_id, raw_file in sources
+        if str(raw_file or "").strip()
+    }
+
+    def replace(item: Any) -> Any:
+        if isinstance(item, str):
+            return _SOURCE_ID_RE.sub(
+                lambda match: source_map.get(int(match.group(1)), "неизвестный источник"),
+                item,
+            )
+        if isinstance(item, list):
+            return [replace(child) for child in item]
+        if isinstance(item, tuple):
+            return tuple(replace(child) for child in item)
+        if isinstance(item, dict):
+            return {key: replace(child) for key, child in item.items()}
+        return item
+
+    return replace(value)
 
 
 def render_citations(text: str, registry: SourceRegistry) -> str:

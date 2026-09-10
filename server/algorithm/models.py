@@ -1,34 +1,36 @@
-"""Typed models for Algorithm V6."""
+"""Typed models for retrieval (subquestions, edges, units)."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
-# Schema labels for unit display; Cypher whitelist in cypher/edges.py imports this.
-PRIMARY_NODE_LABELS: tuple[str, ...] = (
-    "Metabolite",
-    "Microbe",
-    "StarterCulture",
-    "EnvironmentCondition",
-)
+
+def parse_confidence(value: Any) -> float | None:
+    """Preserve 0.0; return None when the property is missing."""
+    if value is None or value == "":
+        return None
+    return float(value)
 
 
-def pick_primary_label(labels: list[str] | tuple[str, ...] | None) -> str:
-    if not labels:
-        return ""
-    for primary in PRIMARY_NODE_LABELS:
-        if primary in labels:
-            return primary
-    return ""
+def normalize_labels(labels: Any) -> list[str]:
+    """Normalize an arbitrary Neo4j label list without choosing a primary label."""
+    if labels is None:
+        return []
+    values = [labels] if isinstance(labels, str) else list(labels)
+    clean = {str(value).strip() for value in values if str(value).strip()}
+    return sorted(clean, key=lambda value: (value.casefold(), value))
 
 
-def format_node_ref(label: str, name: str, fallback_id: str = "") -> str:
-    """Display `Label: name` when a primary label is known; else bare name/id."""
+def labels_text(labels: Any) -> str:
+    return " ".join(normalize_labels(labels))
+
+
+def format_node_ref(labels: Any, name: str, fallback_id: str = "") -> str:
+    """Display a node by name only; labels are retrieval metadata, not identity."""
+    del labels
     nm = (name or "").strip() or (fallback_id or "").strip()
-    lbl = (label or "").strip()
-    if lbl and nm:
-        return f"{lbl}: {nm}"
     return nm or "?"
 
 
@@ -51,9 +53,39 @@ def _edge_meta_suffix(source_file: str = "", confidence: float | None = None) ->
     return f"  ({src}; conf={conf})"
 
 
+def readable_relation(rel_type: str) -> str:
+    """Presentation only: preserve the stored relationship type."""
+    return " ".join(rel_type.replace("_", " ").lower().split())
+
+
+def format_chain_text(text: str, label: str) -> str:
+    """Adapt cached chain text without changing evidence or persisted data."""
+    lines = text.strip().splitlines(keepends=True)
+    # Older checkpoint context can wrap an already labelled block.
+    while lines and re.fullmatch(r"(?:UNIT|Chain) [^\n]+\n?", lines[0]):
+        lines.pop(0)
+    result: list[str] = []
+    in_evidence = False
+    for line in lines:
+        if line.lstrip().startswith('"'):
+            in_evidence = True
+        if in_evidence:
+            result.append(line)
+            if re.search(r"; conf=[^)]+\)\s*$", line):
+                in_evidence = False
+            continue
+        result.append(re.sub(
+            r"^((?:@.+?  )?.+? —)([^→\n]+)(→ .+)",
+            lambda m: m[1] + readable_relation(m[2]) + m[3],
+            line,
+        ))
+    body = "".join(result).strip()
+    return f"Chain {label}\n{body}".rstrip()
+
+
 def _directed_edge_line(e: EdgeRecord, hub_display: str = "") -> str:
-    """Triple line: optional `@Hub  ` then Label: start —REL→ Label: end."""
-    triple = f"{e.start_ref()} —{e.rel_type}→ {e.end_ref()}"
+    """Triple line: optional `@Hub  ` then start —REL→ end."""
+    triple = f"{e.start_ref()} —{readable_relation(e.rel_type)}→ {e.end_ref()}"
     hub = (hub_display or "").strip()
     if hub:
         return f"@{hub}  {triple}"
@@ -86,8 +118,11 @@ class EdgeRecord:
     end_id: str
     start_name: str
     end_name: str
+    # Scalar fields remain readable for persisted v2 cache/UNIT payloads.
     start_label: str = ""
     end_label: str = ""
+    start_labels: list[str] = field(default_factory=list)
+    end_labels: list[str] = field(default_factory=list)
     sim: float = 0.0
     rerank_score: float | None = None
     embedding: list[float] = field(default_factory=list)
@@ -95,13 +130,21 @@ class EdgeRecord:
     evidence: str = ""
     source_file: str = ""
     source: str = "ann"  # graph: ann|bridge; after S4 on chains: prize|bridge
-    confidence: float | None = 1.0
+    confidence: float | None = None
+    run_id: str = ""
+
+    def __post_init__(self) -> None:
+        self.start_labels = normalize_labels(self.start_labels or self.start_label)
+        self.end_labels = normalize_labels(self.end_labels or self.end_label)
+        # Compatibility values contain the complete normalized label set.
+        self.start_label = labels_text(self.start_labels)
+        self.end_label = labels_text(self.end_labels)
 
     def start_ref(self) -> str:
-        return format_node_ref(self.start_label, self.start_name, self.start_id)
+        return format_node_ref(self.start_labels, self.start_name, self.start_id)
 
     def end_ref(self) -> str:
-        return format_node_ref(self.end_label, self.end_name, self.end_id)
+        return format_node_ref(self.end_labels, self.end_name, self.end_id)
 
     def to_dict_edge(self) -> dict[str, Any]:
         return {
@@ -112,6 +155,8 @@ class EdgeRecord:
             "end": self.end_name,
             "start_label": self.start_label,
             "end_label": self.end_label,
+            "start_labels": list(self.start_labels),
+            "end_labels": list(self.end_labels),
             "start_id": self.start_id,
             "end_id": self.end_id,
             "evidence": self.evidence,
@@ -122,6 +167,7 @@ class EdgeRecord:
                 round(self.confidence, 4) if self.confidence is not None else None
             ),
             "source": self.source,
+            "run_id": self.run_id,
         }
 
 
@@ -188,12 +234,10 @@ class Chain:
         )
 
         label = uid or self.chain_id
-        lines = [f"UNIT {label}"]
+        lines = [f"Chain {label}"]
         walk = list(self.walk) if self.walk else reconstruct_walk(self.edges, self.fans)
         if not walk:
-            for k in self.edge_keys:
-                lines.append(str(k))
-            return "\n".join(lines)
+            return f"Chain {label}"
         tags = linger_hubs(walk)
         for e, hub_id in zip(walk, tags, strict=True):
             display = (

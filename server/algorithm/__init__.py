@@ -1,4 +1,4 @@
-"""Algorithm V6: edge-ANN → per-sq graphs → S4 carousel → S5 spine dedup."""
+"""Retrieval pipeline: S1 embed → S2 ANN → S2b rerank → S3 graphs → S4 carousel → S5 dedup."""
 
 from server.algorithm.pipeline import run
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 
 from neo4j import AsyncDriver
 
@@ -12,7 +11,7 @@ from server.algorithm.cypher.edges import fetch_edge_properties, query_relations
 from server.algorithm.edge_keys import compute_edge_key
 from server.algorithm.embed import embed_texts
 from server.algorithm.embed_client import EmbeddingError, fetch_vector_indexes
-from server.algorithm.models import EdgeRecord, SubQuestion
+from server.algorithm.models import EdgeRecord, SubQuestion, normalize_labels, parse_confidence
 from server.algorithm.params import Params
 
 logger = logging.getLogger(__name__)
@@ -20,23 +19,6 @@ logger = logging.getLogger(__name__)
 
 class AnnError(RuntimeError):
     """Relationship ANN cannot run (no indexes, or every query failed)."""
-
-_REL_INDEX_CACHE: list[str] | None = None
-_REL_INDEX_CACHE_TS: float = 0.0
-_REL_INDEX_TTL_SEC = 300.0
-
-
-async def _get_rel_indexes(driver: AsyncDriver) -> list[str]:
-    global _REL_INDEX_CACHE, _REL_INDEX_CACHE_TS
-    now = time.monotonic()
-    if _REL_INDEX_CACHE is not None and (now - _REL_INDEX_CACHE_TS) < _REL_INDEX_TTL_SEC:
-        return _REL_INDEX_CACHE
-    indexes = await fetch_vector_indexes(driver)
-    rel_indexes = list(indexes.get("relationships") or [])
-    _REL_INDEX_CACHE = rel_indexes
-    _REL_INDEX_CACHE_TS = now
-    return rel_indexes
-
 
 def _upsert_hit(
     raw: dict[str, EdgeRecord],
@@ -47,12 +29,15 @@ def _upsert_hit(
     end_id: str,
     start_name: str,
     end_name: str,
-    start_label: str,
-    end_label: str,
+    start_labels: list[str],
+    end_labels: list[str],
     chunk_id: str,
     evidence: str,
     score: float,
+    run_id: str,
 ) -> None:
+    start_labels = normalize_labels(start_labels)
+    end_labels = normalize_labels(end_labels)
     edge_key = compute_edge_key(start_name, rel_type, end_name, chunk_id, evidence)
     existing = raw.get(edge_key)
     if existing is None:
@@ -64,12 +49,13 @@ def _upsert_hit(
             end_id=end_id,
             start_name=start_name,
             end_name=end_name,
-            start_label=start_label or "",
-            end_label=end_label or "",
+            start_labels=start_labels,
+            end_labels=end_labels,
             sim=float(score),
             chunk_id=chunk_id or "",
             evidence=evidence or "",
             source="ann",
+            run_id=run_id,
         )
         return
     if float(score) > existing.sim:
@@ -77,18 +63,24 @@ def _upsert_hit(
         existing.element_id = rid
         existing.start_id = start_id
         existing.end_id = end_id
-        if start_label:
-            existing.start_label = start_label
-        if end_label:
-            existing.end_label = end_label
+        if start_labels:
+            existing.start_labels = start_labels
+            existing.start_label = " ".join(start_labels)
+        if end_labels:
+            existing.end_labels = end_labels
+            existing.end_label = " ".join(end_labels)
     if evidence and not existing.evidence:
         existing.evidence = evidence
     if chunk_id and not existing.chunk_id:
         existing.chunk_id = chunk_id
-    if start_label and not existing.start_label:
-        existing.start_label = start_label
-    if end_label and not existing.end_label:
-        existing.end_label = end_label
+    if start_labels and not existing.start_labels:
+        existing.start_labels = start_labels
+        existing.start_label = " ".join(start_labels)
+    if end_labels and not existing.end_labels:
+        existing.end_labels = end_labels
+        existing.end_label = " ".join(end_labels)
+    if run_id and not existing.run_id:
+        existing.run_id = run_id
 
 
 async def edge_ann_search(
@@ -99,9 +91,16 @@ async def edge_ann_search(
 ) -> dict[str, EdgeRecord]:
     if not search_texts:
         return {}
+    run_id = (params.run_id or "").strip()
+    if not run_id:
+        raise AnnError("run_id is required for relationship ANN")
     ann_texts = list(search_texts[: max(1, params.max_ann_texts)])
     vectors = await embed_texts(ann_texts, embedding_cache)
-    rel_indexes = await _get_rel_indexes(driver)
+    first_dimension = len(next((vector for vector in vectors if vector), []))
+    indexes = await fetch_vector_indexes(
+        driver, expected_dimension=first_dimension or None
+    )
+    rel_indexes = list(indexes.get("relationships") or [])
     if not rel_indexes:
         raise AnnError("No relationship vector indexes found")
 
@@ -116,7 +115,7 @@ async def edge_ann_search(
                     index_name,
                     emb,
                     top_k=params.L,
-                    run_id=(params.run_id or "").strip(),
+                    run_id=run_id,
                 )
                 return hits, None
             except Exception as e:
@@ -134,17 +133,21 @@ async def edge_ann_search(
 
     results = await asyncio.gather(*tasks)
     n_err = sum(1 for _, err in results if err is not None)
-    if n_err == len(results):
+    if n_err:
         first_err = next(err for _, err in results if err is not None)
-        raise AnnError(f"all ANN queries failed: {first_err}")
+        raise AnnError(f"{n_err}/{len(results)} ANN queries failed: {first_err}")
     for hits, err in results:
         if err is not None:
-            logger.error("ANN query failed: %s", err)
             continue
         for h in hits:
             rid = h.get("rid")
             if not rid:
                 continue
+            hit_run_id = str(h.get("run_id") or "").strip()
+            if hit_run_id != run_id:
+                raise AnnError(
+                    f"ANN returned edge from run_id={hit_run_id!r}, expected {run_id!r}"
+                )
             _upsert_hit(
                 raw,
                 rid=rid,
@@ -153,30 +156,30 @@ async def edge_ann_search(
                 end_id=h.get("end_id") or "",
                 start_name=h.get("start_name") or "",
                 end_name=h.get("end_name") or "",
-                start_label=h.get("start_label") or "",
-                end_label=h.get("end_label") or "",
+                start_labels=h.get("start_labels") or [],
+                end_labels=h.get("end_labels") or [],
                 chunk_id=h.get("chunk_id") or "",
                 evidence=h.get("evidence") or "",
                 score=float(h.get("score") or 0.0),
+                run_id=hit_run_id,
             )
 
     n_merged = len(raw)
     if len(raw) > params.L_raw_max:
         ranked = sorted(raw.values(), key=lambda h: h.sim, reverse=True)
         raw = {h.edge_key: h for h in ranked[: params.L_raw_max]}
-    rid = (params.run_id or "").strip()
     logger.info(
-        "V6 S2 ANN indexes=%s per_index_L=%s merged_unique=%s after_L_raw_max=%s run_id=%s",
+        "S2 ANN indexes=%s per_index_L=%s merged_unique=%s after_L_raw_max=%s run_id=%s",
         len(rel_indexes),
         params.L,
         n_merged,
         len(raw),
-        rid or "*",
+        run_id,
     )
 
     prop_ids = [h.element_id for h in raw.values() if h.element_id]
     if prop_ids:
-        props = await fetch_edge_properties(driver, prop_ids)
+        props = await fetch_edge_properties(driver, prop_ids, run_id=run_id)
         by_id = {p["rid"]: p for p in props}
         remapped: dict[str, EdgeRecord] = {}
         for hit in list(raw.values()):
@@ -189,11 +192,17 @@ async def edge_ann_search(
                 if p.get("source_file"):
                     hit.source_file = p["source_file"] or ""
                 if p.get("confidence") is not None:
-                    hit.confidence = float(p.get("confidence") or hit.confidence)
-                if p.get("start_label") and not hit.start_label:
-                    hit.start_label = p["start_label"] or ""
-                if p.get("end_label") and not hit.end_label:
-                    hit.end_label = p["end_label"] or ""
+                    hit.confidence = parse_confidence(p.get("confidence"))
+                if p.get("start_labels") and not hit.start_labels:
+                    hit.start_labels = normalize_labels(p["start_labels"])
+                    hit.start_label = " ".join(hit.start_labels)
+                if p.get("end_labels") and not hit.end_labels:
+                    hit.end_labels = normalize_labels(p["end_labels"])
+                    hit.end_label = " ".join(hit.end_labels)
+                if p.get("run_id"):
+                    if str(p["run_id"]) != run_id:
+                        raise AnnError("edge hydration crossed the requested run_id")
+                    hit.run_id = str(p["run_id"])
                 if p.get("start_name"):
                     hit.start_name = p["start_name"] or hit.start_name
                 if p.get("end_name"):
@@ -228,5 +237,5 @@ async def ann_for_subquestions(
             embed_cache[sq.text.strip()] = emb
         hits = await edge_ann_search(driver, [sq.text], params, embed_cache)
         out[sq.id] = hits
-        logger.info("V6 S2 sq=%s hits=%s", sq.id, len(hits))
+        logger.info("S2 sq=%s hits=%s", sq.id, len(hits))
     return out

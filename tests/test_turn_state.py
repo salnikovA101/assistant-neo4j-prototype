@@ -37,7 +37,7 @@ def test_parse_search_depth_accepts_only_known_levels():
 def test_depth_defaults_outside_a_turn():
     assert current_turn() is None
     assert search_depth() == DEFAULT_SEARCH_DEPTH
-    assert take_search_slot() is True
+    assert take_search_slot() is False
 
 
 def test_bind_turn_exposes_depth_and_resets():
@@ -52,7 +52,11 @@ def test_bind_turn_falls_back_on_bad_depth():
         assert search_depth() == DEFAULT_SEARCH_DEPTH
 
 
-def test_search_budget_is_spent_once_per_call():
+def test_bind_turn_can_start_with_spent_search_budget():
+    with bind_turn("low", max_searches=1, context={"searches_used": 1}):
+        assert take_search_slot() is False
+    with bind_turn("low", max_searches=1, context={"searches_used": 0}):
+        assert take_search_slot() is True
     with bind_turn("low", max_searches=2):
         assert take_search_slot() is True
         assert take_search_slot() is True
@@ -92,6 +96,12 @@ def test_normalize_drops_repeats_of_earlier_call():
     assert any("already searched" in p for p in problems)
 
 
+def test_normalize_rejects_string_subquestions():
+    clean, problems = normalize_subquestions("not-a-list")
+    assert clean == []
+    assert any("JSON array" in p for p in problems)
+
+
 def test_normalize_caps_at_six():
     clean, problems = normalize_subquestions([f"Statement number {i}." for i in range(9)])
     assert len(clean) == MAX_SUBQUESTIONS
@@ -101,7 +111,7 @@ def test_normalize_caps_at_six():
 @pytest.mark.asyncio
 async def test_query_rejects_unusable_input_without_spending_budget():
     agent = SubgraphSearchAgent()
-    with bind_turn("medium", max_searches=2):
+    with bind_turn("medium", max_searches=2, context={"run_id": "corpus-test"}):
         out = await agent.query(["закваски для творога"])
         assert out.startswith(TOOL_ERROR)
         assert "not English" in out
@@ -117,7 +127,7 @@ async def test_query_refuses_third_search_in_one_turn(monkeypatch):
     monkeypatch.setattr("server.tools.subgraph_search.get_driver", lambda: object())
 
     agent = SubgraphSearchAgent()
-    with bind_turn("medium", max_searches=2):
+    with bind_turn("medium", max_searches=2, context={"run_id": "corpus-test"}):
         first = await agent.query(["Lactic acid bacteria acidify milk."])
         second = await agent.query(["Anthocyanin films change colour."])
         third = await agent.query(["Chitosan films carry indicator dyes."])
@@ -140,10 +150,18 @@ async def test_query_passes_ui_depth_to_the_pipeline(monkeypatch):
     monkeypatch.setattr("server.tools.subgraph_search.get_driver", lambda: object())
 
     agent = SubgraphSearchAgent()
-    with bind_turn("high", max_searches=2):
+    with bind_turn("high", max_searches=2, context={"run_id": "corpus-test"}):
         await agent.query(["Lactic acid bacteria acidify milk."])
 
     assert seen["effort"] == "high"
     assert [sq["text"] for sq in seen["subquestions"]] == [
         "Lactic acid bacteria acidify milk."
     ]
+    assert seen["params"].run_id == "corpus-test"
+
+
+def test_normalize_preserves_english_questions():
+    question = "How does fermentation temperature affect syneresis in kefir?"
+    clean, problems = normalize_subquestions([f"  {question}  ", question[:-1]])
+    assert clean == [question]
+    assert any("duplicate" in problem for problem in problems)

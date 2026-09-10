@@ -16,6 +16,8 @@ BIBLIO_RE = re.compile(r"(?ms)^[ \t]*###[ \t]*Источники[ \t]*\n.*\Z")
 CITATION_RE = re.compile(r"\[\d+\]")
 WS_RE = re.compile(r"\s+")
 
+SEARCH_TOOLS = frozenset({"ask_subgraph", "advance_research"})
+
 # Service artefacts that must never reach the user.
 LEAKED_ARTEFACTS: tuple[str, ...] = (
     "conf=",
@@ -23,6 +25,7 @@ LEAKED_ARTEFACTS: tuple[str, ...] = (
     "[?]",
     ".pdf",
     "ask_subgraph",
+    "advance_research",
     "source:",
     "TOOL_ERROR",
     "NO_RESULTS",
@@ -37,13 +40,15 @@ COMPLETENESS_CLAIMS: tuple[str, ...] = (
     "из общих знаний",
 )
 
-MAX_SUBQUESTIONS = 6
+MAX_SUBQUESTIONS = 5
 
 
 @dataclass
 class ToolCall:
     name: str
     subquestions: list[str] = field(default_factory=list)
+    open_sq_refs: list[str] = field(default_factory=list)
+    new_subquestions: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -52,9 +57,10 @@ class Transcript:
 
     answer: str
     tool_calls: list[ToolCall] = field(default_factory=list)
+    approval_required: bool = False
 
     def searches(self) -> list[ToolCall]:
-        return [tc for tc in self.tool_calls if tc.name == "ask_subgraph"]
+        return [tc for tc in self.tool_calls if tc.name in SEARCH_TOOLS]
 
 
 @dataclass
@@ -78,33 +84,68 @@ def subquestion_key(text: str) -> str:
     return WS_RE.sub(" ", str(text).strip().lower()).strip(" .?!")
 
 
+def _statements_of(call: ToolCall) -> list[str]:
+    if call.name == "advance_research":
+        return list(call.new_subquestions)
+    return list(call.subquestions)
+
+
 def _check_tool_usage(case: dict[str, Any], transcript: Transcript) -> list[str]:
     failures: list[str] = []
     searches = transcript.searches()
     expects_tool = bool(case.get("expect_tool_call", True))
+    mode = str(case.get("mode") or "auto")
+    expected_name = str(
+        case.get("expect_tool_name")
+        or ("advance_research" if mode == "staged" else "ask_subgraph")
+    )
 
     if expects_tool and not searches:
         failures.append("инструмент не вызван, хотя вопрос требует поиска")
     if not expects_tool and searches:
         failures.append(f"инструмент вызван {len(searches)} раз(а), хотя не нужен")
 
-    limit = int(case.get("max_tool_calls", 2))
+    if expects_tool and searches:
+        wrong = [tc.name for tc in searches if tc.name != expected_name]
+        if wrong:
+            failures.append(
+                f"ожидался {expected_name}, получен {', '.join(dict.fromkeys(wrong))}"
+            )
+
+    limit = int(case.get("max_tool_calls", 1 if mode == "staged" else 2))
     if len(searches) > limit:
         failures.append(f"{len(searches)} вызовов поиска при лимите {limit}")
 
+    if case.get("expect_approval_required") and not transcript.approval_required:
+        failures.append("ожидалась заявка approval, её нет")
+
     seen: dict[str, int] = {}
     for i, call in enumerate(searches, 1):
-        if not call.subquestions:
+        statements = _statements_of(call)
+        if call.name == "advance_research":
+            if not call.new_subquestions and not call.open_sq_refs:
+                failures.append(
+                    f"вызов {i}: пустые open_sq_refs и new_subquestions"
+                )
+            if case.get("expect_new_subquestions") and not call.new_subquestions:
+                failures.append(f"вызов {i}: нет new_subquestions для старта чеклиста")
+            if case.get("expect_open_sq_refs") and not call.open_sq_refs:
+                failures.append(f"вызов {i}: нет open_sq_refs")
+        elif not statements:
             failures.append(f"вызов {i}: пустой список subquestions")
-        if len(call.subquestions) > MAX_SUBQUESTIONS:
+        if len(statements) > MAX_SUBQUESTIONS:
             failures.append(
-                f"вызов {i}: {len(call.subquestions)} фраз при лимите {MAX_SUBQUESTIONS}"
+                f"вызов {i}: {len(statements)} фраз при лимите {MAX_SUBQUESTIONS}"
             )
-        for sq in call.subquestions:
+        if call.name == "advance_research":
+            total = len(call.open_sq_refs) + len(call.new_subquestions)
+            if total > MAX_SUBQUESTIONS:
+                failures.append(
+                    f"вызов {i}: {total} SQ при лимите {MAX_SUBQUESTIONS}"
+                )
+        for sq in statements:
             if CYRILLIC_RE.search(sq):
                 failures.append(f"вызов {i}: кириллица в sq — {sq[:60]}")
-            if "?" in sq:
-                failures.append(f"вызов {i}: вопрос вместо утверждения — {sq[:60]}")
             key = subquestion_key(sq)
             if key in seen:
                 failures.append(
@@ -123,6 +164,12 @@ def _check_answer(case: dict[str, Any], body: str) -> tuple[list[str], list[str]
     for artefact in LEAKED_ARTEFACTS:
         if artefact.lower() in low:
             failures.append(f"служебная утечка в ответе: {artefact}")
+    for match in re.finditer(
+        r"\b(?i:UNIT|Chain|conf)\b|(?i:@Hub)\b|\b[A-Z][A-Z0-9]*(?:_+[A-Z0-9]+)+\b"
+        r"|\b(?:PRODUCES|INHIBITS|STIMULATES|REQUIRES|CONSUMES)\b",
+        body,
+    ):
+        failures.append(f"служебная утечка в ответе: {match.group()}")
     for claim in COMPLETENESS_CLAIMS:
         if claim in low:
             failures.append(f"заявление о полноте базы: «{claim}»")
@@ -145,8 +192,13 @@ def check_case(case: dict[str, Any], transcript: Transcript) -> CaseResult:
     """Score one case. Rubric items are for human review, never auto-failed."""
     body = answer_body(transcript.answer)
     result = CaseResult(case_id=str(case.get("id") or "?"))
+    expects_tool = bool(case.get("expect_tool_call", True))
 
     if not body:
+        if transcript.approval_required and expects_tool:
+            result.failures.extend(_check_tool_usage(case, transcript))
+            result.rubric = list(case.get("rubric", []))
+            return result
         result.failures.append("пустой ответ")
         return result
 
