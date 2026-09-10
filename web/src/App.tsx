@@ -255,7 +255,7 @@ export function App() {
     : (currentBranch ? branchNameOverrides[currentBranch.id] || currentBranch.name : "Основной вариант");
   const activeBranchMode = currentBranch?.mode || current?.mode;
   const stagedAgendaActive = mode === "staged" && (!currentId || activeBranchMode === "staged");
-  const openDirectionCount = agenda.filter((item) => item.status !== "closed").length;
+  const openDirectionCount = agenda.filter((item) => item.status === "not_closed" || item.status === "partial").length;
   const checkpointGraphId = rightPanel.kind === "research" && rightPanel.tab === "data"
     ? rightPanel.checkpointId || lastGraphCheckpointId
     : "";

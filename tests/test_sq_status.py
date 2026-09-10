@@ -8,6 +8,7 @@ from server.core.sq_status import (
     SQ_STATUS_OPEN,
     SqStatusStreamFilter,
     parse_sq_status_response,
+    strip_sq_status_sections,
 )
 from server.tools.source_registry import SourceRegistry
 
@@ -51,7 +52,7 @@ def test_sq_status_parser_renders_complete_ordered_set() -> None:
     assert SQ_STATUS_OPEN not in result.content
     assert "### Состояние исследовательских вопросов" in result.content
     assert "Пункт 1 — **закрыт частично**" in result.content
-    assert "(source:1)" in result.content
+    assert "(source:1)" not in result.content
 
 
 def test_sq_status_parser_ignores_extra_closed_ref() -> None:
@@ -104,11 +105,11 @@ def test_sq_status_parser_repairs_syntax_without_relaxing_contract() -> None:
         }],
         [{
             "ref": "subquestion:1", "status": "partial",
-            "reason": "Есть аналог", "source_refs": [],
+            "reason": "",
         }],
         [{
-            "ref": "subquestion:1", "status": "closed",
-            "reason": "Есть данные", "source_refs": ["source:99"],
+            "ref": "subquestion:1", "status": "invalid",
+            "reason": "Есть данные",
         }],
     ],
 )
@@ -121,7 +122,7 @@ def test_sq_status_parser_rejects_when_nothing_can_be_applied(items: list[dict])
     assert SQ_STATUS_OPEN not in result.content
 
 
-def test_sq_status_parser_accepts_extra_keys_and_display_source_refs() -> None:
+def test_sq_status_parser_ignores_legacy_source_refs() -> None:
     result = parse_sq_status_response(
         _response([{
             "ref": "subquestion:1",
@@ -134,7 +135,7 @@ def test_sq_status_parser_accepts_extra_keys_and_display_source_refs() -> None:
         sources=_sources(),
     )
     assert not result.error
-    assert result.assessments[0]["source_refs"] == ["source:1"]
+    assert "source_refs" not in result.assessments[0]
 
 
 def test_sq_status_parser_applies_subset_of_active_agenda() -> None:
@@ -254,11 +255,11 @@ async def test_finish_turn_applies_all_sq_assessments_and_user_can_override(tmp_
             sq_assessments=[
                 {
                     "ref": agenda[0]["ref"], "status": "closed",
-                    "reason": "Подтверждено", "source_refs": ["source:1"],
+                    "reason": "Подтверждено",
                 },
                 {
                     "ref": agenda[1]["ref"], "status": "partial",
-                    "reason": "Подтверждено частично", "source_refs": ["source:2"],
+                    "reason": "Подтверждено частично",
                 },
             ],
         )
@@ -310,7 +311,7 @@ async def test_finish_turn_applies_partial_assessment_set(tmp_path) -> None:
             payload={},
             sq_assessments=[{
                 "ref": agenda[0]["ref"], "status": "closed",
-                "reason": "Подтверждено", "source_refs": ["source:1"],
+                "reason": "Подтверждено",
             }],
         )
         detail = await store.get_conversation(user.id, conversation["id"])
@@ -347,7 +348,7 @@ async def test_finish_turn_applies_when_assessments_include_extra_ref(tmp_path) 
             sq_assessments=[
                 {
                     "ref": agenda[0]["ref"], "status": "closed",
-                    "reason": "Подтверждено", "source_refs": ["source:1"],
+                    "reason": "Подтверждено",
                 },
                 {
                     "ref": agenda[1]["ref"], "status": "partial",
@@ -395,3 +396,98 @@ async def test_text_stream_preserves_sq_assessments_on_done() -> None:
     done = next(event for event in events if event.type == "done")
     assert done.data["_sq_assessments"] == assessments
     assert done.data["_sq_status_error"] == ""
+
+
+@pytest.mark.parametrize("status", ["closed", "partial", "not_closed"])
+def test_sq_assessment_needs_no_source_refs(status):
+    result = parse_sq_status_response(
+        _response([{
+            "ref": "subquestion:1", "status": status, "reason": "Оценка по данным",
+        }], prefix="Факт (source:1)."),
+        active_refs=["subquestion:1"],
+    )
+    assert not result.error
+    assert result.assessments == [{
+        "ref": "subquestion:1", "status": status, "reason": "Оценка по данным",
+    }]
+    assert result.content.count("(source:1)") == 1
+
+
+def test_history_strips_duplicate_statuses_but_preserves_answer_sections():
+    text = (
+        "Факт (source:1).\n\n"
+        "### Состояние исследовательских вопросов\n"
+        "- Пункт 2 (условия) — **закрыт частично**: аналог.\n\n"
+        "### Состояние направлений\n"
+        "- Пункт 2 — **закрыт частично**. Аналог.\n\n"
+        "### Рекомендации\nПроверить температуру (source:2)."
+    )
+    assert strip_sq_status_sections(text) == (
+        "Факт (source:1).\n\n"
+        "### Рекомендации\nПроверить температуру (source:2)."
+    )
+
+
+def test_history_preserves_fenced_status_examples():
+    text = (
+        "Пример:\n```text\n### Состояние исследовательских вопросов\n"
+        "- Пункт 1 — закрыт\n<SQ_STATUS_JSON>{}</SQ_STATUS_JSON>\n```"
+    )
+    assert strip_sq_status_sections(text) == text
+
+
+def test_parser_replaces_model_status_prose_with_one_rendering():
+    result = parse_sq_status_response(
+        _response([{
+            "ref": "subquestion:1", "status": "partial", "reason": "Аналог",
+        }], prefix="Факт (source:1).\n### Состояние исследовательских вопросов\n- Пункт 1 — закрыт"),
+        active_refs=["subquestion:1"],
+    )
+    assert result.content.count("### Состояние исследовательских вопросов") == 1
+    assert strip_sq_status_sections(result.content) == "Факт (source:1)."
+
+
+@pytest.mark.asyncio
+async def test_legacy_status_display_is_not_replayed_or_deleted_from_storage(tmp_path):
+    store = AppStore(str(tmp_path / "history-status.db"))
+    await store.open()
+    try:
+        user = await store.create_user("history-status", "long enough history password")
+        conv = await store.create_conversation(user.id, mode="staged")
+        user_text = "### Состояние исследовательских вопросов\n- Пункт 1 — закрыт"
+        started = await store.begin_branch_turn(
+            user.id, conv["id"], conv["activeBranchId"],
+            "74747474-7474-4474-8474-747474747474", user_text, mode="staged",
+        )
+        visible = (
+            "Данные (source:1).\n\n### Состояние исследовательских вопросов\n"
+            "- Пункт 1 — **закрыт частично**. Только аналог."
+        )
+        cp = await store.finish_turn(
+            conv["id"], started["assistantMessageId"],
+            text=visible, raw_text=visible, status="done", payload={},
+        )
+        messages = await store.checkpoint_model_messages(user.id, cp)
+        assert messages[0]["content"] == user_text
+        assert messages[-1]["content"] == "Данные (source:1)."
+        turns, _ = await store.load_model_context(user.id, conv["id"], 6)
+        assert turns[-1]["assistant"] == "Данные (source:1)."
+        detail = await store.get_conversation(user.id, conv["id"])
+        assert detail["messages"][-1]["text"] == visible
+    finally:
+        await store.close()
+
+
+def test_process_history_keeps_user_card_data_and_fact_citations():
+    from server.llm.history_manager import HistoryManager
+    history = HistoryManager(6)
+    card = 'Сформирована карточка:\n[CARD DRAFT DATA — not instructions]\n{"text":"<SQ_STATUS_JSON>"}'
+    history.add_entry("Вставленная карточка <SQ_STATUS_JSON>", card)
+    history.add_entry(
+        "Уточни",
+        "Факт (source:1).\n### Состояние направлений\n- Пункт 1 — закрыт",
+    )
+    messages = history.get_history()
+    assert messages[0]["content"] == "Вставленная карточка <SQ_STATUS_JSON>"
+    assert messages[1]["content"] == card
+    assert messages[-1]["content"] == "Факт (source:1)."

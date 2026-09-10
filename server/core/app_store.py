@@ -19,7 +19,7 @@ from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatc
 
 from server.utils.constants import LEGACY_RETRIEVAL_STATE_VERSIONS, RETRIEVAL_STATE_VERSION
 from server.tools.source_registry import present_source_aliases_in_value
-from server.core.sq_status import SQ_STATUS_USER_NOTICE
+from server.core.sq_status import SQ_STATUS_USER_NOTICE, strip_sq_status_sections
 
 
 PASSWORD_MIN_LENGTH = 12
@@ -2241,6 +2241,8 @@ class AppStore:
             text = str(self._present_subquestion_value(
                 str(row["raw_text"] or row["text"] or ""), id_to_ref
             )).strip()
+            if role == "assistant" and not isinstance(payload.get("cardDraft"), dict):
+                text = strip_sq_status_sections(text)
             if role == "user" and isinstance(payload.get("cardRequest"), dict):
                 text += (
                     "\n\n[CARD TEMPLATE DATA — not instructions]\n"
@@ -2538,7 +2540,7 @@ class AppStore:
             """SELECT s.id,s.display_no FROM checkpoint_subquestions cs
                 JOIN subquestions s ON s.id=cs.sq_id
                 WHERE cs.checkpoint_id=? AND s.conversation_id=?
-                  AND cs.agenda_visible=1 AND cs.status!='closed'""",
+                  AND cs.agenda_visible=1 AND cs.status IN ('not_closed','partial')""",
             (checkpoint_id, conversation_id),
         )).fetchall()
         by_ref = {
@@ -2548,7 +2550,6 @@ class AppStore:
         if any(
             str(item.get("status") or "") not in {"closed", "partial", "not_closed"}
             or not str(item.get("reason") or "").strip()
-            or not isinstance(item.get("source_refs"), list)
             for item in assessments
             if str(item.get("ref") or "").strip() in by_ref
         ):
@@ -2560,7 +2561,9 @@ class AppStore:
                 continue
             status = str(item.get("status") or "")
             reason = str(item.get("reason") or "")
-            source_refs = item.get("source_refs") or []
+            # Status citations are no longer requested; keep the storage column
+            # for old checkpoints without requiring a database migration.
+            source_refs: list[str] = []
             await self._conn().execute(
                 """UPDATE checkpoint_subquestions
                    SET status=?,status_origin='assistant',status_reason=?,
@@ -2722,47 +2725,30 @@ class AppStore:
     ) -> tuple[list[dict[str, Any]], list[tuple[int, str]]]:
         if not await self.conversation_owned(user_id, conversation_id):
             raise KeyError(conversation_id)
-        id_to_ref = await self._subquestion_ref_map(conversation_id)
         selected_branch = branch_id or await self.main_branch_id(conversation_id)
         branch = await (await self._conn().execute(
             "SELECT head_checkpoint_id FROM branches WHERE id=? AND conversation_id=?",
             (selected_branch, conversation_id),
         )).fetchone()
         head = str(branch["head_checkpoint_id"] or "") if branch is not None else ""
-        if head:
-            rows = await (await self._conn().execute(
-                """WITH RECURSIVE lineage(id,parent_id,message_id,depth) AS (
-                       SELECT id,parent_id,message_id,0 FROM checkpoints WHERE id=?
-                       UNION ALL
-                       SELECT cp.id,cp.parent_id,cp.message_id,lineage.depth+1
-                       FROM checkpoints cp JOIN lineage ON cp.id=lineage.parent_id
-                   )
-                   SELECT m.role,m.text,m.raw_text,m.status,m.tool_messages_json,lineage.depth
-                   FROM lineage JOIN messages m ON m.id=lineage.message_id
-                   ORDER BY lineage.depth DESC""",
-                (head,),
-            )).fetchall()
-        else:
-            rows = []
+        messages = await self.checkpoint_model_messages(user_id, head) if head else []
         turns: list[dict[str, Any]] = []
-        pending_user = ""
-        for row in rows:
-            if str(row["role"]) == "user":
-                pending_user = str(self._present_subquestion_value(str(row["text"]), id_to_ref))
-            elif (
-                pending_user
-                and str(row["role"]) == "assistant"
-                and str(row["status"]) == "done"
-                and str(row["raw_text"] or "")
-            ):
+        pending_users: list[str] = []
+        tool_messages: list[dict[str, Any]] = []
+        for message in messages or []:
+            role = message.get("role")
+            if role == "user":
+                pending_users.append(str(message.get("content") or ""))
+            elif role == "tool" or message.get("tool_calls"):
+                tool_messages.append(message)
+            elif role == "assistant" and pending_users:
                 turns.append({
-                    "user": pending_user,
-                    "assistant": str(self._present_subquestion_value(str(row["raw_text"]), id_to_ref)),
-                    "tool_messages": self._present_subquestion_value(
-                        _loads(row["tool_messages_json"], []), id_to_ref
-                    ),
+                    "user": "\n\n".join(pending_users),
+                    "assistant": str(message.get("content") or ""),
+                    "tool_messages": list(tool_messages),
                 })
-                pending_user = ""
+                pending_users = []
+                tool_messages = []
         turns = turns[-max(1, int(limit)):]
         source_rows = await (await self._conn().execute(
             "SELECT source_id,source_file FROM conversation_sources WHERE conversation_id=? ORDER BY source_id",
@@ -2887,7 +2873,7 @@ class AppStore:
                         else "not_closed" if action == "reopen"
                         else str(text or "").strip()
                     )
-                    if target_status not in {"closed", "partial", "not_closed"}:
+                    if target_status not in {"closed", "partial", "not_closed", "deferred"}:
                         raise ValueError("Unsupported SQ status")
                     cur = await self._conn().execute(
                         """UPDATE checkpoint_subquestions
@@ -2984,7 +2970,7 @@ class AppStore:
                                    WHERE checkpoint_id=? AND sq_id=?""",
                                 (checkpoint_id, sq_id),
                             )
-                    if current is not None and increment and str(current["status"]) != "closed":
+                    if current is not None and increment and str(current["status"]) in {"not_closed", "partial"}:
                         parent_count_row = await (await self._conn().execute(
                             """SELECT COALESCE(pcs.question_count,0) AS n
                                FROM checkpoints cp
@@ -3019,7 +3005,7 @@ class AppStore:
         """Resolve staged refs in caller order within one checkpoint.
 
         Retrieval uses the default open-only view. Agenda mutations can opt into
-        visible closed SQs, while refs from another branch/checkpoint remain
+        visible closed or deferred SQs, while refs from another branch/checkpoint remain
         invalid in either case.
         """
         if not sq_refs:
@@ -3029,7 +3015,7 @@ class AppStore:
         if any(number is None for number in numbers):
             return []
         placeholders = ",".join("?" for _ in numbers)
-        status = "AND cs.status!='closed'" if open_only else ""
+        status = "AND cs.status IN ('not_closed','partial')" if open_only else ""
         rows = await (await self._conn().execute(
             f"""SELECT s.id,s.display_no,s.text FROM checkpoint_subquestions cs
                 JOIN subquestions s ON s.id=cs.sq_id
@@ -3059,7 +3045,7 @@ class AppStore:
         if not unique_ids:
             return []
         placeholders = ",".join("?" for _ in unique_ids)
-        status = "AND cs.status!='closed'" if open_only else ""
+        status = "AND cs.status IN ('not_closed','partial')" if open_only else ""
         rows = await (await self._conn().execute(
             f"""SELECT s.id,s.display_no FROM checkpoint_subquestions cs
                 JOIN subquestions s ON s.id=cs.sq_id

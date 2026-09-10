@@ -240,7 +240,7 @@ class AgendaEventBody(BaseModel):
     # only against the owned checkpoint and never shown back to the model/UI.
     sq_id: str = ""
     text: str = Field(default="", max_length=1000)
-    status: Literal["closed", "partial", "not_closed"] | None = None
+    status: Literal["closed", "partial", "not_closed", "deferred"] | None = None
     ordered_refs: list[str] = Field(default_factory=list)
     ordered_ids: list[str] = Field(default_factory=list)
 
@@ -764,7 +764,7 @@ async def _checkpoint_prompt_context(
     blocks: list[str] = []
     agenda = list((checkpoint or {}).get("agenda") or [])
     if purpose == "chat" and mode == "staged" and agenda:
-        active = [item for item in agenda if item.get("status") != "closed"]
+        active = [item for item in agenda if item.get("status") in {"not_closed", "partial"}]
         closed = [item for item in agenda if item.get("status") == "closed"]
 
         def _sq_line(item: dict) -> str:
@@ -980,8 +980,17 @@ async def _card_generation_events(
     if units is None:
         yield StreamEvent("error", {"message": "Checkpoint not found"})
         return
+    checkpoint = await store.checkpoint_state(user.id, checkpoint_id)
+    if checkpoint is None:
+        yield StreamEvent("error", {"message": "Checkpoint not found"})
+        return
+    # The current card request and its schema are sent below in model_text.
+    # Keep earlier user messages/cards as provenance candidates, not this request.
     dialogue_history = await store.checkpoint_model_messages(
-        user.id, checkpoint_id, include_message_ids=True
+        user.id,
+        checkpoint_id,
+        exclude_message_id=str(checkpoint.get("messageId") or ""),
+        include_message_ids=True,
     )
     if dialogue_history is None:
         yield StreamEvent("error", {"message": "Checkpoint not found"})
@@ -1228,13 +1237,13 @@ async def _persistent_stream(
         user.id,
         user_checkpoint_id,
         mode=mode,
-        purpose="chat",
+        purpose="card" if body.intent == "generate_card" else "chat",
     )
     checkpoint = await store.checkpoint_state(user.id, user_checkpoint_id) if user_checkpoint_id else None
     active_sq_refs = [
         str(item.get("ref") or "")
         for item in list((checkpoint or {}).get("agenda") or [])
-        if item.get("status") != "closed" and str(item.get("ref") or "")
+        if item.get("status") in {"not_closed", "partial"} and str(item.get("ref") or "")
     ] if mode == "staged" else []
     model_history = await store.checkpoint_model_messages(
         user.id, user_checkpoint_id, exclude_message_id=user_message_id
@@ -1617,7 +1626,7 @@ async def _approved_stream(
     wanted_new = {store.canonical_subquestion(text) for text in clean_new}
     for item in agenda:
         key = store.canonical_subquestion(str(item.get("text") or ""))
-        if key in wanted_new and key not in selected_keys and item.get("status") != "closed":
+        if key in wanted_new and key not in selected_keys and item.get("status") in {"not_closed", "partial"}:
             selected.append(str(item["text"]))
             selected_keys.add(key)
     if not selected:
@@ -1764,7 +1773,7 @@ async def _approved_stream(
                 "active_sq_refs": [
                     str(item.get("ref") or "")
                     for item in agenda
-                    if item.get("status") != "closed" and str(item.get("ref") or "")
+                    if item.get("status") in {"not_closed", "partial"} and str(item.get("ref") or "")
                 ],
             },
             request=request,

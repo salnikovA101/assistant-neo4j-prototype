@@ -106,7 +106,7 @@ class Tools:
             return f"{TOOL_ERROR}: advance_research is available only in staged mode."
         resolved = await turn.store.open_agenda_subquestions(turn.checkpoint_id, refs)
         if len(resolved) != len(list(dict.fromkeys(refs))):
-            return f"{TOOL_ERROR}: one or more SQ refs are unknown, hidden or closed."
+            return f"{TOOL_ERROR}: one or more SQ refs are unknown, hidden, closed or deferred."
         if not resolved:
             return f"{TOOL_ERROR}: select at least one open SQ."
         if ignored:

@@ -2,8 +2,8 @@ import { useMemo, useState } from "react";
 import type { AgendaItem } from "../types";
 import { IconClose } from "./Icons";
 
-const STATUS_MARK: Record<AgendaItem["status"], string> = { not_closed: "○", partial: "◐", closed: "✓" };
-const STATUS_LABEL: Record<AgendaItem["status"], string> = { not_closed: "Не закрыт", partial: "Закрыт частично", closed: "Закрыт" };
+const STATUS_MARK: Record<AgendaItem["status"], string> = { not_closed: "○", partial: "◐", closed: "✓", deferred: "Ⅱ" };
+const STATUS_LABEL: Record<AgendaItem["status"], string> = { not_closed: "Не закрыт", partial: "Закрыт частично", closed: "Закрыт", deferred: "Отложен" };
 
 function directionNo(item: AgendaItem, fallback: number): number {
   const match = item.ref.match(/:(\d+)$/);
@@ -26,15 +26,17 @@ export function AgendaDrawer({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [closedOpen, setClosedOpen] = useState(false);
-  const activeItems = useMemo(() => agenda.filter((item) => item.status !== "closed"), [agenda]);
+  const [deferredOpen, setDeferredOpen] = useState(false);
+  const activeItems = useMemo(() => agenda.filter((item) => (item.status === "not_closed" || item.status === "partial")), [agenda]);
   const closedItems = useMemo(() => agenda.filter((item) => item.status === "closed"), [agenda]);
+  const deferredItems = useMemo(() => agenda.filter((item) => item.status === "deferred"), [agenda]);
   const partialCount = activeItems.filter((item) => item.status === "partial").length;
   const notClosedCount = activeItems.length - partialCount;
 
   const renderItem = (item: AgendaItem, index: number) => (
     <article
       key={item.ref}
-      className={`agenda-item is-${item.status} ${item.reviewRecommended && item.status !== "closed" ? "needs-review" : ""}`}
+      className={`agenda-item is-${item.status} ${item.reviewRecommended && (item.status === "not_closed" || item.status === "partial") ? "needs-review" : ""}`}
     >
       <div>
         <strong>Пункт {directionNo(item, index + 1)}</strong>
@@ -68,7 +70,7 @@ export function AgendaDrawer({
         </div>
         {item.statusReason && <span className="agenda-reason">{item.statusReason}</span>}
         <span className="agenda-origin">{item.statusOrigin === "assistant" ? "Оценил ассистент" : item.statusOrigin === "user" ? "Изменено вами" : "Исходный статус"}</span>
-        {item.reviewRecommended && item.status !== "closed" && <em>Пора уточнить</em>}
+        {item.reviewRecommended && (item.status === "not_closed" || item.status === "partial") && <em>Пора уточнить</em>}
       </div>
     </article>
   );
@@ -78,7 +80,7 @@ export function AgendaDrawer({
       <header>
         <div>
           <strong>Исследовательские вопросы</strong>
-          <span>{notClosedCount} не закрыто · {partialCount} частично · {closedItems.length} закрыто</span>
+          <span>{notClosedCount} не закрыто · {partialCount} частично · {closedItems.length} закрыто · {deferredItems.length} отложено</span>
         </div>
         {!embedded && onClose && <button type="button" className="icon-btn" onClick={onClose} aria-label="Закрыть исследовательские вопросы"><IconClose /></button>}
       </header>
@@ -86,6 +88,12 @@ export function AgendaDrawer({
       <div className="agenda-list">
         {agenda.length === 0 && <p className="muted">Пункты появятся после первого подтверждённого поиска.</p>}
         {activeItems.map(renderItem)}
+        {deferredItems.length > 0 && (
+          <details className="agenda-closed" open={deferredOpen} onToggle={(event) => setDeferredOpen(event.currentTarget.open)}>
+            <summary>Отложенные · {deferredItems.length}</summary>
+            {deferredItems.map(renderItem)}
+          </details>
+        )}
         {closedItems.length > 0 && (
           <details className="agenda-closed" open={closedOpen} onToggle={(event) => setClosedOpen(event.currentTarget.open)}>
             <summary>Закрытые · {closedItems.length}</summary>

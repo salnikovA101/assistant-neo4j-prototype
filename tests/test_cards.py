@@ -245,6 +245,8 @@ async def test_card_draft_is_a_checkpointed_chat_message_and_save_updates_it(tmp
         assert "PMC12345_paper.pdf" not in model_context[-1]["content"]
         assert '"provenance"' not in model_context[-1]["content"]
         assert "assistant-generated/unverified" not in model_context[-1]["content"]
+        turns, _ = await store.load_model_context(user.id, conversation["id"], 6)
+        assert turns[-1]["assistant"] == model_context[-1]["content"]
 
         edited_data = {**draft["data"], "objective": "Technologist correction"}
         edited_provenance = {"/objective": [{"verification": "user-edited"}]}
@@ -300,6 +302,18 @@ async def test_card_draft_is_a_checkpointed_chat_message_and_save_updates_it(tmp
         assert model_context[-1]["role"] == "user"
         assert '"provenance"' not in model_context[-1]["content"]
         assert "user-edited" not in model_context[-1]["content"]
+        inserted_text = model_context[-1]["content"]
+        next_turn = await store.begin_branch_turn(
+            user.id, conversation["id"], conversation["activeBranchId"],
+            "75757575-7575-4575-8575-757575757575", "Обсуди карточку", mode="auto",
+        )
+        await store.finish_turn(
+            conversation["id"], next_turn["assistantMessageId"],
+            text="Обсуждение.", raw_text="Обсуждение.", status="done", payload={},
+        )
+        turns, _ = await store.load_model_context(user.id, conversation["id"], 6)
+        assert inserted_text in turns[-1]["user"]
+        assert "Обсуди карточку" in turns[-1]["user"]
     finally:
         await store.close()
 
@@ -402,5 +416,9 @@ async def test_card_generation_falls_back_to_validated_raw_json_when_function_ca
         assert provider.calls[1]["tools"] is None
         assert provider.calls[0]["think_effort"] is None
         assert provider.calls[1]["think_effort"] == "off"
+        assert all(
+            "Create a card" not in str(call["history"])
+            for call in provider.calls
+        )
     finally:
         await store.close()

@@ -210,7 +210,7 @@ export type ResearchMap = {
 export type AgendaItem = {
   ref: string;
   text: string;
-  status: "not_closed" | "partial" | "closed";
+  status: "not_closed" | "partial" | "closed" | "deferred";
   statusOrigin: "assistant" | "user" | "legacy";
   statusReason: string;
   statusSourceRefs: string[];

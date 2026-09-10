@@ -18,9 +18,7 @@ SQ_STATUS_USER_NOTICE = (
     "Текст ответа сохранён, статусы можно поправить вручную."
 )
 _SQ_REF_RE = re.compile(r"subquestion:(\d+)")
-_SOURCE_REF_LOOSE_RE = re.compile(r"^\(?\s*source\s*:?\s*(\d+)\s*\)?$", re.IGNORECASE)
-_DISPLAY_OR_BARE_REF_RE = re.compile(r"^\[(\d+)\]$|^(\d+)$")
-_REQUIRED_ITEM_KEYS = frozenset({"ref", "status", "reason", "source_refs"})
+_REQUIRED_ITEM_KEYS = frozenset({"ref", "status", "reason"})
 _STATUS_LABELS = {
     "closed": "закрыт",
     "partial": "закрыт частично",
@@ -28,22 +26,57 @@ _STATUS_LABELS = {
 }
 
 
-def _coerce_source_ref(raw: Any, sources: SourceRegistry) -> str | None:
-    """Accept source:N, (source:N), [N], or N when that session id exists."""
-    text = str(raw or "").strip()
-    if not text:
-        return None
-    match = _SOURCE_REF_LOOSE_RE.fullmatch(text)
-    if match is None:
-        display = _DISPLAY_OR_BARE_REF_RE.fullmatch(text)
-        if display is None:
-            return None
-        sid = int(display.group(1) or display.group(2))
-    else:
-        sid = int(match.group(1))
-    if sources.resolve(sid) is None:
-        return None
-    return f"source:{sid}"
+def strip_sq_status_sections(content: str) -> str:
+    """Remove service status output from assistant prose, including old history.
+
+    Only recognize dedicated status headings with status bullets. Preserve other
+    sections, fenced examples, user messages and structured card payloads (callers
+    must apply this helper only to ordinary assistant text).
+    """
+    lines = (content or "").splitlines(keepends=True)
+    headings: list[tuple[int, int, str]] = []
+    service_start: int | None = None
+    fence = ""
+    for index, line in enumerate(lines):
+        stripped = line.lstrip()
+        marker = re.match(r"(`{3,}|~{3,})", stripped)
+        if marker:
+            token = marker.group(1)
+            if not fence:
+                fence = token
+            elif token[0] == fence[0] and len(token) >= len(fence):
+                fence = ""
+            continue
+        if fence:
+            continue
+        if SQ_STATUS_OPEN in line:
+            service_start = index
+            # Keep any answer text before a marker on the same line.
+            lines[index] = line.split(SQ_STATUS_OPEN, 1)[0]
+            break
+        heading = re.match(r"^ {0,3}(#{1,6})[ \t]+(.+?)\s*#*\s*$", line)
+        if heading:
+            headings.append((index, len(heading.group(1)), heading.group(2).strip()))
+    end = service_start + 1 if service_start is not None else len(lines)
+    removed: set[int] = set()
+    names = {"состояние исследовательских вопросов", "состояние направлений"}
+    for position, (start, level, title) in enumerate(headings):
+        if title.lower() not in names:
+            continue
+        stop = next(
+            (i for i, depth, _ in headings[position + 1:] if depth <= level),
+            end,
+        )
+        body = "".join(lines[start + 1:stop])
+        if not re.search(
+            r"(?m)^\s*[-*]\s+(?:Пункт\s+\d+|(?:SQ|subquestion:)\s*\d+).*"
+            r"(?:закрыт|не закрыт|closed|partial|not_closed)",
+            body,
+            re.IGNORECASE,
+        ):
+            continue
+        removed.update(range(start, stop))
+    return "".join(line for i, line in enumerate(lines[:end]) if i not in removed).rstrip()
 
 
 async def resolve_active_sq_refs(turn_context: dict[str, Any] | None) -> list[str]:
@@ -73,7 +106,7 @@ async def resolve_active_sq_refs(turn_context: dict[str, Any] | None) -> list[st
     return [
         str(item.get("ref") or "").strip()
         for item in list(state.get("agenda") or [])
-        if item.get("status") != "closed" and str(item.get("ref") or "").strip()
+        if item.get("status") in {"not_closed", "partial"} and str(item.get("ref") or "").strip()
     ]
 
 
@@ -104,7 +137,7 @@ def parse_sq_status_response(
     content: str,
     *,
     active_refs: Iterable[str],
-    sources: SourceRegistry,
+    sources: SourceRegistry | None = None,
 ) -> SqStatusParseResult:
     """Parse a trailing SQ status block and render a visible summary.
 
@@ -126,7 +159,7 @@ def parse_sq_status_response(
     except (TypeError, ValueError) as exc:
         # Qwen occasionally emits a syntactically damaged trailing object
         # (usually a missing comma) even when all fields are present. Repair
-        # only the JSON syntax, then run the same schema/ref/source
+        # only the JSON syntax, then run the same schema/ref
         # validation below; unusable payloads still fail closed.
         try:
             from json_repair import repair_json
@@ -157,26 +190,14 @@ def parse_sq_status_response(
             continue
         status = str(item.get("status") or "").strip()
         reason = " ".join(str(item.get("reason") or "").split())
-        raw_source_refs = item.get("source_refs")
         if status not in SQ_COVERAGE_STATUSES:
             continue
         if not reason or len(reason) > 500:
-            continue
-        if not isinstance(raw_source_refs, list):
-            continue
-        source_refs: list[str] = []
-        for raw_ref in raw_source_refs:
-            source_ref = _coerce_source_ref(raw_ref, sources)
-            if source_ref is None or source_ref in source_refs:
-                continue
-            source_refs.append(source_ref)
-        if status in {"closed", "partial"} and not source_refs:
             continue
         assessments[ref] = {
             "ref": ref,
             "status": status,
             "reason": reason,
-            "source_refs": source_refs,
         }
 
     ordered = [assessments[ref] for ref in expected if ref in assessments]
@@ -187,10 +208,10 @@ def parse_sq_status_response(
     for item in ordered:
         number = _SQ_REF_RE.fullmatch(item["ref"]).group(1)  # type: ignore[union-attr]
         reason = item["reason"].rstrip(". ") + "."
-        citations = ""
-        if item["source_refs"]:
-            citations = " (" + "; ".join(item["source_refs"]) + ")"
-        lines.append(f"- Пункт {number} — **{_STATUS_LABELS[item['status']]}**. {reason}{citations}")
+        lines.append(f"- Пункт {number} — **{_STATUS_LABELS[item['status']]}**. {reason}")
+    # If the model also wrote visible statuses, replace them with one canonical
+    # rendering only after valid assessments have been recovered.
+    visible = strip_sq_status_sections(visible)
     rendered = "\n\n".join(part for part in (visible, "\n".join(lines)) if part.strip())
     return SqStatusParseResult(rendered, ordered)
 

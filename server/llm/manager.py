@@ -8,6 +8,7 @@ from server.utils.constants import LLMProviderType
 from server.core.sessions import current_session
 from server.core.sq_status import (
     SqStatusStreamFilter,
+    strip_sq_status_sections,
     parse_sq_status_response,
     resolve_active_sq_refs,
 )
@@ -311,6 +312,7 @@ class LLMManager:
                                 (turn_context or {}).get("seed_history_tools") or []
                             ) + list(event.data.get("history_tool_messages") or [])
                             final_content = event.data.get("final_content") or ""
+                            history_content = strip_sq_status_sections(final_content)
                             active_refs = await resolve_active_sq_refs(turn_context)
                             sq_result = parse_sq_status_response(
                                 final_content,
@@ -323,7 +325,7 @@ class LLMManager:
                                     logger.warning("Ignored staged SQ status update: %s", sq_result.error)
                             history_manager.add_entry(
                                 user_text,
-                                final_content,
+                                history_content,
                                 tool_messages=history_tool_messages,
                             )
                             cited = extract_cited_source_files(final_content, sources)
@@ -334,7 +336,7 @@ class LLMManager:
                                 {
                                     "final_content": display,
                                     "cited_source_files": cited,
-                                    "_raw_content": final_content,
+                                    "_raw_content": history_content,
                                     "_history_tool_messages": history_tool_messages,
                                     "_retrieval_state": dict(turn_state.retrieval_state),
                                     "_sq_assessments": sq_result.assessments if sq_result else [],

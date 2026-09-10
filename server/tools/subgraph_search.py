@@ -215,9 +215,9 @@ class SubgraphSearchAgent:
                     turn.store.canonical_subquestion(item["text"]): item
                     for item in agenda
                 }
-                # Agenda statuses are now tri-state. Both not_closed and partial
-                # remain searchable; only explicitly closed SQs are excluded.
-                open_ids = {item["id"] for item in agenda if item.get("status") != "closed"}
+                # Only active questions remain searchable; closed and deferred
+                # questions must be explicitly reopened by the user.
+                open_ids = {item["id"] for item in agenda if item.get("status") in {"not_closed", "partial"}}
                 payload = [
                     {
                         "id": by_key[turn.store.canonical_subquestion(text)]["id"],
@@ -228,7 +228,7 @@ class SubgraphSearchAgent:
                     and by_key[turn.store.canonical_subquestion(text)]["id"] in open_ids
                 ]
                 if not payload:
-                    return f"{NO_RESULTS}: all selected subquestions are closed in the current research-question list."
+                    return f"{NO_RESULTS}: all selected subquestions are closed or deferred in the current research-question list."
                 retrieval = dict(turn.retrieval_state or {})
                 if str(retrieval.get("corpusRevision") or "") != effective_run_id:
                     retrieval = {

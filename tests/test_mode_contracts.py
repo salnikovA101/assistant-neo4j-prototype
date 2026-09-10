@@ -428,3 +428,64 @@ async def test_model_history_sanitizes_legacy_sq_uuid_in_text_and_tool_call(tmp_
         assert "subquestion:1" in str(history)
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_deferred_question_is_hidden_protected_and_can_be_reopened(tmp_path):
+    from server.core.sq_status import resolve_active_sq_refs
+
+    store = AppStore(str(tmp_path / "deferred.db"))
+    await store.open()
+    try:
+        user = await store.create_user("deferred-user", "long enough deferred password")
+        conv = await store.create_conversation(user.id, mode="staged")
+        turn = await store.begin_branch_turn(
+            user.id, conv["id"], conv["activeBranchId"],
+            "85858585-8585-4585-8585-858585858585", "Investigate", mode="staged",
+        )
+        agenda = await store.upsert_turn_subquestions(
+            conv["id"], turn["userCheckpointId"], ["How does milk acidify?"],
+            increment=True, agenda_visible=True,
+        )
+        ref = agenda[0]["ref"]
+        finished = await store.finish_turn(
+            conv["id"], turn["assistantMessageId"],
+            text="Insufficient evidence.", status="done", payload={},
+        )
+        deferred = await store.apply_agenda_event(
+            user.id, conv["activeBranchId"], base_checkpoint_id=finished,
+            action="set_status", sq_ref=ref, text="deferred",
+        )
+        cp = deferred["checkpointId"]
+        assert deferred["agenda"][0]["status"] == "deferred"
+        assert await store.open_agenda_subquestions(cp, [ref]) == []
+        assert await store.open_agenda_subquestions(cp, [ref], open_only=False)
+        context = await _checkpoint_prompt_context(store, user.id, cp, mode="staged")
+        assert ref not in context
+        assert "How does milk acidify?" not in context
+        assert await resolve_active_sq_refs({
+            "store": store, "user_id": user.id, "checkpoint_id": cp,
+            "active_sq_refs": [ref],
+        }) == []
+
+        next_turn = await store.begin_branch_turn(
+            user.id, conv["id"], conv["activeBranchId"],
+            "86868686-8686-4686-8686-868686868686", "Continue", mode="staged",
+        )
+        next_cp = await store.finish_turn(
+            conv["id"], next_turn["assistantMessageId"],
+            text="Answer.", status="done", payload={},
+            sq_assessments=[{"ref": ref, "status": "closed", "reason": "Attempted update"}],
+        )
+        state = await store.checkpoint_state(user.id, next_cp)
+        assert state["agenda"][0]["status"] == "deferred"
+        reopened = await store.apply_agenda_event(
+            user.id, conv["activeBranchId"], base_checkpoint_id=next_cp,
+            action="set_status", sq_ref=ref, text="not_closed",
+        )
+        assert await store.open_agenda_subquestions(reopened["checkpointId"], [ref])
+        assert ref in await _checkpoint_prompt_context(
+            store, user.id, reopened["checkpointId"], mode="staged",
+        )
+    finally:
+        await store.close()
