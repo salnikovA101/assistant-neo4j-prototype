@@ -146,25 +146,27 @@ export function Composer({
             <IconMic />
           </button>
         )}
-        <details className="composer-menu retrieval-menu" onToggle={(event) => {
+        {(!centered || mode === "auto") && <details className="composer-menu retrieval-menu" onToggle={(event) => {
           if (!event.currentTarget.open) return;
           formRef.current?.querySelectorAll("details[open]").forEach((menu) => {
             if (menu !== event.currentTarget) (menu as HTMLDetailsElement).open = false;
           });
         }}>
-          <summary>{MODE_LABELS[mode]}<IconChevron /></summary>
+          <summary>{centered ? "Объём данных" : MODE_LABELS[mode]}<IconChevron /></summary>
           <div className="composer-popover">
+            {!centered && <>
             <p className="composer-popover-title">Режим работы</p>
             {stagedEnabled && branchMode !== "auto" && <label><input type="radio" checked={mode === "staged"} onChange={(event) => { onMode("staged"); closeMenu(event.currentTarget); }} /><span><strong>Исследование</strong><small>Сохраняет исследовательские вопросы и найденные данные, чтобы продолжать работу по направлениям.</small></span></label>}
-            <label><input type="radio" checked={mode === "auto"} onChange={(event) => { onMode("auto"); closeMenu(event.currentTarget); }} /><span><strong>Быстрый ответ</strong><small>{branchMode === "staged" ? "Ответит на отдельный вопрос в новом варианте. Текущее исследование сохранится." : "Отвечает на один самостоятельный вопрос без накопления плана."}</small></span></label>
-            {branchMode === "auto" && <p className="popover-note">Исследование начинается в новом чате. Этот вариант остаётся быстрым ответом.</p>}
+            <label><input type="radio" checked={mode === "auto"} onChange={(event) => { onMode("auto"); closeMenu(event.currentTarget); }} /><span><strong>Вопрос по базе</strong><small>{branchMode === "staged" ? "Ответит на отдельный вопрос в новом варианте. Текущее исследование сохранится." : "Отвечает на один самостоятельный вопрос без накопления плана."}</small></span></label>
+            {branchMode === "auto" && <p className="popover-note">Исследование начинается в новом чате. Этот вариант остаётся в режиме «Вопрос по базе».</p>}
+            </>}
             {mode === "auto" ? (
               <div className="popover-setting"><span>Объём данных</span><div>
                 {(["low", "medium", "high"] as const).map((id) => <button key={id} type="button" className={depth === id ? "is-on" : ""} onClick={(event) => { onDepth(id); closeMenu(event.currentTarget); }}>{{ low: "Компактно", medium: "Обычно", high: "Расширенно" }[id]}</button>)}
               </div></div>
             ) : <p className="popover-note">За один шаг — один поиск по выбранным исследовательским вопросам.</p>}
           </div>
-        </details>
+        </details>}
         {models.length > 0 && (
           <details className="composer-menu model-menu" onToggle={(event) => {
             if (!event.currentTarget.open) return;

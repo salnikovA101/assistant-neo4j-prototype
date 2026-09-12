@@ -1,3 +1,12 @@
+export function IconSearch() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <path d="m16 16 4 4" />
+    </svg>
+  );
+}
+
 export function IconCopy() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -17,7 +26,7 @@ export function IconPlus() {
 
 export function IconGraph() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
       <circle cx="6.5" cy="7" r="2.2" />
       <circle cx="17.5" cy="6.5" r="2.2" />
       <circle cx="8" cy="17.5" r="2.2" />

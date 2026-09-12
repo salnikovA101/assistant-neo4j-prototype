@@ -556,7 +556,7 @@ export function App() {
     }
     const sourceBranch = branches.find((item) => item.id === activeBranchId);
     if (sourceBranch?.mode === "auto" && mode === "staged") {
-      setNotice("Исследование начинается в новом чате. Этот вариант остаётся быстрым ответом.");
+      setNotice("Исследование начинается в новом чате. Этот вариант остаётся в режиме «Вопрос по базе».");
       return;
     }
     if (sourceBranch?.mode === "staged" && mode === "auto") {
@@ -574,7 +574,7 @@ export function App() {
         setHeadCheckpointId(baseCheckpointId);
         setRightPanel({ kind: "closed" });
       } catch (err) {
-        setNotice(err instanceof Error ? err.message : "Не удалось открыть вариант «Быстрый ответ»");
+        setNotice(err instanceof Error ? err.message : "Не удалось открыть вариант «Вопрос по базе»");
         return;
       }
     }
@@ -1348,13 +1348,15 @@ export function App() {
           )}
           <div className="composer-stack">
           {empty && (
-            <Welcome onHelp={() => openHelp()} />
-          )}
-          {empty && !hasUserKey && (
-            <div className="demo-access" role="status">
-              <span>Используется демонстрационный доступ</span>
-              <button type="button" onClick={() => setSettingsOpen(true)}>Настроить</button>
-            </div>
+            <Welcome
+              mode={mode}
+              onMode={(value) => {
+                setMode(value);
+                localStorage.setItem("retrieval_mode", value);
+              }}
+              stagedEnabled={config?.staged_enabled !== false}
+              onHelp={() => openHelp()}
+            />
           )}
           {viewCheckpointId && headCheckpointId && viewCheckpointId !== headCheckpointId && selectedResearchStep && (
             <div className="context-continuation" role="status">

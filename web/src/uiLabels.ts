@@ -2,7 +2,7 @@ import type { GraphEdge } from "./types";
 
 export const MODE_LABELS = {
   staged: "Исследование",
-  auto: "Быстрый ответ",
+  auto: "Вопрос по базе",
 } as const;
 
 export function normalizedLabels(labels?: string[]): string[] {

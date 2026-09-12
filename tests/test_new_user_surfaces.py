@@ -64,7 +64,7 @@ def test_service_guide_manual_search_is_english_names_not_chat():
 
 def test_service_guide_distinguishes_auto_gaps_from_staged_sq_coverage():
     guide = load_service_guide(ROOT / "prompts")
-    assert "В режиме **Быстрый ответ** технический раздел **GAPS**" in guide
+    assert "В режиме **Вопрос по базе** технический раздел **GAPS**" in guide
     assert "В режиме **Исследование** вместо GAPS" in guide
     assert "**Состояние исследовательских вопросов**" in guide
     assert "**Не закрыт**, **Закрыт частично** или **Закрыт**" in guide
