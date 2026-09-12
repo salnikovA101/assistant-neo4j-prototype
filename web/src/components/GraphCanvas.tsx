@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { DataSet, Network } from "vis-network/standalone";
 import "vis-network/styles/vis-network.min.css";
 import type { GraphCollectionItem, GraphEdge, GraphNode, GraphPayload } from "../types";
@@ -44,7 +44,7 @@ const NETWORK_OPTIONS = {
   edges: {
     arrows: { to: { enabled: true, scaleFactor: 0.55 } },
     color: { color: "rgba(255,255,255,0.28)", highlight: "#4d9fff" },
-    font: { size: 12, color: "#d4d9e2", strokeWidth: 4, strokeColor: "#17191e", background: "#17191e" },
+    font: { size: 9, face: "Inter, sans-serif", color: "#8893a5", strokeWidth: 2, strokeColor: "#17191e", background: "#17191e" },
     smooth: { enabled: true, type: "cubicBezier", roundness: 0.35 },
   },
 };
@@ -128,6 +128,9 @@ export function GraphCanvas({
   const hostRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const inspectorRef = useRef<HTMLElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
+  const suggestionsId = useId();
   const netRef = useRef<Network | null>(null);
   const nodeDataRef = useRef<MutableDataSet | null>(null); // vis-network item shape is intentionally dynamic.
   const edgeDataRef = useRef<MutableDataSet | null>(null);
@@ -141,6 +144,7 @@ export function GraphCanvas({
   const [selected, setSelected] = useState<Selected>(null);
   const [query, setQuery] = useState("");
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [activeSuggestion, setActiveSuggestion] = useState(-1);
   const [collection, setCollection] = useState<GraphCollectionItem[]>([]);
   const [inspectorMode, setInspectorMode] = useState<"results" | "filters" | "detail" | "collection">(workspaceMode ? "filters" : "detail");
   const [inspectorOpen, setInspectorOpen] = useState(true);
@@ -164,6 +168,7 @@ export function GraphCanvas({
     if (!embeddedMode || !selected) return;
     const dismiss = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (event.target === searchInputRef.current && suggestionsOpen) return;
       event.preventDefault();
       event.stopPropagation();
       setSuggestionsOpen(false);
@@ -171,7 +176,7 @@ export function GraphCanvas({
     };
     document.addEventListener("keydown", dismiss, true);
     return () => document.removeEventListener("keydown", dismiss, true);
-  }, [embeddedMode, selected]);
+  }, [embeddedMode, selected, suggestionsOpen]);
 
   interactionRef.current = onCanvasInteraction;
 
@@ -227,6 +232,14 @@ export function GraphCanvas({
     return [edge.label, edge.from_name, edge.to_name, edge.hub_name, String(edge.properties?.evidence || ""), String(edge.properties?.source_file || "")]
       .join(" ").toLowerCase().includes(q);
   }), [graph.edges, q]);
+
+  const suggestions = useMemo(() => hits.slice(0, 12), [hits]);
+  const showSuggestions = suggestionsOpen && Boolean(q) && suggestions.length > 0;
+  useEffect(() => { setActiveSuggestion(-1); }, [hits]);
+  useEffect(() => {
+    if (!showSuggestions || activeSuggestion < 0) return;
+    suggestionsRef.current?.children[activeSuggestion]?.scrollIntoView({ block: "nearest" });
+  }, [activeSuggestion, showSuggestions]);
 
   const filtered = useMemo(() => {
     const edgesById = new Map<string, GraphEdge>();
@@ -479,24 +492,48 @@ export function GraphCanvas({
   const search = !hideSearch && (
         <div className="graph-local-search">
           <input
+            ref={searchInputRef}
             className="graph-search"
             value={query}
-            onChange={(event) => { setQuery(event.target.value); setSuggestionsOpen(true); }}
+            onChange={(event) => { setQuery(event.target.value); setActiveSuggestion(-1); setSuggestionsOpen(true); }}
             onFocus={() => setSuggestionsOpen(true)}
             placeholder={embeddedMode ? "Поиск на графе · EN" : "Поиск сущностей, связей и данных — на английском"}
             title="Поиск сущностей, связей и подтверждающего текста на английском"
             aria-label="Поиск на схеме по английским именам и evidence"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={showSuggestions}
+            aria-controls={showSuggestions ? suggestionsId : undefined}
+            aria-activedescendant={showSuggestions && activeSuggestion >= 0 && activeSuggestion < suggestions.length ? `${suggestionsId}-${activeSuggestion}` : undefined}
             onKeyDown={(event) => {
-              if (event.key === "Escape") { event.stopPropagation(); setSuggestionsOpen(false); }
+              if (event.nativeEvent.isComposing) return;
+              if ((event.key === "ArrowDown" || event.key === "ArrowUp") && q && suggestions.length) {
+                event.preventDefault();
+                event.stopPropagation();
+                const direction = event.key === "ArrowDown" ? 1 : -1;
+                setActiveSuggestion((current) => !showSuggestions || current < 0
+                  ? direction === 1 ? 0 : suggestions.length - 1
+                  : (current + direction + suggestions.length) % suggestions.length);
+                setSuggestionsOpen(true);
+              } else if (event.key === "Enter" && showSuggestions) {
+                event.preventDefault();
+                event.stopPropagation();
+                pickTriplet(suggestions[activeSuggestion] || suggestions[0]);
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                setSuggestionsOpen(false);
+                setActiveSuggestion(-1);
+              }
             }}
             onBlur={(event) => {
               if (!event.currentTarget.parentElement?.contains(event.relatedTarget)) setSuggestionsOpen(false);
             }}
           />
-          {suggestionsOpen && q && hits.length > 0 && (
-            <div className="edge-suggestions" role="listbox" aria-label="Связи на схеме">
-              {hits.slice(0, 12).map((edge) => (
-                <button key={edge.id} type="button" onClick={() => pickTriplet(edge)}>
+          {showSuggestions && (
+            <div ref={suggestionsRef} id={suggestionsId} className="edge-suggestions" role="listbox" aria-label="Связи на схеме">
+              {suggestions.map((edge, index) => (
+                <button key={edge.id} id={`${suggestionsId}-${index}`} type="button" role="option" tabIndex={-1} aria-selected={activeSuggestion === index} onMouseEnter={() => setActiveSuggestion(index)} onMouseDown={(event) => event.preventDefault()} onClick={() => pickTriplet(edge)}>
                   <strong>{visibleTripletCaption(edge)}</strong>
                   {Boolean(edge.properties?.evidence) && <span>{String(edge.properties.evidence)}</span>}
                 </button>
@@ -666,13 +703,18 @@ function EdgeCard({ edge, inCollection, onToggleCollection, compact = false }: {
   const evidence = String(properties.evidence || "");
   const source = String(properties.source_file || "");
   const confidence = properties.confidence;
+  const hasConfidence = confidence != null && confidence !== "";
+  const metadata = (source || hasConfidence) && <dl className="inspector-meta">
+    {source && <><dt>Источник</dt><dd>{source}</dd></>}
+    {hasConfidence && <><dt>Уверенность экстракции</dt><dd>{Number(confidence).toFixed(2)}</dd></>}
+  </dl>;
   return <div>
     <p className="inspector-kicker">Связь <span className="relation-code">{edge.label}</span></p>
     <h3>{visibleTripletCaption(edge)}</h3>
     {evidence && <blockquote className="inspector-quote">{evidence}</blockquote>}
-    <dl className="inspector-meta">{source && <><dt>Источник</dt><dd>{source}</dd></>}{!compact && confidence != null && confidence !== "" && <><dt>Уверенность экстракции</dt><dd>{Number(confidence).toFixed(2)}</dd></>}</dl>
+    {!compact && metadata}
     <div className="inspector-actions">
-      {compact && confidence != null && confidence !== "" && <details className="graph-detail-more"><summary>Подробнее</summary><dl className="inspector-meta"><dt>Уверенность экстракции</dt><dd>{Number(confidence).toFixed(2)}</dd></dl></details>}
+      {compact && metadata && <details className="graph-detail-more"><summary>Подробнее</summary>{metadata}</details>}
       {onToggleCollection && <button type="button" className="collection-toggle" aria-pressed={inCollection} onClick={onToggleCollection}>{inCollection ? "✓ В подборке" : "+ Добавить в подборку"}</button>}
       {evidence && <button type="button" className={compact ? "icon-btn graph-copy-icon" : "ghost-btn"} aria-label="Копировать данные" title="Копировать данные" onClick={() => copyText(evidence)}>{compact ? <IconCopy /> : "Копировать данные"}</button>}
     </div>

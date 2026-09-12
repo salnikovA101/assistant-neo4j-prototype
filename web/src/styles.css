@@ -1024,6 +1024,7 @@ input::placeholder,textarea::placeholder { color:var(--faint); opacity:1; }
 .graph-detail-popover .inspector-quote { color:var(--soft); font-size:12px; }
 .graph-detail-popover .inspector-meta { font-size:11px; }
 .graph-detail-more { margin:10px 0; color:var(--muted); font-size:11px; }
+.edge-suggestions button[aria-selected="true"] { background:var(--accent-tint); color:var(--text); }
 .graph-detail-more > summary { width:max-content; cursor:pointer; }
 .graph-detail-popover .inspector-actions { align-items:flex-start; justify-content:space-between; gap:8px; }
 .graph-detail-popover .graph-detail-more { flex:1; min-width:0; margin:0; }
