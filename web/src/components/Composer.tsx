@@ -104,7 +104,7 @@ export function Composer({
         ref={ref}
         rows={1}
         value={text}
-        placeholder="Задайте вопрос по вашей базе знаний…"
+        placeholder="Задайте вопрос…"
         aria-label="Сообщение для Neo4j Assistant"
         disabled={disabled}
         onChange={(e) => onText(e.target.value)}

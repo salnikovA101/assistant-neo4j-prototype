@@ -92,8 +92,8 @@ export function IconSidebar() {
 
 export function IconSend() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M3.04 21 23 12 3.04 3 3 10l14 2-14 2z" />
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 19V5m-6 6 6-6 6 6" />
     </svg>
   );
 }
