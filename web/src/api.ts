@@ -493,6 +493,19 @@ export async function archiveCard(cardId: string): Promise<void> {
   );
 }
 
+export async function downloadCard(cardId: string, title: string): Promise<void> {
+  const response = await apiFetch(`/api/cards/${encodeURIComponent(cardId)}/export`);
+  if (!response.ok) await json(response, "Не удалось скачать карточку");
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${title.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").slice(0, 100) || "Карточка"}.zip`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 export async function reviseCard(
   cardId: string,
   input: { title: string; data: Record<string, unknown>; editedFields: string[] }

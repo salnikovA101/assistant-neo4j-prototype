@@ -1,5 +1,8 @@
+import pytest
+
 from server.algorithm.models import CandidateGraph, EdgeRecord
 from server.algorithm.params import Params
+from server.algorithm.stage3_graphs import _finalize_graph
 from server.algorithm.stage4_hop_dp import continue_s4_carousel
 
 
@@ -90,3 +93,27 @@ def test_manual_round_returns_at_most_one_novel_unit_per_sq():
     )
     assert len(result.chains) == 2
     assert {chain.source_graph for chain in result.chains} == {"sq-a", "sq-b"}
+
+
+@pytest.mark.parametrize("decay", [0.7, 0.0])
+def test_negative_ce_continuation_finds_the_unused_chain(decay):
+    edges = {}
+    for key, start, end, score in [
+        ("a", "a0", "a1", -1.0),
+        ("b", "a1", "a2", -1.1),
+        ("c", "b0", "b1", -1.2),
+        ("d", "b1", "b2", -1.3),
+    ]:
+        item = edge(key, 0.9, start, end)
+        item.rerank_score = score
+        edges[key] = item
+    graphs = {"sq1": _finalize_graph("sq1", edges, 20)}
+    p = Params(prize_top=2, max_hops=2, s4_min_prize_edges=2, s4_p_decay=decay)
+
+    first = continue_s4_carousel(graphs, params=p, budget=1)
+    second = continue_s4_carousel(graphs, params=p, budget=1, state=first.state)
+
+    assert set(first.chains[0].all_edge_keys()) == {"a", "b"}
+    assert len(second.chains) == 1
+    assert set(second.chains[0].all_edge_keys()) == {"c", "d"}
+    assert second.duplicate_mined == 0

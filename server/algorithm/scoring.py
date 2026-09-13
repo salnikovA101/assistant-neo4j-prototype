@@ -21,10 +21,13 @@ def edge_prize_weight(
     p_store: Mapping[str, float],
     params: Params,
 ) -> float:
-    """Sort key: raw CE (or cosine if CE was not run) · p. Not clipped to [0, 1]."""
+    """Discount relevance without promoting negative logits toward zero."""
     del params
     p = float(p_store.get(edge.edge_key, 1.0))
-    return ranking_relevance(edge) * p
+    relevance = ranking_relevance(edge)
+    if relevance < 0.0:
+        return relevance / p if p > 0.0 else float("-inf")
+    return relevance * p
 
 
 def rank_contribs(
@@ -36,8 +39,9 @@ def rank_contribs(
     """
     One ranked list of every edge on the graph (anchors and bridges).
 
-    Sort by (CE|sim)·p from the shared overlay. p only moves order; prize
-    and cost amounts come from rank, not from p again.
+    Discount nonnegative relevance by multiplying by p, negative relevance
+    by dividing by p. p only moves order; prize and cost amounts come from
+    rank, not from p again.
     - r ≤ prize_top: prize = prize_rank_max·(K−r+1)/K
     - r > prize_top: cost = prize_rank_max·x^s4_cost_power,
       x = (r−K)/(N−K); last rank pays prize_rank_max.

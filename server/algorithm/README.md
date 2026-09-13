@@ -34,7 +34,9 @@ every walk key gets `p *= s4_p_decay` (default 0.7; `0` zeros the keys).
 Ranks are recomputed each step — no freeze.
 
 On a graph, **all** edges (anchors and bridges) share one list. Sort by
-`(CE|sim) · p`. `p` only moves order; prize/cost amounts come from rank:
+`(CE|sim) · p` for nonnegative scores; divide negative scores by `p`
+(`p=0` gives `−∞`) so negative scores also lose priority. `p` only moves order;
+prize/cost amounts come from rank:
 
 - `r ≤ prize_top`: `prize_rank_max · (K−r+1)/K` (linear `+1 → ~0`)
 - `r > prize_top`: `−prize_rank_max · x^s4_cost_power` (`s4_cost_power=1.5`),

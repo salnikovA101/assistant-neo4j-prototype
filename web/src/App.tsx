@@ -61,7 +61,6 @@ import type {
   ResearchBranch,
   SearchDepth,
   SavedCard,
-  TurnFailure,
   UiConfig,
 } from "./types";
 
@@ -220,8 +219,6 @@ export function App() {
   const [composerFocusKey, setComposerFocusKey] = useState(0);
   const [agenda, setAgenda] = useState<AgendaItem[]>([]);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
-  const [turnFailures, setTurnFailures] = useState<TurnFailure[]>([]);
-  const [dismissedFailures, setDismissedFailures] = useState<Set<number>>(new Set());
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [cardBusy, setCardBusy] = useState(false);
   const [cardTemplates, setCardTemplates] = useState<CardTemplate[]>([]);
@@ -241,6 +238,8 @@ export function App() {
   const [hasUserKey, setHasUserKey] = useState(() => Boolean(getLlmKey()));
   const [recording, setRecording] = useState(false);
   const [notice, setNotice] = useState("");
+  const [errorNotice, setErrorNotice] = useState<{ text: string; id: string } | null>(null);
+  const showError = (text: string) => { setNotice(""); setErrorNotice({ text, id: uid() }); };
   const abortRef = useRef<AbortController | null>(null);
   // A history request may complete after a turn has already put its local
   // placeholder on screen. Until the stream is terminal, that server snapshot
@@ -298,7 +297,6 @@ export function App() {
     setViewCheckpointId(detail.viewCheckpointId || detail.headCheckpointId || "");
     setAgenda(detail.agenda || []);
     setPendingApproval(detail.pendingApproval || null);
-    setTurnFailures(detail.turnFailures || []);
     const selected = (detail.branches || []).find((item) => item.id === detail.activeBranchId);
     if (selected?.mode) {
       setMode(selected.mode);
@@ -397,7 +395,7 @@ export function App() {
         if (!cancelled) applyDetail(detail);
       })
       .catch((err) => {
-        if (!cancelled) setNotice(err instanceof Error ? err.message : "Не удалось открыть чат");
+        if (!cancelled) showError(err instanceof Error ? err.message : "Не удалось открыть чат");
       });
     return () => {
       cancelled = true;
@@ -448,6 +446,12 @@ export function App() {
     return () => window.clearTimeout(timeout);
   }, [notice]);
 
+  useEffect(() => {
+    if (!errorNotice) return;
+    const timeout = window.setTimeout(() => setErrorNotice(null), 1000);
+    return () => window.clearTimeout(timeout);
+  }, [errorNotice]);
+
   function openHelp(section = "") {
     setSettingsOpen(false);
     setRightPanel({ kind: "closed" });
@@ -472,8 +476,6 @@ export function App() {
     setBranches([]);
     setAgenda([]);
     setPendingApproval(null);
-    setTurnFailures([]);
-    setDismissedFailures(new Set());
     setMessages([]);
     setDraft("");
     const nextMode = config?.staged_enabled === false ? "auto" : "staged";
@@ -490,8 +492,6 @@ export function App() {
     setRequestedCheckpointId("");
     setSelectedResearchStep(null);
     setRightPanel({ kind: "closed" });
-    setTurnFailures([]);
-    setDismissedFailures(new Set());
     setWorkspace("chat");
   }
 
@@ -537,7 +537,8 @@ export function App() {
     }
     let conversationId = currentId;
     let activeBranchId = branchId;
-    let baseCheckpointId = viewCheckpointId || headCheckpointId;
+    // Creating a card continues the current branch, even while viewing history.
+    let baseCheckpointId = card ? headCheckpointId : viewCheckpointId || headCheckpointId;
     if (!conversationId) {
       try {
         const created = await createConversation(mode);
@@ -550,16 +551,17 @@ export function App() {
         setBranchId(activeBranchId);
         setRequestedCheckpointId("");
       } catch (err) {
-        setNotice(err instanceof Error ? err.message : "Не удалось создать чат");
+        showError(err instanceof Error ? err.message : "Не удалось создать чат");
         return;
       }
     }
     const sourceBranch = branches.find((item) => item.id === activeBranchId);
-    if (sourceBranch?.mode === "auto" && mode === "staged") {
+    const turnMode = card ? (sourceBranch?.mode || activeBranchMode || mode) : mode;
+    if (sourceBranch?.mode === "auto" && turnMode === "staged") {
       setNotice("Исследование начинается в новом чате. Этот вариант остаётся в режиме «Вопрос по базе».");
       return;
     }
-    if (sourceBranch?.mode === "staged" && mode === "auto") {
+    if (sourceBranch?.mode === "staged" && turnMode === "auto") {
       if (!baseCheckpointId) return;
       try {
         const autoBranch = await forkConversation(
@@ -574,7 +576,7 @@ export function App() {
         setHeadCheckpointId(baseCheckpointId);
         setRightPanel({ kind: "closed" });
       } catch (err) {
-        setNotice(err instanceof Error ? err.message : "Не удалось открыть вариант «Вопрос по базе»");
+        showError(err instanceof Error ? err.message : "Не удалось открыть вариант «Вопрос по базе»");
         return;
       }
     }
@@ -635,11 +637,11 @@ export function App() {
           reasoning_effort: effort || undefined,
           profile: profile || undefined,
           turn_id: uid(),
-          mode,
+          mode: turnMode,
           branch_id: activeBranchId || undefined,
           base_checkpoint_id: baseCheckpointId || undefined,
           fork_if_needed: Boolean(
-            activeBranchId && baseCheckpointId && headCheckpointId && baseCheckpointId !== headCheckpointId
+            !card && activeBranchId && baseCheckpointId && headCheckpointId && baseCheckpointId !== headCheckpointId
           ),
           intent: card ? "generate_card" : "chat",
           template_version_id: card?.templateVersionId,
@@ -659,7 +661,7 @@ export function App() {
           err = res.statusText || err;
         }
         restoreComposer(value, user.id, assistantId);
-        setNotice(err);
+        showError(err);
         return;
       }
       const reader = res.body.getReader();
@@ -776,11 +778,12 @@ export function App() {
           return true;
         } else if (event === "turn_rolled_back") {
           restoreComposer(String(data.text || value), user.id, assistantId);
-          if (data.message) setNotice(String(data.message));
+          if (data.message) showError(String(data.message));
           terminal = true;
           return true;
         } else if (event === "error") {
-          flush("error", { text: String(data.message || "Ошибка стрима") });
+          restoreComposer(value, user.id, assistantId);
+          showError(String(data.message || "Ошибка стрима"));
           terminal = true;
           return true;
         }
@@ -816,7 +819,7 @@ export function App() {
         restoreComposer(value, user.id, assistantId);
       } else {
         restoreComposer(value, user.id, assistantId);
-        setNotice("Ошибка соединения с сервером");
+        showError("Ошибка соединения с сервером");
       }
     } finally {
       liveTurnRef.current = false;
@@ -845,7 +848,7 @@ export function App() {
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
-      setNotice("Не удалось получить доступ к микрофону. Проверьте разрешение браузера.");
+      showError("Не удалось получить доступ к микрофону. Проверьте разрешение браузера.");
       return;
     }
     const rec = new MediaRecorder(stream);
@@ -865,9 +868,9 @@ export function App() {
         if (!res.ok) throw new Error();
         const data = await res.json();
         if (data.text) await send(String(data.text));
-        else setNotice("Не удалось распознать речь. Попробуйте ещё раз.");
+        else showError("Не удалось распознать речь. Попробуйте ещё раз.");
       } catch {
-        setNotice("Не удалось распознать речь. Проверьте соединение и повторите попытку.");
+        showError("Не удалось распознать речь. Проверьте соединение и повторите попытку.");
       }
     };
     mediaRef.current = rec;
@@ -984,11 +987,11 @@ export function App() {
               status = "waiting_approval";
             } else if (parsed?.event === "turn_rolled_back") {
               restoreComposer(String(parsed.data.text || ""));
-              if (parsed.data.message) setNotice(String(parsed.data.message));
+              if (parsed.data.message) showError(String(parsed.data.message));
               rolledBack = true;
               status = "aborted";
             } else if (parsed?.event === "error") {
-              setNotice(String(parsed.data.message || "Ошибка продолжения"));
+              showError(String(parsed.data.message || "Ошибка продолжения"));
               status = "error";
             }
             if (!rolledBack) patchAssistant(assistantId, { text: answer, thinking, steps, status });
@@ -1018,7 +1021,7 @@ export function App() {
         setPendingApproval(null);
         setNotice("Продолжение остановлено.");
       } else {
-        setNotice(error instanceof Error ? error.message : "Не удалось продолжить ответ");
+        showError(error instanceof Error ? error.message : "Не удалось продолжить ответ");
       }
     } finally {
       setApprovalBusy(false);
@@ -1056,7 +1059,7 @@ export function App() {
       setAgenda(result.agenda);
       setHeadCheckpointId(result.checkpointId);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось изменить план");
+      showError(error instanceof Error ? error.message : "Не удалось изменить план");
       const detail = await fetchConversation(currentId, branchId);
       applyDetail(detail);
     }
@@ -1077,7 +1080,7 @@ export function App() {
         ui: template.latestVersion.ui,
       });
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось сформировать карточку");
+      showError(error instanceof Error ? error.message : "Не удалось сформировать карточку");
     } finally {
       setCardBusy(false);
     }
@@ -1100,7 +1103,7 @@ export function App() {
       applyDetail(await fetchConversation(currentId, branchId));
       setNotice("Карточка сохранена в библиотеку.");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось сохранить карточку");
+      showError(error instanceof Error ? error.message : "Не удалось сохранить карточку");
     }
   }
 
@@ -1117,7 +1120,7 @@ export function App() {
       setRightPanel({ kind: "closed" });
       setNotice(`Карточка «${card.title}» добавлена в контекст варианта.`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось вставить карточку");
+      showError(error instanceof Error ? error.message : "Не удалось вставить карточку");
     }
   }
 
@@ -1143,7 +1146,7 @@ export function App() {
         return next;
       });
       void fetchConversation(currentId, branchId).then((detail) => applyDetail(detail)).catch(() => undefined);
-      setNotice(error instanceof Error ? error.message : "Не удалось переименовать вариант");
+      showError(error instanceof Error ? error.message : "Не удалось переименовать вариант");
       throw error;
     }
   }
@@ -1173,7 +1176,7 @@ export function App() {
       setComposerFocusKey((value) => value + 1);
       setNotice(`Создан вариант «${created.name}» от выбранного ответа.`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось создать вариант");
+      showError(error instanceof Error ? error.message : "Не удалось создать вариант");
     } finally {
       setForkingCheckpointId("");
     }
@@ -1238,7 +1241,7 @@ export function App() {
       openResearch("map");
       selectResearchStep(originBranchId || step.branchId, step);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Не удалось открыть исходный шаг");
+      showError(error instanceof Error ? error.message : "Не удалось открыть исходный шаг");
     }
   }
 
@@ -1274,7 +1277,7 @@ export function App() {
               sessionStorage.removeItem("neo4j-assistant.session-id");
               await newChat();
             }
-          } catch (error) { setNotice(error instanceof Error ? error.message : "Не удалось удалить чат"); }
+          } catch (error) { showError(error instanceof Error ? error.message : "Не удалось удалить чат"); }
         }}
         onExplorer={() => { setRightPanel({ kind: "closed" }); setWorkspace("graph"); }}
         onLibrary={() => { setRightPanel({ kind: "closed" }); setWorkspace("library"); }}
@@ -1323,8 +1326,6 @@ export function App() {
             pendingApproval={pendingApproval}
             approvalBusy={approvalBusy}
             onResolveApproval={(action, sqs, feedback) => void handleApproval(action, sqs, feedback)}
-            turnFailures={turnFailures.filter((item) => !dismissedFailures.has(item.createdAt))}
-            onDismissFailure={(createdAt) => setDismissedFailures((prev) => new Set(prev).add(createdAt))}
             selectedMessageIds={selectedResearchStep ? [
               selectedResearchStep.question.messageId,
               ...(selectedResearchStep.answer?.messageId ? [selectedResearchStep.answer.messageId] : []),
@@ -1375,6 +1376,7 @@ export function App() {
               </span>
             </div>
           )}
+          {errorNotice && <div className="composer-error-notice" role="status">{errorNotice.text}</div>}
           <Composer
             text={draft}
             onText={setDraft}
@@ -1570,6 +1572,7 @@ export function App() {
 
       </div>}
       {notice && <div className="toast" role="status">{notice}</div>}
+      {errorNotice && workspace !== "chat" && <div className="toast is-error" role="status">{errorNotice.text}</div>}
     </div>
   );
 }

@@ -125,6 +125,30 @@ def thinking_is_on(
     return effort not in _THINK_OFF_EFFORTS
 
 
+def _safe_error_details(exc: BaseException) -> dict[str, str]:
+    """Log structured diagnostics without provider prose that may echo inputs."""
+    body = getattr(exc, "body", None)
+    body = body if isinstance(body, dict) else {}
+    error = body.get("error", body)
+    error = error if isinstance(error, dict) else {}
+    details = {}
+    for key, value in {
+        "code": error.get("code"),
+        "param": error.get("param"),
+        "request_id": getattr(exc, "request_id", None),
+    }.items():
+        if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:/\[\]-]{1,128}", value):
+            details[key] = value
+    message = str(error.get("message") or "").lower()
+    if "tool_choice" in message and "thinking" in message:
+        details["reason"] = "forced_tool_choice_with_thinking"
+    elif "enable_thinking" in message:
+        details["reason"] = "unsupported_thinking_setting"
+    elif "reasoning_effort" in message:
+        details["reason"] = "unsupported_reasoning_effort"
+    return details
+
+
 def public_llm_error_message(exc: BaseException) -> str:
     """User-facing LLM error; never include provider bodies that may echo secrets."""
     status = getattr(exc, "status_code", None)
@@ -136,6 +160,8 @@ def public_llm_error_message(exc: BaseException) -> str:
         return (
             "Лимит ключа исчерпан. Откройте настройки и вставьте свой ключ."
         )
+    if status == 400:
+        return "Модель отклонила параметры запроса. Попробуйте другую модель."
     return "Ошибка LLM. Попробуйте ещё раз."
 
 
@@ -709,10 +735,12 @@ class BaseLLMProvider(ABC):
         except Exception as e:
             status = getattr(e, "status_code", None)
             logger.error(
-                "[%s] Ошибка generate_response_stream: status=%s type=%s",
+                "[%s] Ошибка generate_response_stream: status=%s type=%s model=%s details=%s",
                 self.__class__.__name__,
                 status,
                 type(e).__name__,
+                self.profile.model,
+                _safe_error_details(e),
             )
             from server.llm.model_router import classify_llm_error
 

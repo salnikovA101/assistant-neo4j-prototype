@@ -58,6 +58,7 @@ export function CardVisual({
   ui = {},
   data,
   editable = false,
+  titlePlaceholder = "Без названия",
   status,
   onChange,
 }: {
@@ -68,6 +69,7 @@ export function CardVisual({
   data: Record<string, unknown>;
   provenance?: Record<string, unknown>;
   editable?: boolean;
+  titlePlaceholder?: string;
   status?: string;
   onChange?: (key: string, value: unknown) => void;
 }) {
@@ -87,7 +89,7 @@ export function CardVisual({
               aria-label="Название карточки"
               onChange={(event) => onChange?.(titleKey, event.target.value || null)}
             />
-          ) : <h3>{empty(title) ? "Без названия" : String(title)}</h3>}
+          ) : <h3>{empty(title) ? titlePlaceholder : String(title)}</h3>}
         </div>
         {status && <span className="visual-card-status">{status}</span>}
       </header>

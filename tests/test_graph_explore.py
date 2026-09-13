@@ -11,11 +11,14 @@ from server.algorithm.cypher.explore import (
     _FACET_RELATIONSHIPS,
     _FACET_SOURCES,
     _FETCH_TRIPLETS,
+    InvalidExploreCursor,
+    _decode_explore_cursor,
     clamp_explore_field,
     clamp_explore_limit,
     graph_filters_active,
     normalize_graph_filters,
     nodes_from_triplet_rows,
+    fetch_explore_rows,
 )
 from server.core.http_api import GraphExpandBody, GraphExploreBody, GraphFacetsBody, GraphFilters
 from server.tools.graph_explore import rows_to_explore_payload
@@ -197,3 +200,79 @@ def test_graph_explore_http_accepts_custom_limit_and_guards_range() -> None:
     )
     assert scoped.status_code == 200
     assert scoped.json()["field"] == "rel"
+
+
+@pytest.mark.asyncio
+async def test_explore_pages_preserve_rank_order_and_do_not_skip_lower_ids():
+    # ID order deliberately disagrees with relevance and confidence order.
+    rows = [
+        {"id": key, "_cursor_relevance": relevance, "_cursor_evidence": 1,
+         "_cursor_confidence": confidence}
+        for key, relevance, confidence in [
+            ("r9", 100, 0.9), ("r1", 100, 0.8), ("r2", 100, 0.8),
+            ("r0", 100, -1.0), ("r8", 80, 1.0), ("r3", 20, 0.9),
+        ]
+    ]
+
+    class Driver:
+        def session(self):
+            return self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def run(self, query, **params):
+            cursor = params["cursor"]
+            assert params["run_id"] == "test-run"
+            boundary = (
+                -cursor["relevance"], -cursor["has_evidence"],
+                -cursor["confidence"], cursor["id"],
+            ) if cursor else None
+
+            async def records():
+                selected = [row for row in rows if boundary is None or (
+                    -row["_cursor_relevance"], -row["_cursor_evidence"],
+                    -row["_cursor_confidence"], row["id"],
+                ) > boundary]
+                for row in selected[:params["limit"]]:
+                    yield dict(row)
+            return records()
+
+    found = []
+    cursor = ""
+    for _ in range(10):
+        _, page, cursor = await fetch_explore_rows(
+            Driver(), q="test", limit=2, run_id="test-run", cursor=cursor,
+        )
+        assert all(not any(k.startswith("_cursor") for k in row) for row in page)
+        found.extend(row["id"] for row in page)
+        if cursor is None:
+            break
+        GraphExploreBody(cursor=cursor)
+    assert cursor is None
+    assert found == [row["id"] for row in rows]
+
+
+@pytest.mark.parametrize("cursor", [
+    "old-edge-id", "{}", "null", "[100,1]", '[100,1,NaN,"r1"]',
+    '[99999999999999999999,1,0.8,"r1"]',
+])
+def test_explore_rejects_invalid_or_legacy_cursors(cursor):
+    with pytest.raises(InvalidExploreCursor):
+        _decode_explore_cursor(cursor)
+
+
+@pytest.mark.asyncio
+async def test_explore_endpoint_returns_400_for_invalid_cursor(monkeypatch):
+    from fastapi import HTTPException
+    from server.core import app as api
+
+    monkeypatch.setattr(api, "_current_user", lambda request: object())
+    monkeypatch.setattr(api, "get_driver", lambda: None)
+    monkeypatch.setattr(api, "workspace_run_id_from_request", lambda request: "test-run")
+    with pytest.raises(HTTPException) as exc:
+        await api.graph_explore(None, GraphExploreBody(q="test", cursor="old-id"))
+    assert exc.value.status_code == 400

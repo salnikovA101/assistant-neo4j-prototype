@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, CSSProperties } from "react";
-import type { AgendaItem, CardDraft, CardTemplate, ChatMessage, ChatStep, PendingApproval, TurnFailure } from "../types";
+import type { AgendaItem, CardDraft, CardTemplate, ChatMessage, ChatStep, PendingApproval } from "../types";
 import { prettyJson, renderAnswerMarkdown, renderMarkdown, renderReasoningMarkdown } from "../format";
 import { blankData, fallbackSchemaForData } from "../cardModel";
 import { IconFork, IconGraph } from "./Icons";
@@ -310,8 +310,6 @@ export function ChatThread({
   agenda,
   approvalBusy,
   onResolveApproval,
-  turnFailures = [],
-  onDismissFailure,
   selectedMessageIds = [],
   onSaveCard,
   onFork,
@@ -333,8 +331,6 @@ export function ChatThread({
     selection: { openSqRefs: string[]; newSubquestions: string[] },
     feedback?: string
   ) => void;
-  turnFailures?: TurnFailure[];
-  onDismissFailure?: (createdAt: number) => void;
   selectedMessageIds?: string[];
   onSaveCard: (draftId: string, title: string, data: Record<string, unknown>, provenance: Record<string, unknown>, gaps: unknown[]) => void;
   onFork: (checkpointId: string) => void;
@@ -414,7 +410,7 @@ export function ChatThread({
     []
   );
 
-  if (!messages.length && !turnFailures.length) return null;
+  if (!messages.length) return null;
 
   return (
     <div
@@ -426,24 +422,6 @@ export function ChatThread({
         followTailRef.current = scrollHeight - scrollTop - clientHeight < 56;
       }}
     >
-      {turnFailures.map((failure) => (
-        <div key={failure.createdAt} className="turn-failure-chip" role="status">
-          <span>
-            {failure.reason === "cancelled"
-              ? "Запрос отменён"
-              : failure.reason === "aborted"
-                ? "Запрос остановлен"
-                : "Запрос не выполнен"}
-            {failure.message ? ` · ${failure.message}` : ""}
-          </span>
-          <time dateTime={new Date(failure.createdAt).toISOString()}>
-            {new Date(failure.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-          </time>
-          {onDismissFailure && (
-            <button type="button" onClick={() => onDismissFailure(failure.createdAt)}>Закрыть</button>
-          )}
-        </div>
-      ))}
       {messages.map((msg) => {
         const steps = stepsOf(msg);
         const branchVisual = msg.branchId ? branchVisuals[msg.branchId] : undefined;

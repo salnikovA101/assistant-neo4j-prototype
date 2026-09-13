@@ -10,3 +10,5 @@ PyYAML
 python-dotenv
 httpx
 json-repair
+reportlab>=4.4,<5
+markdown-it-py>=3,<5

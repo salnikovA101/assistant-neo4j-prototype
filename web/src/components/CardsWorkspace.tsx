@@ -1,14 +1,13 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   archiveCard, archiveCardTemplate, createCardTemplate,
-  createCardTemplateVersion, fetchCards, fetchCardTemplates, importCardDraft,
+  createCardTemplateVersion, downloadCard, fetchCards, fetchCardTemplates, importCardDraft,
   reviseCard, saveCardDraft, updateCardActionState, updateCardDraft,
 } from "../api";
 import { blankData, fallbackSchemaForData } from "../cardModel";
 import type { CardActionId, CardActionState, CardDraft, CardTemplate, SavedCard } from "../types";
 import { CardTemplateBuilder, type TemplateBuilderValue } from "./CardTemplateBuilder";
 import { CardVisual } from "./CardVisual";
-import { IconTrash } from "./Icons";
 
 const plannedCardActions = [
   { id: "digital_experiment", label: "Цифровой эксперимент", description: "Цифровой эксперимент пока недоступен. Здесь появятся результаты проверки карточки." },
@@ -74,11 +73,12 @@ function changedProvenance(provenance: Record<string, unknown>, key: string): Re
   return next;
 }
 
-function DraftReview({ draft, template, queueSize, busy, onSave }: {
+function DraftReview({ draft, template, queueSize, busy, onSave, onCancel }: {
   draft: CardDraft;
   template?: CardTemplate;
   queueSize: number;
   busy: boolean;
+  onCancel: () => void;
   onSave: (data: Record<string, unknown>, provenance: Record<string, unknown>, title: string) => Promise<void>;
 }) {
   const [data, setData] = useState(draft.data);
@@ -104,7 +104,7 @@ function DraftReview({ draft, template, queueSize, busy, onSave }: {
         }}
       />
       {!title && <p className="draft-save-hint">Добавьте название карточки перед сохранением.</p>}
-      <button className="primary-btn" disabled={busy || !title} onClick={() => onSave(data, provenance, title)}>Сохранить карточку</button>
+      <footer><button className="primary-btn" disabled={busy || !title} onClick={() => onSave(data, provenance, title)}>Сохранить карточку</button><button type="button" className="ghost-btn" disabled={busy} onClick={onCancel}>Отмена</button></footer>
     </section>
   );
 }
@@ -129,14 +129,14 @@ function SavedCardEditor({ card, template, busy, onCancel, onSave }: {
       data={data}
       provenance={card.latestRevision.provenance}
       editable
-      status={`Новая правка после ${card.latestRevision.revision}`}
+      status="Редактирование"
       onChange={(key, value) => {
         setData((current) => ({ ...current, [key]: value }));
         setEdited((current) => new Set(current).add(key));
       }}
     />
     {!title && <p className="draft-save-hint">Название обязательно.</p>}
-    <footer><button type="button" className="primary-btn" disabled={busy || !title || edited.size === 0} onClick={() => onSave(data, [...edited], title)}>Сохранить правку</button><button type="button" className="ghost-btn" disabled={busy} onClick={onCancel}>Отмена</button></footer>
+    <footer><button type="button" className="primary-btn" disabled={busy || !title || edited.size === 0} onClick={() => onSave(data, [...edited], title)}>Сохранить изменения</button><button type="button" className="ghost-btn" disabled={busy} onClick={onCancel}>Отмена</button></footer>
   </article>;
 }
 
@@ -154,6 +154,7 @@ export function CardsWorkspace({
   initialTab?: "templates" | "library";
   readOnly?: boolean;
 }) {
+  const importInputRef = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<"templates" | "library">(initialTab);
   const [templates, setTemplates] = useState<CardTemplate[]>([]);
   const [cards, setCards] = useState<SavedCard[]>([]);
@@ -162,6 +163,7 @@ export function CardsWorkspace({
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [busy, setBusy] = useState(false);
   const [editor, setEditor] = useState<"create" | "edit" | null>(null);
+  const [downloadingCardId, setDownloadingCardId] = useState("");
   const [editingCardId, setEditingCardId] = useState("");
   const [cardQuery, setCardQuery] = useState("");
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
@@ -184,6 +186,31 @@ export function CardsWorkspace({
   }, [selectedTemplate, tab, templates]);
   const template = useMemo(() => templateForVersion(templates, selectedTemplate), [templates, selectedTemplate]);
   const draftTemplate = draft ? templateForVersion(templates, draft.templateVersionId) : undefined;
+
+  const importFile = async (file: File) => {
+    setBusy(true);
+    try {
+      const uploaded = JSON.parse(await file.text());
+      if (uploaded?.format === "neo4j-assistant-card" && ![1, 2].includes(uploaded.formatVersion)) throw new Error("Эта версия файла карточки пока не поддерживается");
+      const templateName = typeof uploaded?.template === "string" ? uploaded.template : uploaded?.template?.name;
+      if (typeof templateName !== "string" || !templateName.trim()) throw new Error("В JSON не указано название шаблона. Выберите файл, скачанный из карточки.");
+      const data = uploaded.data;
+      const objects = Array.isArray(data) ? data : [data];
+      if (!objects.length || objects.some((item) => !item || typeof item !== "object" || Array.isArray(item))) throw new Error("В JSON нет данных карточки.");
+      const availableTemplates = await fetchCardTemplates();
+      const normalizeName = (name: string) => name.normalize("NFC").trim().replace(/\s+/g, " ").toLocaleLowerCase("ru-RU");
+      const matches = availableTemplates.filter((item) => normalizeName(item.name) === normalizeName(templateName));
+      if (!matches.length) throw new Error(`Шаблон «${templateName}» не найден. Добавьте его на вкладке «Шаблоны» и повторите загрузку.`);
+      if (matches.length > 1) throw new Error(`Найдено несколько шаблонов «${templateName}». Задайте им разные названия, чтобы шаблон определялся однозначно.`);
+      const imported = await importCardDraft(matches[0].latestVersion.id, data, checkpointId || undefined);
+      setTemplates(availableTemplates);
+      setDraft(imported[0] || null);
+      setDraftQueue(imported.slice(1));
+      setTab("library");
+      onNotice(`Шаблон «${matches[0].name}» выбран автоматически. Проверьте карточку и сохраните её.`);
+    } catch (error) { onNotice(error instanceof Error ? error.message : "Не удалось вставить карточку"); }
+    finally { setBusy(false); }
+  };
 
   const saveBuilder = async (value: TemplateBuilderValue) => {
     setBusy(true);
@@ -244,46 +271,25 @@ export function CardsWorkspace({
             ) : template ? (
               <>
                 <div className="card-detail-head">
-                  <div><h2>{template.name}</h2><p>{template.description}</p></div>
+                  <div className="card-detail-title">
+                    <h2>{template.name}</h2>
                   <div className="template-actions">
-        {!chatMode && <label className="ghost-btn card-import-control" title="Загрузить данные для выбранного шаблона">Заполнить из JSON<input type="file" accept="application/json,.json" disabled={busy} onChange={async (event) => {
-          const file = event.target.files?.[0];
-          if (!file) return;
-          if (!selectedTemplate) {
-            onNotice("Сначала выберите шаблон на вкладке «Шаблоны».");
-            event.target.value = "";
-            return;
-          }
-          setBusy(true);
-          try {
-            const parsed = JSON.parse(await file.text()); const objects = Array.isArray(parsed) ? parsed : [parsed];
-            if (!objects.length || objects.some((item) => !item || typeof item !== "object" || Array.isArray(item))) throw new Error("JSON должен содержать object или непустой array объектов");
-            const imported = await importCardDraft(selectedTemplate, Array.isArray(parsed) ? objects : objects[0], checkpointId || undefined);
-            setDraft(imported[0] || null); setDraftQueue(imported.slice(1)); setTab("templates"); onNotice(`Импортировано черновиков: ${imported.length}. Проверьте их перед сохранением.`);
-          } catch (error) { onNotice(error instanceof Error ? error.message : "Ошибка импорта"); }
-          finally { setBusy(false); event.target.value = ""; }
-        }} /></label>}
                     {chatMode && onGenerate && <button type="button" className="primary-btn" disabled={busy || readOnly} onClick={() => onGenerate(template.latestVersion.id)}>Создать</button>}
                     {!chatMode && <button type="button" className="ghost-btn" onClick={() => setEditor("edit")}>Изменить</button>}
-                    {!chatMode && !template.system && <button type="button" className="delete-icon-btn" aria-label="Удалить шаблон" title="Удалить шаблон" disabled={busy} onClick={async () => {
+                    {!chatMode && !template.system && <button type="button" className="ghost-btn danger-btn" aria-label="Удалить шаблон" title="Удалить шаблон" disabled={busy} onClick={async () => {
                       if (!window.confirm(`Удалить шаблон «${template.name}»?`)) return;
                       setBusy(true);
                       try { await archiveCardTemplate(template.id); setSelectedTemplate(""); await reload(); onNotice("Шаблон удалён."); }
                       catch (error) { onNotice(error instanceof Error ? error.message : "Не удалось удалить шаблон"); }
                       finally { setBusy(false); }
-                    }}><IconTrash /></button>}
+                    }}>Удалить</button>}
                   </div>
+                  </div>
+                  <p>{template.description}</p>
                 </div>
                 <div className="template-structure"><h3>Поля карточки</h3><p>Ассистент заполнит их по вашему диалогу.</p><div className="template-field-list">{Object.entries((template.latestVersion.schema.properties || {}) as Record<string, { title?: string; description?: string }>).filter(([key]) => key !== "title").map(([key, field], index) => <div key={key}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{field.title || key}</strong>{field.description && <p>{field.description}</p>}</div></div>)}</div></div>
                 {!chatMode && <details className="technical-card-data"><summary>Дополнительно · технические данные</summary><pre>{JSON.stringify({ schema: template.latestVersion.schema, ui: template.latestVersion.ui }, null, 2)}</pre></details>}
-                {draft && <DraftReview draft={draft} template={draftTemplate} queueSize={draftQueue.length} busy={busy} onSave={async (data, provenance, title) => {
-                  setBusy(true);
-                  try {
-                    await updateCardDraft(draft.id, { data, provenance, gaps: draft.gaps }); await saveCardDraft(draft.id, title); await reload();
-                    const [nextDraft, ...rest] = draftQueue; setDraft(nextDraft || null); setDraftQueue(rest); if (!nextDraft) setTab("library");
-                  } catch (error) { onNotice(error instanceof Error ? error.message : "Ошибка сохранения"); }
-                  finally { setBusy(false); }
-                }} />}
+
               </>
             ) : <div className="cards-empty-state">{templates.length
               ? <><strong>Выберите шаблон</strong><p>Слева находятся встроенные и личные шаблоны. Откройте нужный, чтобы посмотреть поля или начать заполнение.</p></>
@@ -294,22 +300,47 @@ export function CardsWorkspace({
         )
       ) : (
         <div className="library-shell">
-          <div className="library-tools"><label className="library-search"><span className="sr-only">Поиск по карточкам</span><input type="search" placeholder="Найти карточку по названию или содержанию" value={cardQuery} onChange={(event) => setCardQuery(event.target.value)} /></label><span className="library-count">{visibleCards.length} из {cards.length}</span></div>
+          <div className="library-tools">
+            <label className="library-search"><span className="sr-only">Поиск по карточкам</span><input type="search" placeholder="Найти карточку по названию или содержанию" value={cardQuery} onChange={(event) => setCardQuery(event.target.value)} /></label>
+            <span className="library-count">{visibleCards.length} из {cards.length}</span>
+            {!chatMode && <>
+              <input ref={importInputRef} type="file" accept="application/json,.json" hidden disabled={busy || readOnly || !!draft} onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = "";
+                if (file) void importFile(file);
+              }} />
+              <button type="button" className="ghost-btn library-import-button" disabled={busy || readOnly || !!draft} title="Загрузить JSON — шаблон определится автоматически" onClick={() => importInputRef.current?.click()}>Вставить карточку</button>
+            </>}
+          </div>
           <div className="library-grid">
-            {cards.length === 0 && <div className="cards-empty-state"><strong>Сохранённых карточек пока нет</strong><p>Откройте диалог и нажмите значок карточек у поля сообщения.</p></div>}
-            {cards.length > 0 && visibleCards.length === 0 && <div className="cards-empty-state"><strong>Карточки не найдены</strong><p>Попробуйте другое название или слово из содержимого.</p></div>}
+            {draft && <article className="library-card library-import-draft"><DraftReview key={draft.id} onCancel={() => { setDraft(null); setDraftQueue([]); }} draft={draft} template={draftTemplate} queueSize={draftQueue.length} busy={busy} onSave={async (data, provenance, title) => {
+                  setBusy(true);
+                  try {
+                    await updateCardDraft(draft.id, { data, provenance, gaps: draft.gaps }); await saveCardDraft(draft.id, title); setCardQuery(""); await reload();
+                    const [nextDraft, ...rest] = draftQueue; setDraft(nextDraft || null); setDraftQueue(rest); if (!nextDraft) setTab("library");
+                  } catch (error) { onNotice(error instanceof Error ? error.message : "Ошибка сохранения"); }
+                  finally { setBusy(false); }
+                }} /></article>}
+            {!draft && cards.length === 0 && <div className="cards-empty-state"><strong>Сохранённых карточек пока нет</strong><p>Откройте диалог и нажмите значок карточек у поля сообщения.</p></div>}
+            {!draft && cards.length > 0 && visibleCards.length === 0 && <div className="cards-empty-state"><strong>Карточки не найдены</strong><p>Попробуйте другое название или слово из содержимого.</p></div>}
             {visibleCards.map((card) => {
               const cardTemplate = templateForVersion(templates, card.templateVersionId);
               if (editingCardId === card.id) return <SavedCardEditor key={card.id} card={card} template={cardTemplate} busy={busy} onCancel={() => setEditingCardId("")} onSave={async (data, editedFields, title) => {
                 setBusy(true);
-                try { await reviseCard(card.id, { data, editedFields, title }); await reload(); setEditingCardId(""); onNotice("Новая правка карточки сохранена."); }
-                catch (error) { onNotice(error instanceof Error ? error.message : "Не удалось сохранить правку"); }
+                try { await reviseCard(card.id, { data, editedFields, title }); await reload(); setEditingCardId(""); onNotice("Изменения карточки сохранены."); }
+                catch (error) { onNotice(error instanceof Error ? error.message : "Не удалось сохранить изменения"); }
                 finally { setBusy(false); }
               }} />;
               return <article key={card.id} className={`library-card ${chatMode ? "chat-library-card" : ""} ${expandedCards.has(card.id) ? "is-expanded" : "is-preview"}`}>
-                <CardVisual templateName={cardTemplate?.name || card.template?.name || "Карточка"} version={cardTemplate?.latestVersion.version || card.template?.version} schema={cardTemplate?.latestVersion.schema || card.template?.schema || fallbackSchemaForData(card.latestRevision.data)} ui={cardTemplate?.latestVersion.ui || card.template?.ui || {}} data={{ ...card.latestRevision.data, title: card.title }} provenance={card.latestRevision.provenance} status={`Правка ${card.latestRevision.revision}`} />
+                <CardVisual templateName={cardTemplate?.name || card.template?.name || "Карточка"} version={cardTemplate?.latestVersion.version || card.template?.version} schema={cardTemplate?.latestVersion.schema || card.template?.schema || fallbackSchemaForData(card.latestRevision.data)} ui={cardTemplate?.latestVersion.ui || card.template?.ui || {}} data={{ ...card.latestRevision.data, title: card.title }} provenance={card.latestRevision.provenance} status={card.authorship} />
                 <footer className="saved-card-footer">
                   <button type="button" className="card-text-action card-expand" aria-expanded={expandedCards.has(card.id)} onClick={() => setExpandedCards((current) => { const next = new Set(current); if (next.has(card.id)) next.delete(card.id); else next.add(card.id); return next; })}>{expandedCards.has(card.id) ? "Свернуть" : "Открыть полностью"}</button>
+                  <button type="button" className="card-text-action" title="Скачать PDF и JSON в ZIP-архиве" disabled={!!downloadingCardId} onClick={async () => {
+                    setDownloadingCardId(card.id);
+                    try { await downloadCard(card.id, card.title); }
+                    catch (error) { onNotice(error instanceof Error ? error.message : "Не удалось скачать карточку"); }
+                    finally { setDownloadingCardId(""); }
+                  }}>{downloadingCardId === card.id ? "Подготовка…" : "Скачать"}</button>
                   {chatMode && onInsert && <button className="primary-btn" disabled={!branchId || !checkpointId || busy || readOnly} onClick={() => onInsert(card)}>Вставить в диалог</button>}
                   {!chatMode && <button type="button" className="card-text-action" onClick={() => setEditingCardId(card.id)}>Изменить</button>}
                   {!chatMode && <button type="button" className="card-text-action danger-btn" disabled={busy} onClick={async () => {

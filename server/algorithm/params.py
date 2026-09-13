@@ -38,7 +38,7 @@ class Params:
     branch_cap: int = 20
 
     # S4 carousel: one tour / sq / round, shared p on UNION edge_keys.
-    # Rank all edges on the graph by (CE|sim)·p; top prize_top get linear
+    # Discount relevance by p (divide negative values); top prize_top get linear
     # prizes prize_rank_max·(K−r+1)/K; tail cost prize_rank_max·x^s4_cost_power,
     # x=(r−K)/(N−K). After a tour, p *= s4_p_decay on walk keys (0 → zero).
     prize_top: int = 50

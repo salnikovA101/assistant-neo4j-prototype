@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import math
 from typing import Any
 
 from neo4j import AsyncDriver
@@ -64,14 +66,21 @@ _QUERY_PREDICATE = """AND (
 _MATCH_BASE = """MATCH (a)-[r]->(b)
 WHERE r.run_id = $run_id"""
 
+_AFTER_CURSOR = """$cursor IS NULL
+  OR relevance < $cursor.relevance
+  OR (relevance = $cursor.relevance AND has_evidence < $cursor.has_evidence)
+  OR (relevance = $cursor.relevance AND has_evidence = $cursor.has_evidence
+      AND confidence_sort < $cursor.confidence)
+  OR (relevance = $cursor.relevance AND has_evidence = $cursor.has_evidence
+      AND confidence_sort = $cursor.confidence AND id > $cursor.id)"""
+
 # Match relationships first (subject —rel→ object), then take their endpoints.
 _FETCH_TRIPLETS = f"""
 {_MATCH_BASE}
-  AND ($cursor = '' OR elementId(r) > $cursor)
   {_filter_predicates()}
   {_QUERY_PREDICATE}
   AND ($q <> '' OR $has_filters)
-WITH DISTINCT a, r, b,
+WITH DISTINCT a, r, b, elementId(r) AS id,
      CASE
        WHEN toLower(coalesce(a.name, '')) = $q OR toLower(coalesce(b.name, '')) = $q THEN 100
        WHEN toLower(coalesce(a.name, '')) STARTS WITH $q OR toLower(coalesce(b.name, '')) STARTS WITH $q THEN 80
@@ -83,8 +92,9 @@ WITH DISTINCT a, r, b,
      END AS relevance,
      CASE WHEN trim(coalesce(r.evidence, '')) <> '' THEN 1 ELSE 0 END AS has_evidence,
      coalesce(r.confidence, -1.0) AS confidence_sort
+WHERE {_AFTER_CURSOR}
 RETURN
-       elementId(r) AS id,
+       id,
        type(r) AS type,
        elementId(a) AS from_id,
        elementId(b) AS to_id,
@@ -96,7 +106,10 @@ RETURN
        coalesce(r.chunk_id, '') AS chunk_id,
        coalesce(r.source_file, '') AS source_file,
        r.confidence AS confidence,
-       coalesce(r.run_id, '') AS run_id
+       coalesce(r.run_id, '') AS run_id,
+       relevance AS _cursor_relevance,
+       has_evidence AS _cursor_evidence,
+       confidence_sort AS _cursor_confidence
 ORDER BY relevance DESC, has_evidence DESC, confidence_sort DESC, id
 LIMIT $limit
 """
@@ -276,6 +289,39 @@ def nodes_from_triplet_rows(edges: list[dict[str, Any]]) -> list[dict[str, Any]]
     return list(by_id.values())
 
 
+class InvalidExploreCursor(ValueError):
+    """An explorer cursor must contain every component of the sort key."""
+
+
+def _decode_explore_cursor(cursor: str) -> dict[str, Any] | None:
+    if not cursor.strip():
+        return None
+    try:
+        values = json.loads(cursor)
+        if not isinstance(values, list) or len(values) != 4:
+            raise ValueError
+        relevance, evidence, confidence, edge_id = values
+        if (
+            type(relevance) is not int
+            or not 0 <= relevance <= 100
+            or type(evidence) is not int
+            or evidence not in (0, 1)
+            or type(confidence) not in (int, float)
+            or not math.isfinite(confidence)
+            or not isinstance(edge_id, str)
+            or not edge_id
+        ):
+            raise ValueError
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise InvalidExploreCursor("Invalid graph cursor; restart the search") from exc
+    return {
+        "relevance": relevance,
+        "has_evidence": evidence,
+        "confidence": float(confidence),
+        "id": edge_id,
+    }
+
+
 async def fetch_explore_rows(
     driver: AsyncDriver,
     *,
@@ -290,7 +336,7 @@ async def fetch_explore_rows(
     params = {
         **_query_params(q=q, field=field, run_id=run_id, filters=filters),
         "limit": cap + 1,
-        "cursor": (cursor or "").strip(),
+        "cursor": _decode_explore_cursor(cursor or ""),
         "has_filters": graph_filters_active(filters),
     }
 
@@ -298,7 +344,19 @@ async def fetch_explore_rows(
         edges = [dict(r) async for r in await session.run(_FETCH_TRIPLETS, **params)]
     has_more = len(edges) > cap
     edges = edges[:cap]
-    next_cursor = str(edges[-1].get("id") or "") if has_more and edges else None
+    next_cursor = None
+    if has_more and edges:
+        last = edges[-1]
+        next_cursor = json.dumps(
+            [
+                last["_cursor_relevance"], last["_cursor_evidence"],
+                last["_cursor_confidence"], last["id"],
+            ],
+            separators=(",", ":"),
+        )
+    for row in edges:
+        for key in ("_cursor_relevance", "_cursor_evidence", "_cursor_confidence"):
+            row.pop(key, None)
     return nodes_from_triplet_rows(edges), edges, next_cursor
 
 

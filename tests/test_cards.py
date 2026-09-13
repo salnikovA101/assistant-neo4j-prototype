@@ -403,21 +403,13 @@ async def test_card_draft_is_a_checkpointed_chat_message_and_save_updates_it(tmp
         await store.close()
 
 
-class _CardFallbackProvider:
+class _CardJsonProvider:
     def __init__(self, unit_id: str) -> None:
         self.calls: list[dict] = []
         self.unit_id = unit_id
 
     async def generate_response_stream(self, *_args, **kwargs):
         self.calls.append(kwargs)
-        if kwargs.get("tools"):
-            # Qwen can emit a syntactically valid but empty tool invocation
-            # after it has spent its response on reasoning.
-            yield StreamEvent(
-                "tool_call",
-                {"name": "submit_card", "arguments": {}},
-            )
-            return
         payload = {
             "data": {"title": "Trial"},
             "provenance": {
@@ -434,11 +426,11 @@ class _CardFallbackProvider:
 
 
 @pytest.mark.asyncio
-async def test_card_generation_falls_back_to_validated_raw_json_when_function_call_fails(tmp_path) -> None:
-    store = AppStore(str(tmp_path / "fallback-cards.db"))
+async def test_card_generation_uses_one_standard_request_and_preserves_reasoning_effort(tmp_path) -> None:
+    store = AppStore(str(tmp_path / "json-cards.db"))
     await store.open()
     try:
-        user = await store.create_user("fallback-user", "long fallback user password")
+        user = await store.create_user("json-user", "long json user password")
         conversation = await store.create_conversation(user.id)
         started = await store.begin_branch_turn(
             user.id,
@@ -463,7 +455,7 @@ async def test_card_generation_falls_back_to_validated_raw_json_when_function_ca
                 }],
             }],
         )
-        provider = _CardFallbackProvider(recorded[0]["unit_id"])
+        provider = _CardJsonProvider(recorded[0]["unit_id"])
         pipeline = SimpleNamespace(
             llm=SimpleNamespace(
                 provider_for=lambda _profile: provider,
@@ -490,17 +482,21 @@ async def test_card_generation_falls_back_to_validated_raw_json_when_function_ca
                 model_history=[],
                 inherited_context="",
                 profile_name="qwen_cloud",
-                think_effort=None,
+                think_effort="medium",
             )
         ]
 
         draft_event = next(event for event in events if event.type == "card_draft")
         assert draft_event.data["draft"]["data"]["title"] == "Trial"
-        assert len(provider.calls) == 2
-        assert provider.calls[0]["tool_choice"] == "required"
-        assert provider.calls[1]["tools"] is None
-        assert provider.calls[0]["think_effort"] is None
-        assert provider.calls[1]["think_effort"] == "off"
+        assert len(provider.calls) == 1
+        call = provider.calls[0]
+        assert call.get("tools") is None
+        assert call.get("tool_map") is None
+        assert call.get("tool_choice") is None
+        assert call["think_effort"] == "medium"
+        assert call["prompt"] == "card prompt"
+        assert "JSON Schema:" in call["user_text"]
+        assert "Create a card" in call["user_text"]
         assert all(
             "Create a card" not in str(call["history"])
             for call in provider.calls

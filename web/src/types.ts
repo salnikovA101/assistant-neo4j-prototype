@@ -307,6 +307,7 @@ export type CardActionState = {
 };
 
 export type SavedCard = {
+  authorship: string;
   id: string;
   title: string;
   templateVersionId: string;

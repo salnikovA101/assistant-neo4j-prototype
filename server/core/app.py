@@ -14,11 +14,13 @@ from urllib.parse import parse_qs, quote
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.concurrency import run_in_threadpool
 
+from server.algorithm.cypher.explore import InvalidExploreCursor
 from server.algorithm.models import format_chain_text
 from server.utils.config import (
     AUTO_PROFILE,
@@ -318,7 +320,7 @@ class CardMessageBody(BaseModel):
 
 
 def _provenance_errors(
-    provenance: dict[str, Any], units: list[dict[str, Any]], *, allow_unverified: bool = False
+    provenance: dict[str, Any], units: list[dict[str, Any]]
 ) -> list[str]:
     unit_map = {str(unit.get("unit_id") or ""): unit for unit in units}
     errors: list[str] = []
@@ -336,6 +338,10 @@ def _provenance_errors(
                 continue
             if verification == "assistant-generated/unverified":
                 continue
+            # A file import has no originating dialogue message or quotation.
+            # Accept the same marker when its draft is edited in a chat context.
+            if verification == "user-provided/unverified" and ref.get("source_document") == "user import":
+                continue
             if verification in {
                 "user-provided/unverified",
                 "assistant-derived/unverified",
@@ -344,8 +350,6 @@ def _provenance_errors(
                     errors.append(f"{pointer}: dialogue provenance requires message_id")
                 if not str(ref.get("quote") or "").strip():
                     errors.append(f"{pointer}: dialogue provenance requires quote")
-                continue
-            if allow_unverified and verification == "user-provided/unverified":
                 continue
             unit = unit_map.get(str(ref.get("unit_id") or ""))
             if unit is None:
@@ -395,24 +399,6 @@ def _card_dialogue_history(
     return provider_history, candidates
 
 
-def _card_provenance_schema() -> dict[str, Any]:
-    return {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "properties": {
-                "pointer": {"type": "string"},
-                "origin": {"type": "string", "enum": ["evidence", "dialogue"]},
-                "unit_no": {"type": ["integer", "string", "null"]},
-                "message_alias": {"type": ["string", "null"]},
-                "quote": {"type": "string"},
-            },
-            "required": ["pointer", "origin", "quote"],
-            "additionalProperties": False,
-        },
-    }
-
-
 async def _validated_card_draft(
     store: AppStore,
     user: AccountUser,
@@ -422,7 +408,6 @@ async def _validated_card_draft(
     data: dict[str, Any],
     provenance: dict[str, Any],
     gaps: list[Any],
-    allow_unverified: bool = False,
 ) -> dict[str, Any]:
     template = await store.template_version_for_user(user.id, template_version_id)
     if template is None:
@@ -431,7 +416,7 @@ async def _validated_card_draft(
     units = await store.checkpoint_chains(user.id, checkpoint_id) if checkpoint_id else []
     if checkpoint_id and units is None:
         raise HTTPException(status_code=404, detail="Checkpoint not found")
-    errors.extend(_provenance_errors(provenance, units or [], allow_unverified=allow_unverified))
+    errors.extend(_provenance_errors(provenance, units or []))
     if errors:
         raise HTTPException(status_code=422, detail={"errors": errors})
     return await store.create_card_draft(
@@ -1004,22 +989,6 @@ async def _card_generation_events(
     model_history, dialogue_candidates = _card_dialogue_history(dialogue_history)
     provider = pipeline.llm.provider_for(live_profile)
     prompt = pipeline.llm.prompt_manager.get_system_prompt("card")
-    submit_tool = {
-        "type": "function",
-        "function": {
-            "name": "submit_card",
-            "description": "Submit the JSON card generated from the current branch context.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "data": template["schema"],
-                    "provenance": _card_provenance_schema(),
-                },
-                "required": ["data", "provenance"],
-                "additionalProperties": False,
-            },
-        },
-    }
     model_text = (
         f"{body.text.strip()}\n\n"
         f"Шаблон: {template['templateName']} v{template['version']}\n"
@@ -1055,76 +1024,37 @@ async def _card_generation_events(
     llm_cfg = getattr(getattr(pipeline, "config", None), "llm", None)
     model_label = display_name_for(llm_cfg, live_profile) if llm_cfg is not None else live_profile
     yield StreamEvent("model", {"id": live_profile, "label": model_label})
-    # Show the model's first-pass reasoning. The raw JSON repair pass below is
-    # intentionally non-thinking so it always has room for the actual payload.
     yield StreamEvent("thinking", {"delta": "Заполняю карточку по текущему контексту…\n"})
-    for attempt in range(2):
-        attempt_text = model_text
-        if attempt:
-            attempt_text += (
-                "\n\nФункциональный вызов недоступен или предыдущий ответ "
-                "некорректен. Верни ровно один raw JSON-объект с ключом "
-                "data и массивом provenance. Не используй Markdown и не "
-                "добавляй текст."
-            )
-            generated_text = ""
-            yield StreamEvent("thinking", {"delta": "Формирую JSON без function calling…\n"})
-        card_stream = provider.generate_response_stream(
-            user_text=attempt_text,
-            prompt=prompt,
-            history=model_history,
-            # Some OpenAI-compatible Qwen gateways reject a nested JSON Schema
-            # with tool_choice=required. Keep submit_card as the primary contract,
-            # then use a schema-validated raw JSON fallback on the second pass.
-            tools=[submit_tool] if attempt == 0 else None,
-            tool_map={} if attempt == 0 else None,
-            think_effort="off" if attempt else think_effort,
-            api_key=llm_api_key_from_request(request),
-            tool_choice="required" if attempt == 0 else None,
-        )
-        try:
-            async for event in card_stream:
-                if event.type == "thinking":
-                    yield event
-                elif event.type == "tool_call" and event.data.get("name") == "submit_card":
-                    candidate = _parse_card_arguments(event.data.get("arguments"))
-                    if _card_payload_has_values(candidate, template["schema"]):
-                        arguments = candidate
-                    else:
-                        logger.info(
-                            "Empty submit_card for profile=%s; retrying as JSON",
-                            live_profile,
-                        )
-                    break
-                elif event.type == "content":
-                    generated_text += str(event.data.get("delta") or "")
-                elif event.type == "done":
-                    generated_text = str(event.data.get("final_content") or generated_text)
-                elif event.type == "error":
-                    if attempt:
-                        yield event
-                        return
-                    logger.info(
-                        "Card function call unavailable for profile=%s; retrying as JSON",
-                        live_profile,
-                    )
-                    generated_text = ""
-                    break
-        finally:
-            await card_stream.aclose()
-        if arguments is not None:
-            break
-        candidate = _parse_card_arguments(generated_text)
-        if _card_payload_has_values(candidate, template["schema"]):
-            arguments = candidate
-            break
+    card_stream = provider.generate_response_stream(
+        user_text=model_text,
+        prompt=prompt,
+        history=model_history,
+        think_effort=think_effort,
+        api_key=llm_api_key_from_request(request),
+    )
+    try:
+        async for event in card_stream:
+            if event.type == "thinking":
+                yield event
+            elif event.type == "content":
+                generated_text += str(event.data.get("delta") or "")
+            elif event.type == "done":
+                generated_text = str(event.data.get("final_content") or generated_text)
+            elif event.type == "error":
+                yield event
+                return
+    finally:
+        await card_stream.aclose()
+    candidate = _parse_card_arguments(generated_text)
+    if _card_payload_has_values(candidate, template["schema"]):
+        arguments = candidate
 
     if arguments is None:
         yield StreamEvent(
             "error",
             {
                 "code": "invalid_card_json",
-                "message": "Модель дважды вернула некорректный JSON карточки. Попробуйте ещё раз.",
+                "message": "Модель вернула некорректный JSON карточки. Попробуйте ещё раз.",
             },
         )
         return
@@ -1154,7 +1084,6 @@ async def _card_generation_events(
             data=normalized_data,
             provenance=normalized_provenance,
             gaps=normalized_gaps,
-            allow_unverified=True,
         )
     except HTTPException as exc:
         logger.warning("Card validation failed after normalization: %s", exc.detail)
@@ -2264,7 +2193,7 @@ async def branch_turn_stream(
             _turn_id(body.turn_id),
             turn_text,
             base_checkpoint_id=body.base_checkpoint_id,
-            fork_if_needed=body.fork_if_needed,
+            fork_if_needed=body.fork_if_needed and body.intent != "generate_card",
             mode=body.mode,
             turn_config={
                 "profile": body.profile,
@@ -2836,6 +2765,23 @@ async def card_action_state_update(request: Request, card_id: str, body: CardAct
         raise HTTPException(status_code=404, detail="Card not found") from exc
 
 
+@app.get("/api/cards/{card_id}/export")
+async def card_download(request: Request, card_id: str):
+    from server.core.card_export import export_card
+
+    user = _current_user(request)
+    store: AppStore = request.app.state.app_store
+    cards = await store.list_cards(user.id, card_id=card_id)
+    if not cards:
+        raise HTTPException(status_code=404, detail="Card not found")
+    filename, archive = await run_in_threadpool(export_card, cards[0])
+    return Response(archive, media_type="application/zip", headers={
+        "Content-Disposition": f"attachment; filename=card.zip; filename*=UTF-8''{quote(filename, safe='')}",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+    })
+
+
 @app.patch("/api/cards/{card_id}")
 async def card_revision_create(request: Request, card_id: str, body: CardRevisionBody):
     """Create an immutable revision after a technologist edits a saved card."""
@@ -2901,7 +2847,6 @@ async def card_draft_create(request: Request, body: CardDraftBody):
         data=data,
         provenance=body.provenance,
         gaps=body.gaps,
-        allow_unverified=body.checkpoint_id is None,
     )
     return JSONResponse(
         await _present_card_draft(store, user.id, draft),
@@ -2935,7 +2880,6 @@ async def card_draft_update(request: Request, draft_id: str, body: CardDraftPatc
         _provenance_errors(
             body.provenance,
             units or [],
-            allow_unverified=not bool(draft.get("originCheckpointId")),
         )
     )
     if errors:
@@ -2999,7 +2943,6 @@ async def cards_import(request: Request, body: CardImportBody):
             data=item,
             provenance=provenance,
             gaps=[],
-            allow_unverified=True,
         )
         for item in normalized_items
     ]
@@ -3102,25 +3045,6 @@ async def card_draft_generate(request: Request, body: CardGenerateBody):
             body.reasoning_effort, profile_think_efforts(provider.profile)
         )
     )
-    submit_tool = {
-        "type": "function",
-        "function": {
-            "name": "submit_card",
-            "description": (
-                "Submit the structured card from the complete checkpoint context. "
-                "Unknown values are null."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "data": template["schema"],
-                    "provenance": _card_provenance_schema(),
-                },
-                "required": ["data", "provenance"],
-                "additionalProperties": False,
-            },
-        },
-    }
     prompt = pipeline.llm.prompt_manager.get_system_prompt("card")
     user_text = (
         f"Создай карточку «{template['templateName']}» по нашему диалогу.\n\n"
@@ -3128,23 +3052,16 @@ async def card_draft_generate(request: Request, body: CardGenerateBody):
         f"Пояснение шаблона: {template['instructions']}\n"
         f"JSON Schema:\n{json.dumps(template['schema'], ensure_ascii=False)}"
     )
-    arguments: dict[str, Any] | None = None
     generated_text = ""
     card_stream = provider.generate_response_stream(
         user_text=user_text,
         prompt=prompt,
         history=conversation,
-        tools=[submit_tool],
-        tool_map={},
         think_effort=effort,
         api_key=llm_api_key_from_request(request),
-        tool_choice="required",
     )
     try:
         async for event in card_stream:
-            if event.type == "tool_call" and event.data.get("name") == "submit_card":
-                arguments = _parse_card_arguments(event.data.get("arguments"))
-                break
             if event.type == "content":
                 generated_text += str(event.data.get("delta") or "")
             if event.type == "done":
@@ -3153,8 +3070,7 @@ async def card_draft_generate(request: Request, body: CardGenerateBody):
                 raise HTTPException(status_code=502, detail=str(event.data.get("message") or "LLM error"))
     finally:
         await card_stream.aclose()
-    if arguments is None:
-        arguments = _parse_card_arguments(generated_text)
+    arguments = _parse_card_arguments(generated_text)
     if not _card_payload_has_values(arguments, template["schema"]):
         raise HTTPException(
             status_code=422,
@@ -3270,15 +3186,18 @@ async def checkpoint_audit_export(request: Request, checkpoint_id: str):
 async def graph_explore(request: Request, body: GraphExploreBody):
     """Text search + limit over the corpus graph. No Cypher from the client, no LLM."""
     user = _current_user(request)
-    payload = await build_graph_explore_payload(
-        get_driver(),
-        q=body.q,
-        limit=body.limit,
-        field=body.field,
-        cursor=body.cursor,
-        filters=body.filters.model_dump(),
-        run_id=workspace_run_id_from_request(request),
-    )
+    try:
+        payload = await build_graph_explore_payload(
+            get_driver(),
+            q=body.q,
+            limit=body.limit,
+            field=body.field,
+            cursor=body.cursor,
+            filters=body.filters.model_dump(),
+            run_id=workspace_run_id_from_request(request),
+        )
+    except InvalidExploreCursor as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return JSONResponse(payload)
 
 

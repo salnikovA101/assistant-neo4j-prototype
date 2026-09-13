@@ -79,7 +79,7 @@ export function CardTemplateBuilder({ initial, busy, submitLabel, onSubmit, onCa
     }}>
       <header className="builder-heading">
         <div><h2>{initial ? "Редактирование шаблона" : "Новый шаблон"}</h2><p>Поля задают структуру карточки, которую заполнит ассистент.</p></div>
-        <button type="button" className="ghost-btn" onClick={onCancel}>Отмена</button>
+
       </header>
       <div className="builder-meta">
         <label>Название шаблона<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Например, Паспорт эксперимента" required /></label>
@@ -117,14 +117,16 @@ export function CardTemplateBuilder({ initial, busy, submitLabel, onSubmit, onCa
             <button type="button" className="add-field-btn" onClick={() => setFields((current) => { const key = nextFieldKey(current); return [...current, initialField(key, current.length + 1)]; })}>+ Добавить поле</button>
           </section>
         )}
-        <aside className="builder-preview"><div className="builder-section-head"><strong>Предпросмотр</strong></div><CardVisual templateName={name || "Новый шаблон"} schema={contract.schema} ui={contract.ui} data={blankData(contract.schema)} /></aside>
+        <aside className="builder-preview"><div className="builder-section-head"><strong>Предпросмотр</strong></div><CardVisual titlePlaceholder="Заголовок заполнит ассистент" templateName={name || "Новый шаблон"} schema={contract.schema} ui={contract.ui} data={blankData(contract.schema)} />
+          <div className="builder-footer-actions"><button type="button" className="ghost-btn" disabled={busy} onClick={onCancel}>Отмена</button><button type="submit" className="primary-btn" disabled={busy || !name.trim() || (!viewOnlyLegacy && fields.length === 0)}>{submitLabel}</button></div>
+        </aside>
       </div>
       <details className="builder-advanced">
         <summary>Дополнительно · JSON Schema и UI</summary>
         <p>Техническое представление только для просмотра. Все изменения выполняются через конструктор.</p>
         <div className="builder-json-view"><section><strong>JSON Schema</strong><pre>{JSON.stringify(contract.schema, null, 2)}</pre></section><section><strong>UI JSON</strong><pre>{JSON.stringify(contract.ui, null, 2)}</pre></section></div>
       </details>
-      <footer className="builder-footer"><button className="primary-btn" disabled={busy || !name.trim() || (!viewOnlyLegacy && fields.length === 0)}>{submitLabel}</button></footer>
+
     </form>
   );
 }

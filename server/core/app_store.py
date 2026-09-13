@@ -19,6 +19,7 @@ from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatc
 
 from server.utils.constants import LEGACY_RETRIEVAL_STATE_VERSIONS, RETRIEVAL_STATE_VERSION
 from server.tools.source_registry import present_source_aliases_in_value
+from server.core.card_metadata import card_authorship
 from server.core.sq_status import SQ_STATUS_USER_NOTICE, strip_sq_status_sections
 
 
@@ -3607,6 +3608,14 @@ class AppStore:
         origin_checkpoint_id = str(draft.get("originCheckpointId") or "")
         if origin_checkpoint_id:
             await self.require_checkpoint_writable(user_id, origin_checkpoint_id)
+        # Record actual data edits even when a client omits field provenance.
+        provenance = dict(provenance)
+        for key in set(draft["data"]) | set(data):
+            if draft["data"].get(key) == data.get(key):
+                continue
+            pointer = "/" + key.replace("~", "~0").replace("/", "~1")
+            provenance = {path: refs for path, refs in provenance.items() if path != pointer and not path.startswith(pointer + "/")}
+            provenance[pointer] = [{"verification": "user-edited"}]
         async with self._write_lock:
             ts = now_ms()
             cur = await self._conn().execute(
@@ -3700,6 +3709,7 @@ class AppStore:
         return {
             "id": card_id,
             "title": clean_title,
+            "authorship": card_authorship(1, _loads(row["provenance_json"], {}), origin or {}),
             "templateVersionId": str(row["template_version_id"]),
             "latestRevision": {
                 "id": revision_id,
@@ -3712,7 +3722,7 @@ class AppStore:
             "updatedAt": ts,
         }
 
-    async def list_cards(self, user_id: str) -> list[dict[str, Any]]:
+    async def list_cards(self, user_id: str, *, card_id: str | None = None) -> list[dict[str, Any]]:
         rows = await (await self._conn().execute(
             """SELECT c.id,c.title,c.template_version_id,c.created_at,c.updated_at,
                       r.id AS revision_id,r.revision,r.data_json,r.provenance_json,r.gaps_json,
@@ -3723,9 +3733,10 @@ class AppStore:
                JOIN card_templates t ON t.id=v.template_id
                LEFT JOIN card_action_states s ON s.card_id=c.id
                WHERE c.user_id=? AND c.archived_at IS NULL
+                 AND (? IS NULL OR c.id=?)
                  AND r.revision=(SELECT MAX(r2.revision) FROM card_revisions r2 WHERE r2.card_id=c.id)
                ORDER BY c.updated_at DESC,c.id""",
-            (user_id,),
+            (user_id, card_id, card_id),
         )).fetchall()
         cards: list[dict[str, Any]] = []
         for row in rows:
@@ -3752,6 +3763,7 @@ class AppStore:
                     "actions": _loads(row["actions_json"], default_card_action_data()),
                 },
                 "title": str(row["title"]),
+                "authorship": card_authorship(int(row["revision"]), _loads(row["provenance_json"], {}), origin),
                 "templateVersionId": str(row["template_version_id"]),
                 "template": {
                     "name": str(row["template_name"]),
@@ -3875,6 +3887,7 @@ class AppStore:
         return {
             "id": card_id,
             "title": clean_title,
+            "authorship": card_authorship(revision, provenance, origin_snapshot),
             "templateVersionId": str(card["template_version_id"]),
             "latestRevision": {
                 "id": revision_id,
