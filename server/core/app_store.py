@@ -3661,7 +3661,7 @@ class AppStore:
             await self.require_checkpoint_writable(user_id, checkpoint_id)
         origin = await self.audit_export(user_id, checkpoint_id) if checkpoint_id else {"kind": "imported"}
         data = _loads(row["data_json"], {})
-        clean_title = " ".join((title or str(data.get("title") or "Карточка")).strip().split())[:120] or "Карточка"
+        clean_title = " ".join((title or str(data.get("title") or "Карточка")).strip().split()) or "Карточка"
         card_id, revision_id, ts = str(uuid.uuid4()), str(uuid.uuid4()), now_ms()
         async with self._write_lock:
             await self._conn().execute("BEGIN IMMEDIATE")
@@ -3852,7 +3852,7 @@ class AppStore:
         gaps: list[Any],
         origin_snapshot: dict[str, Any],
     ) -> dict[str, Any]:
-        clean_title = " ".join(title.strip().split())[:120]
+        clean_title = " ".join(title.strip().split())
         if not clean_title:
             raise ValueError("Card title is required")
         revision_id, ts = str(uuid.uuid4()), now_ms()

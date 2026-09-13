@@ -288,11 +288,11 @@ class CardImportBody(BaseModel):
 
 
 class CardSaveBody(BaseModel):
-    title: str = Field(default="", max_length=120)
+    title: str = ""
 
 
 class CardRevisionBody(BaseModel):
-    title: str = Field(min_length=1, max_length=120)
+    title: str = Field(min_length=1)
     data: dict[str, Any]
     edited_fields: list[str] = Field(default_factory=list, max_length=100)
 
