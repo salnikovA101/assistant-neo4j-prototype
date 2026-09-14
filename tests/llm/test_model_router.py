@@ -274,3 +274,34 @@ async def test_app_store_bans_are_keyed_by_fingerprint(tmp_path):
         assert await store.llm_key_is_dead(llm_key_fingerprint("sk-other")) is False
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode,expected_rounds,expected_searches", [("auto", 10, 10), ("staged", 2, 1)])
+async def test_manager_applies_autonomous_budget_only_to_auto(monkeypatch, mode, expected_rounds, expected_searches):
+    from server.core.turn_state import searches_state, take_search_slot
+    from server.llm.manager import LLMManager
+
+    cfg = load_config()
+    assert cfg.llm.auto_max_tool_turns == 10
+    mgr = LLMManager(cfg)
+
+    class BudgetProvider(_OkProvider):
+        async def generate_response_stream(self, **kwargs):
+            assert kwargs["max_tool_turns"] == expected_rounds
+            assert searches_state() == (0, expected_searches)
+            for _ in range(expected_searches):
+                assert take_search_slot()
+            assert not take_search_slot()
+            assert searches_state() == (expected_searches, expected_searches)
+            async for event in super().generate_response_stream(**kwargs):
+                yield event
+
+    provider = BudgetProvider(cfg.llm.profiles.qwen38_flash)
+    monkeypatch.setattr(mgr, "provider_for", lambda _name=None: provider)
+    monkeypatch.setattr(mgr, "_context_fits", lambda **_kwargs: True)
+    events = [event async for event in mgr.generate_response_stream(
+        "question", profile_name="qwen38_flash", turn_context={"mode": mode},
+    )]
+    assert events[-1].type == "done"
+    assert provider.calls == 1

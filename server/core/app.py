@@ -2391,22 +2391,13 @@ def build_ui_config(pipeline: ServerPipeline) -> dict:
         if runtime is not None:
             key_configured = bool((runtime.api_key or "").strip())
 
-    max_searches_profile = default_profile
-    if max_searches_profile is None:
-        boot_name = boot_profile_name(llm_cfg) if (llm_cfg.auto_order or llm_cfg.current_profile) else ""
-        max_searches_profile = _ui_profile_for(pipeline, boot_name) if boot_name else None
-    if max_searches_profile is None:
-        max_searches_profile = getattr(getattr(pipeline.llm, "model", None), "profile", None)
-
     return {
         "think": think,
         "reasoning_effort": default_effort,
         "reasoning_effort_options": options,
         "search_depth": DEFAULT_SEARCH_DEPTH,
         "search_depth_options": list(SEARCH_DEPTHS),
-        "max_searches_per_answer": (
-            max(1, int(max_searches_profile.max_turns)) if max_searches_profile else 2
-        ),
+        "max_searches_per_answer": llm_cfg.auto_max_tool_turns,
         "audio_enabled": bool(pipeline.config.audio_enabled),
         "staged_enabled": bool(pipeline.config.staged_enabled),
         "cards_enabled": bool(pipeline.config.cards_enabled),

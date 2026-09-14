@@ -112,7 +112,7 @@ def _check_tool_usage(case: dict[str, Any], transcript: Transcript) -> list[str]
                 f"ожидался {expected_name}, получен {', '.join(dict.fromkeys(wrong))}"
             )
 
-    limit = int(case.get("max_tool_calls", 1 if mode == "staged" else 2))
+    limit = int(case.get("max_tool_calls", 1 if mode == "staged" else 10))
     if len(searches) > limit:
         failures.append(f"{len(searches)} вызовов поиска при лимите {limit}")
 

@@ -9,7 +9,9 @@ def test_prompt_loader_routes_auto_staged_and_card() -> None:
 
     auto = loader.get_system_prompt("auto")
     staged = loader.get_system_prompt("staged")
-    assert "Максимум 2 вызова" in auto
+    assert "Не устанавливай себе фиксированное число вызовов" in auto
+    assert "Максимум 2 вызова" not in auto
+    assert "Вызов 2 —" not in auto
     assert "не подмешиваются" in auto
     assert "продолжающийся процесс разработки" in staged
     assert "Список исследовательских вопросов пуст" in staged
@@ -37,3 +39,26 @@ def test_qwen_context_preflight_keeps_room_without_rejecting_normal_prompt() -> 
         user_text="вопрос",
         provider=provider,
     )
+
+
+def test_auto_prompt_describes_goal_completion_and_grounded_search():
+    loader = PromptLoader("prompts", TTSModes.QUALITY, audio_enabled=False)
+    prompt = loader.get_system_prompt("auto")
+    assert "Главная цель — довести текущий запрос пользователя до проверяемого результата" in prompt
+    assert "Не устанавливай себе фиксированное число вызовов" in prompt
+    assert "Не повторяй тот же запрос" in prompt
+    assert "Технический лимит контролирует сервер" in prompt
+    assert "Не выдавай остановку по лимиту или сбою за исчерпание всех направлений поиска" in prompt
+    assert "в полученных данных инструмента" in prompt
+    assert "Максимум 2 вызова" not in prompt
+    assert "Вызов 2 —" not in prompt
+
+
+def test_ui_reports_autonomous_search_budget_independent_of_model():
+    from types import SimpleNamespace
+    from server.core.app import build_ui_config
+
+    cfg = load_config()
+    cfg.llm.current_profile = "qwen38_flash"
+    assert cfg.llm.profiles.qwen38_flash.max_turns == 2
+    assert build_ui_config(SimpleNamespace(config=cfg))["max_searches_per_answer"] == 10

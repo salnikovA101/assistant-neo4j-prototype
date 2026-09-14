@@ -238,7 +238,11 @@ class LLMManager:
             logger.debug(history)
             effort = None if rotate else think_effort
             request_key = api_key if is_cloud_profile(self.config, candidate) else None
-            max_searches = 1 if mode == "staged" else max(1, int(provider.profile.max_turns))
+            max_tool_turns = (
+                self.config.auto_max_tool_turns if mode == "auto"
+                else max(1, int(provider.profile.max_turns))
+            )
+            max_searches = 1 if mode == "staged" else max_tool_turns
             yielded_output = False
             announced = False
             retry_next = False
@@ -254,6 +258,7 @@ class LLMManager:
                         think_effort=effort,
                         api_key=request_key,
                         resume_messages=resume_messages,
+                        max_tool_turns=max_tool_turns,
                     ):
                         if event.type == "content":
                             visible_delta = sq_stream_filter.feed(str(event.data.get("delta") or ""))

@@ -469,6 +469,7 @@ class BaseLLMProvider(ABC):
         api_key: Optional[str] = None,
         tool_choice: Optional[str] = None,
         resume_messages: Optional[List[Dict[str, Any]]] = None,
+        max_tool_turns: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Stream thinking / tool_call / tool_result / content events for one user turn.
@@ -509,7 +510,9 @@ class BaseLLMProvider(ABC):
                 kwargs["tool_choice"] = tool_choice or "auto"
 
             turns = 0
-            max_turns = max(1, int(self.profile.max_turns))
+            max_turns = max(
+                1, int(self.profile.max_turns if max_tool_turns is None else max_tool_turns)
+            )
             label = "turn0"
             stream_client = self._request_client(api_key)
 

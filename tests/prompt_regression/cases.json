@@ -27,7 +27,6 @@
     "id": "narrow_fact_metabolites",
     "question": "Какие метаболиты образует Lactobacillus plantarum?",
     "depth": "low",
-    "max_tool_calls": 2,
     "rubric": [
       "Каждый метаболит взят из своей карточки со своей ссылкой.",
       "Объём соответствует узкому вопросу: абзац или короткая таблица."

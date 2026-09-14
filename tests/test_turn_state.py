@@ -165,3 +165,25 @@ def test_normalize_preserves_english_questions():
     clean, problems = normalize_subquestions([f"  {question}  ", question[:-1]])
     assert clean == [question]
     assert any("duplicate" in problem for problem in problems)
+
+
+@pytest.mark.asyncio
+async def test_ten_search_budget_blocks_eleventh_pipeline_execution(monkeypatch):
+    calls = []
+
+    async def fake_run(driver, **kwargs):
+        calls.append(kwargs)
+        return {"accepted": []}
+
+    monkeypatch.setattr("server.algorithm.pipeline.run", fake_run)
+    monkeypatch.setattr("server.tools.subgraph_search.get_driver", lambda: object())
+    agent = SubgraphSearchAgent()
+    with bind_turn("medium", max_searches=10, context={"run_id": "corpus-test"}):
+        for n in range(10):
+            result = await agent.query([f"Which properties were measured in sample {n}?"])
+            assert result.startswith(NO_RESULTS)
+        result = await agent.query(["Which conditions affect fermentation?"])
+        assert result.startswith(TOOL_ERROR)
+        assert "budget" in result
+        assert searches_state() == (10, 10)
+    assert len(calls) == 10

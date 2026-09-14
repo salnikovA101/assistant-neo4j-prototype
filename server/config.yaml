@@ -46,6 +46,7 @@ tts:
 # Deploy switches: workspaces and rerank_enabled at the top of this file.
 # Embeddings: local Ollama embeddinggemma:300m-qat-q8_0 (EMBED__* in .env, not yaml).
 llm:
+  auto_max_tool_turns: 10
   current_profile: "auto"
   tool_profile: "ollama"
   fallback_profile: "ollama"

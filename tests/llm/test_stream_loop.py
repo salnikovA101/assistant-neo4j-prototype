@@ -351,3 +351,45 @@ async def test_invalid_tool_json_does_not_call_tool():
     tool_result = next(e for e in events if e.type == "tool_result")
     assert tool_result.data["ok"] is False
     assert "invalid tool arguments" in str(tool_result.data.get("result") or "").lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("extra_tool_call", [False, True])
+async def test_autonomous_budget_allows_ten_rounds_then_final_or_existing_error(extra_tool_call):
+    # The per-request budget must override the old two-round model default.
+    profile = OpenAIProfile(model="test", base_url="http://localhost", api_key="x", max_turns=2)
+    provider = OpenAIProvider(profile)
+    requests = []
+    executed = []
+
+    async def fake_create(**kwargs):
+        requests.append(kwargs["tool_choice"])
+        n = len(requests)
+        if n == 11 and not extra_tool_call:
+            return _aiter([_Chunk(_Delta(content="Confirmed result (source:1)."))])
+        return _aiter([_Chunk(_Delta(tool_calls=[{
+            "index": 0, "id": f"call_{n}", "type": "function",
+            "function": {"name": "ask_subgraph", "arguments": f'{{"step":{n}}}'},
+        }]))])
+
+    async def fake_tool(step):
+        executed.append(step)
+        return f"Evidence {step} (source:1)"
+
+    provider.client.chat.completions.create = AsyncMock(side_effect=fake_create)
+    events = [event async for event in provider.generate_response_stream(
+        user_text="q", prompt="sys", max_tool_turns=10,
+        tools=[{"type": "function", "function": {"name": "ask_subgraph"}}],
+        tool_map={"ask_subgraph": fake_tool},
+    )]
+    assert executed == list(range(1, 11))
+    assert requests == ["auto"] * 10 + ["none"]
+    assert profile.max_turns == 2
+    if extra_tool_call:
+        assert events[-1].type == "error"
+        assert events[-1].data["code"] == "tool_budget_exhausted"
+        assert not any(event.type == "done" for event in events)
+    else:
+        assert events[-1].type == "done"
+        assert events[-1].data["final_content"] == "Confirmed result (source:1)."
+        assert len(events[-1].data["history_tool_messages"]) == 20
