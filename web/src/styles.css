@@ -1147,3 +1147,17 @@ input::placeholder,textarea::placeholder { color:var(--faint); opacity:1; }
 
 .composer-error-notice { border:1px solid var(--danger); border-radius:8px; padding:10px 12px; background:var(--panel); color:var(--text); font-size:12px; line-height:1.4; overflow-wrap:anywhere; }
 .toast.is-error { border-color:var(--danger); }
+
+/* Keep the model list compact and the reasoning controls outside its scroll area. */
+.model-menu .composer-model-popover { position:fixed; right:auto !important; left:var(--model-menu-left, 12px); display:flex; flex-direction:column; overflow:hidden; box-sizing:border-box; max-width:calc(100vw - 24px); }
+.composer-model-popover .composer-popover-title { flex:none; }
+.composer-model-list { min-height:0; max-height:176px; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
+.composer-model-list > label { display:flex; align-items:center; gap:8px; min-height:44px; box-sizing:border-box; padding:10px; border-radius:6px; cursor:pointer; }
+.composer-model-list > label:hover { background:var(--hover); }
+.composer-model-list input { flex:none; margin:0; accent-color:#b8bac0; }
+.composer-model-list strong { color:var(--soft); font-size:13px; font-weight:500; overflow-wrap:anywhere; }
+.composer-model-popover .popover-setting { flex:none; }
+.composer-model-popover .popover-setting > div { flex-wrap:wrap; }
+@media (max-width:640px) {
+  .model-menu .composer-model-popover { left:var(--model-menu-left, 12px) !important; }
+}

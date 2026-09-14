@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { SearchDepth, UiModel } from "../types";
 import { effortLabel } from "../format";
 import { MODE_LABELS } from "../uiLabels";
@@ -61,7 +61,46 @@ export function Composer({
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const modelMenuRef = useRef<HTMLDetailsElement>(null);
+  const modelPopoverRef = useRef<HTMLDivElement>(null);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const currentModel = models.find((model) => model.id === profile);
+
+  useLayoutEffect(() => {
+    if (!modelMenuOpen) return;
+    const position = () => {
+      const menu = modelMenuRef.current;
+      const popover = modelPopoverRef.current;
+      if (!menu || !popover) return;
+      const anchor = menu.getBoundingClientRect();
+      const viewport = window.visualViewport;
+      const left = viewport?.offsetLeft ?? 0;
+      const top = viewport?.offsetTop ?? 0;
+      const width = viewport?.width ?? window.innerWidth;
+      const height = viewport?.height ?? window.innerHeight;
+      const panelWidth = Math.min(320, width - 24);
+      const above = anchor.top - top - 20;
+      const below = top + height - anchor.bottom - 20;
+      const upward = above >= Math.min(300, below);
+      popover.style.width = `${panelWidth}px`;
+      popover.style.setProperty("--model-menu-left", `${Math.max(left + 12, Math.min(anchor.left, left + width - panelWidth - 12))}px`);
+      popover.style.maxHeight = `${Math.max(0, upward ? above : below)}px`;
+      popover.style.top = upward ? "auto" : `${anchor.bottom + 8}px`;
+      popover.style.bottom = upward ? `${window.innerHeight - anchor.top + 8}px` : "auto";
+    };
+    position();
+    modelPopoverRef.current?.querySelector<HTMLInputElement>("input:checked")?.closest("label")?.scrollIntoView({ block: "nearest" });
+    window.addEventListener("resize", position);
+    window.addEventListener("scroll", position, true);
+    window.visualViewport?.addEventListener("resize", position);
+    window.visualViewport?.addEventListener("scroll", position);
+    return () => {
+      window.removeEventListener("resize", position);
+      window.removeEventListener("scroll", position, true);
+      window.visualViewport?.removeEventListener("resize", position);
+      window.visualViewport?.removeEventListener("scroll", position);
+    };
+  }, [modelMenuOpen, effortOptions.length]);
 
   const closeMenu = (target: HTMLElement) => {
     const menu = target.closest("details");
@@ -168,17 +207,18 @@ export function Composer({
           </div>
         </details>}
         {models.length > 0 && (
-          <details className="composer-menu model-menu" onToggle={(event) => {
+          <details ref={modelMenuRef} className="composer-menu model-menu" onToggle={(event) => {
+            setModelMenuOpen(event.currentTarget.open);
             if (!event.currentTarget.open) return;
             formRef.current?.querySelectorAll("details[open]").forEach((menu) => {
               if (menu !== event.currentTarget) (menu as HTMLDetailsElement).open = false;
             });
           }}>
             <summary>{currentModel?.label || "Модель"}<IconChevron /></summary>
-            <div className="composer-popover composer-model-popover">
+            <div ref={modelPopoverRef} className="composer-popover composer-model-popover">
               <p className="composer-popover-title">Модель</p>
-              {models.map((model) => <label key={model.id}><input type="radio" checked={profile === model.id} onChange={(event) => { onProfile(model.id); closeMenu(event.currentTarget); }} /><span><strong>{model.label}</strong></span></label>)}
-              {effortOptions.length > 1 && <div className="popover-setting"><span>Насколько вдумчиво</span><div>{effortOptions.map((id) => <button key={id} type="button" className={effort === id ? "is-on" : ""} onClick={(event) => { onEffort(id); closeMenu(event.currentTarget); }}>{effortLabel(id)}</button>)}</div></div>}
+              <div className="composer-model-list">{models.map((model) => <label key={model.id}><input type="radio" checked={profile === model.id} onChange={(event) => { onProfile(model.id); closeMenu(event.currentTarget); }} /><span><strong>{model.label}</strong></span></label>)}</div>
+              {effortOptions.length > 0 && <div className="popover-setting"><span>Насколько вдумчиво</span><div>{effortOptions.map((id) => <button key={id} type="button" className={effort === id ? "is-on" : ""} onClick={(event) => { onEffort(id); closeMenu(event.currentTarget); }}>{effortLabel(id)}</button>)}</div></div>}
             </div>
           </details>
         )}
