@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable
 
 from server.algorithm.cypher.query_compile import (
@@ -10,6 +11,11 @@ from server.algorithm.cypher.query_compile import (
     MAX_RESULT_CHARS,
 )
 from server.tools.source_registry import SourceRegistry
+
+# Whole-cell document names, including aliases like `AS src`.
+_SOURCE_FILE_EXT_RE = re.compile(
+    r"(?is)^(?:.*[/\\])?[^/\\]+\.(?:pdf|docx?|txt|html?|xml|csv|md|pptx?|epub)$"
+)
 
 NO_MATCHES_PREFIX = "NO_MATCHES"
 QUERY_ERROR_PREFIX = "QUERY_ERROR"
@@ -69,6 +75,7 @@ def format_records(
     if not rows:
         return format_empty()
     prepared = [_prepare_row(row, registry) for row in rows]
+    prepared = [_fold_known_filenames(row, registry) for row in prepared]
     if is_pure_aggregate and len(prepared) == 1 and len(prepared[0]) == 1:
         key, value = next(iter(prepared[0].items()))
         body = (
@@ -132,9 +139,8 @@ def _prepare_row(row: dict[str, Any], registry: SourceRegistry) -> dict[str, str
         if str(key).startswith("_"):
             continue
         text = stringify(value)
-        if _is_source_key(key):
-            sid = registry.register(text)
-            text = f"(source:{sid})" if sid else text
+        if _is_source_key(key) or _looks_like_source_file(text):
+            text = _as_source_marker(text, registry)
         text, cut = clip(text, MAX_FIELD_CHARS)
         if cut and _is_source_key(key):
             pass
@@ -142,9 +148,43 @@ def _prepare_row(row: dict[str, Any], registry: SourceRegistry) -> dict[str, str
     return out
 
 
+def _as_source_marker(text: str, registry: SourceRegistry) -> str:
+    sid = registry.register((text or "").strip())
+    return f"(source:{sid})" if sid else text
+
+
+def _looks_like_source_file(value: str) -> bool:
+    text = (value or "").strip()
+    if not text or "\n" in text or len(text) > 400:
+        return False
+    return bool(_SOURCE_FILE_EXT_RE.match(text))
+
+
+def _fold_known_filenames(
+    row: dict[str, str], registry: SourceRegistry
+) -> dict[str, str]:
+    files = sorted(registry.known_files(), key=len, reverse=True)
+    if not files:
+        return row
+    out: dict[str, str] = {}
+    for key, text in row.items():
+        cell = text
+        for fname in files:
+            sid = registry.register(fname)
+            if sid is None or not fname or fname not in cell:
+                continue
+            cell = cell.replace(fname, f"(source:{sid})")
+        out[key] = cell
+    return out
+
+
 def _is_source_key(key: object) -> bool:
-    k = str(key).lower()
-    return k in {"source_file", "source", "sourcefile"} or k.endswith(".source_file")
+    k = str(key).lower().replace(" ", "")
+    return (
+        k in {"source_file", "source", "sourcefile", "filename", "file_name"}
+        or k.endswith(".source_file")
+        or k.endswith("_source_file")
+    )
 
 
 def _looks_like_edges(rows: list[dict[str, str]]) -> bool:

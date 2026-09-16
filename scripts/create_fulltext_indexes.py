@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """Create fulltext indexes used by query_graph (names + relationship evidence).
 
+Thin wrapper around ensure_query_graph_fulltext (no Ollama). Also runs at the
+end of scripts/vectorize_edges.py.
+
   .venv/bin/python scripts/create_fulltext_indexes.py
+  .venv/bin/python scripts/create_fulltext_indexes.py --recreate
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 from neo4j import GraphDatabase
 from neo4j.exceptions import ServiceUnavailable
@@ -15,7 +21,7 @@ from neo4j.exceptions import ServiceUnavailable
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from server.algorithm.cypher.query_compile import FT_NODE_INDEX, FT_REL_INDEX  # noqa: E402
+from server.algorithm.cypher.fulltext import ensure_query_graph_fulltext  # noqa: E402
 from server.utils.config import load_config  # noqa: E402
 
 
@@ -37,45 +43,37 @@ def _driver(uri: str, user: str, password: str):
     raise last or RuntimeError("Neo4j unreachable")
 
 
-def _quote_ident(name: str) -> str:
-    return "`" + name.replace("`", "``") + "`"
+class _SessionDb:
+    def __init__(self, session: Any) -> None:
+        self._session = session
+
+    def query(self, cypher: str, **params: Any) -> list[dict]:
+        return [dict(row) for row in self._session.run(cypher, **params)]
+
+    def consume(self, cypher: str, **params: Any) -> None:
+        self._session.run(cypher, **params).consume()
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Ensure query_graph Lucene indexes (DROP+CREATE on label/type drift)."
+    )
+    parser.add_argument(
+        "--recreate",
+        action="store_true",
+        help="DROP and CREATE the Lucene indexes even if the label/type union matches.",
+    )
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
     cfg = load_config()
     driver = _driver(cfg.neo4j.uri, cfg.neo4j.user, cfg.neo4j.password)
     try:
         with driver.session() as session:
-            labels = [
-                rec["label"]
-                for rec in session.run("CALL db.labels() YIELD label RETURN label")
-                if rec["label"]
-            ]
-            types = [
-                rec["relationshipType"]
-                for rec in session.run(
-                    "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType"
-                )
-                if rec["relationshipType"]
-            ]
-            if labels:
-                label_union = "|".join(_quote_ident(str(x)) for x in labels)
-                session.run(
-                    f"CREATE FULLTEXT INDEX {_quote_ident(FT_NODE_INDEX)} IF NOT EXISTS "
-                    f"FOR (n:{label_union}) ON EACH [n.name]"
-                )
-                print(f"Ensured node fulltext {FT_NODE_INDEX} on {len(labels)} labels")
-            else:
-                print("No node labels; skipped node fulltext")
-            if types:
-                type_union = "|".join(_quote_ident(str(x)) for x in types)
-                session.run(
-                    f"CREATE FULLTEXT INDEX {_quote_ident(FT_REL_INDEX)} IF NOT EXISTS "
-                    f"FOR ()-[r:{type_union}]-() ON EACH [r.evidence]"
-                )
-                print(f"Ensured relationship fulltext {FT_REL_INDEX} on {len(types)} types")
-            else:
-                print("No relationship types; skipped relationship fulltext")
+            ensure_query_graph_fulltext(
+                _SessionDb(session),
+                recreate=bool(args.recreate),
+                dry_run=bool(args.dry_run),
+            )
     finally:
         driver.close()
     return 0

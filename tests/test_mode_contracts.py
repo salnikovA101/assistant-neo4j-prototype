@@ -134,6 +134,12 @@ def test_mode_tools_have_distinct_contracts_and_five_sq_limit():
     auto = tools.get_openai_tools("auto")[0]["function"]
     staged = tools.get_openai_tools("staged")[0]["function"]
     assert auto["name"] == "ask_subgraph"
+    assert "foundation" in auto["description"].lower()
+    assert "NO_RESULTS" in auto["description"]
+    assert "query_graph" in auto["description"]
+    assert "or answer with GAPS" not in auto["description"]
+    assert "Answer with GAPS only when both tools" in auto["description"]
+    assert "TOOL_ERROR" in auto["description"]
     assert auto["parameters"]["properties"]["subquestions"]["maxItems"] == 5
     assert staged["name"] == "advance_research"
     assert "required" not in staged["parameters"]

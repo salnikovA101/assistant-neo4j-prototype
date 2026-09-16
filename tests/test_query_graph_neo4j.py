@@ -121,5 +121,8 @@ async def test_live_schema_action():
     with bind_turn("medium", max_searches=2, context={"run_id": _run_id()}):
         text = await tool(action="schema")
     assert text.startswith("### Corpus schema")
+    assert "This corpus only" in text
     assert "Node labels:" in text
     assert "Relationship types:" in text
+    assert "run_ids" in text
+    assert "db.labels" not in text

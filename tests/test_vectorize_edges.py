@@ -163,3 +163,10 @@ def test_confirm_refuses_non_tty(ve, monkeypatch):
     monkeypatch.setattr(ve.sys.stdin, "isatty", lambda: False)
     with pytest.raises(SystemExit, match="--yes"):
         ve._confirm("Overwrite", yes=False, dry_run=False)
+
+
+def test_vectorize_module_exposes_fulltext_ensure(ve):
+    from server.algorithm.cypher.fulltext import ensure_query_graph_fulltext
+
+    assert "ensure_query_graph_fulltext" in ve.__dict__
+    assert ve.ensure_query_graph_fulltext is ensure_query_graph_fulltext

@@ -34,6 +34,7 @@ from neo4j.exceptions import AuthError, ServiceUnavailable
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from server.algorithm.cypher.fulltext import ensure_query_graph_fulltext  # noqa: E402
 from server.algorithm.embed import format_document  # noqa: E402
 from server.algorithm.embed_client import (  # noqa: E402
     DEFAULT_EMBED_MODEL,
@@ -740,6 +741,11 @@ def main() -> None:
                 dim=actual_dim,
                 dry_run=args.dry_run,
             )
+        ensure_query_graph_fulltext(
+            db,
+            recreate=bool(args.recreate_indexes),
+            dry_run=args.dry_run,
+        )
     finally:
         db.close()
 

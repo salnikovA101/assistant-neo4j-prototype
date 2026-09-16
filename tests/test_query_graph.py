@@ -111,14 +111,31 @@ def test_grouped_count_gets_output_cap():
     )
     assert not compiled.is_pure_aggregate
     assert compiled.fetch_limit == 11
-    assert compiled.output_limit == 20 or compiled.fetch_limit == 11
+    assert compiled.output_limit == 10
+
+
+def test_cypher_limit_honored_without_max_rows():
+    compiled = _ok("MATCH (a)-[r]-(b) RETURN a.name LIMIT 50")
+    assert compiled.output_limit == 50
+    assert compiled.fetch_limit == 51
+    compiled = _ok("MATCH (a)-[r]-(b) RETURN a.name")
+    assert compiled.output_limit == 20
+    assert compiled.fetch_limit == 21
+    compiled = _ok("MATCH (a)-[r]-(b) RETURN a.name LIMIT 500")
+    assert compiled.output_limit == 100
+    assert compiled.fetch_limit == 101
 
 
 def test_user_limit_stricter_than_max_rows():
     compiled = _ok("MATCH (a)-[r]-(b) RETURN a.name LIMIT 3", max_rows=20)
     assert compiled.fetch_limit == 4
+    assert compiled.output_limit == 3
     compiled = _ok("MATCH (a)-[r]-(b) RETURN a.name LIMIT 500", max_rows=20)
-    assert compiled.fetch_limit == 21
+    assert compiled.fetch_limit == 101
+    assert compiled.output_limit == 100
+    compiled = _ok("MATCH (a)-[r]-(b) RETURN a.name", max_rows=50)
+    assert compiled.output_limit == 50
+    assert compiled.fetch_limit == 51
 
 
 @pytest.mark.parametrize(
@@ -203,22 +220,28 @@ def test_reserved_parameter_rejected():
     )
 
 
-def test_fulltext_requires_edge_after_nodes():
-    _err(
+def test_fulltext_query_nodes_without_hop_uses_run_ids():
+    compiled = _ok(
         "CALL db.index.fulltext.queryNodes($__ft_nodes, $q) YIELD node, score "
         "RETURN node.name LIMIT 10",
-        "scope",
         parameters={"q": "KN4M~"},
     )
+    c = _compact(compiled.cypher)
+    assert "$__ft_nodes" in compiled.cypher
+    assert "$__run_idinnode.run_ids" in c
+    assert "exists{" not in c
+
     compiled = _ok(
         "CALL db.index.fulltext.queryNodes('invented', $q) YIELD node, score "
         "MATCH (node)-[r]-(m) "
         "RETURN node.name, type(r), m.name, r.evidence LIMIT 10",
         parameters={"q": "KN4M~"},
     )
+    c = _compact(compiled.cypher)
     assert "$__ft_nodes" in compiled.cypher
     assert "invented" not in compiled.cypher
-    assert "$__run_id" in compiled.cypher
+    assert "{run_id:$__run_id}" in c
+    assert "$__run_idinnode.run_ids" not in c
 
 
 def test_fulltext_other_call_rejected():
@@ -228,10 +251,199 @@ def test_fulltext_other_call_rejected():
     )
 
 
-def test_node_only_match_adds_exists():
+def test_node_only_match_uses_run_ids_not_exists():
     compiled = _ok("MATCH (n) WHERE toLower(n.name) CONTAINS $q RETURN n.name LIMIT 5")
-    assert "EXISTS" in compiled.cypher
+    c = _compact(compiled.cypher)
+    assert "$__run_idinn.run_ids" in c
+    assert "exists{" not in c
+    assert "exists (" not in c
+
+
+def _compact(cypher: str) -> str:
+    return "".join(cypher.split()).lower()
+
+
+def test_incident_match_does_not_add_node_run_ids():
+    compiled = _ok("MATCH (a)-[r]-(b) RETURN a.name LIMIT 5")
+    c = _compact(compiled.cypher)
+    assert "{run_id:$__run_id}" in c
+    assert "$__run_idina.run_ids" not in c
+    assert "$__run_idinb.run_ids" not in c
+
+
+def test_disconnected_node_in_comma_match_gets_run_ids():
+    compiled = _ok("MATCH (a), (b)-[r]-(c) RETURN a.name, b.name LIMIT 5")
+    c = _compact(compiled.cypher)
+    assert "{run_id:$__run_id}" in c
+    assert "$__run_idina.run_ids" in c
+    assert "$__run_idinb.run_ids" not in c
+    assert "$__run_idinc.run_ids" not in c
+
+
+def test_two_floating_nodes_each_get_run_ids():
+    compiled = _ok("MATCH (n), (m) RETURN n.name, m.name LIMIT 5")
+    c = _compact(compiled.cypher)
+    assert "$__run_idinn.run_ids" in c
+    assert "$__run_idinm.run_ids" in c
+    assert "exists{" not in c
+
+
+def test_trailing_disconnected_node_after_path_gets_run_ids():
+    compiled = _ok("MATCH (a)-[r]-(b), (c) RETURN a.name, c.name LIMIT 5")
+    c = _compact(compiled.cypher)
+    assert "{run_id:$__run_id}" in c
+    assert "$__run_idinc.run_ids" in c
+    assert "$__run_idina.run_ids" not in c
+
+
+def test_variable_length_path_does_not_add_node_run_ids():
+    compiled = _ok(
+        "MATCH p = (a)-[*1..4]-(b) RETURN [n IN nodes(p) | n.name] LIMIT 5"
+    )
+    c = _compact(compiled.cypher)
     assert "$__run_id" in compiled.cypher
+    assert "$__run_idina.run_ids" not in c
+    assert "$__run_idinb.run_ids" not in c
+
+
+def test_rewrites_stolen_node_run_ids_literal():
+    compiled = _ok("MATCH (n) WHERE 'stolen' IN n.run_ids RETURN n.name LIMIT 5")
+    c = _compact(compiled.cypher)
+    assert "'stolen'" not in compiled.cypher
+    assert "$__run_idinn.run_ids" in c
+    assert c.count("$__run_idinn.run_ids") == 1
+
+
+def test_nested_exists_node_only_match_gets_run_ids():
+    compiled = _ok(
+        "MATCH (a)-[r]-(b) "
+        "WHERE EXISTS { MATCH (n) WHERE n.name = a.name } "
+        "RETURN a.name LIMIT 5"
+    )
+    c = _compact(compiled.cypher)
+    assert "{run_id:$__run_id}" in c
+    assert "$__run_idinn.run_ids" in c
+    assert "$__run_idina.run_ids" not in c
+
+
+def test_count_subquery_node_only_match_gets_run_ids():
+    compiled = _ok(
+        "MATCH (a)-[r]-(b) "
+        "WHERE COUNT { MATCH (n) RETURN n } > 0 "
+        "RETURN a.name LIMIT 5"
+    )
+    c = _compact(compiled.cypher)
+    assert "$__run_idinn.run_ids" in c
+    assert "match(n)where$__run_idinn.run_idsreturnn" in c
+
+
+def test_union_node_only_both_branches_get_run_ids():
+    compiled = _ok(
+        "MATCH (n) WHERE n.name CONTAINS 'kefir' RETURN n.name "
+        "UNION "
+        "MATCH (m) WHERE m.name CONTAINS 'kefir' RETURN m.name"
+    )
+    c = _compact(compiled.cypher)
+    assert "$__run_idinn.run_ids" in c
+    assert "$__run_idinm.run_ids" in c
+
+
+def test_fulltext_query_nodes_with_without_hop_uses_run_ids():
+    compiled = _ok(
+        "CALL db.index.fulltext.queryNodes($__ft_nodes, $q) YIELD node, score "
+        "WITH node "
+        "RETURN node.name LIMIT 10",
+        parameters={"q": "kefir~"},
+    )
+    c = _compact(compiled.cypher)
+    assert "$__run_idinnode.run_ids" in c
+    assert compiled.cypher.upper().count("WITH") >= 1
+
+
+def test_fulltext_query_nodes_alias_without_hop_uses_alias_run_ids():
+    compiled = _ok(
+        "CALL db.index.fulltext.queryNodes($__ft_nodes, $q) YIELD node AS n, score "
+        "RETURN n.name LIMIT 10",
+        parameters={"q": "kefir~"},
+    )
+    c = _compact(compiled.cypher)
+    assert "$__run_idinn.run_ids" in c
+    assert "$__run_idinnode.run_ids" not in c
+
+
+def test_fulltext_query_nodes_with_alias_then_hop_skips_node_run_ids():
+    compiled = _ok(
+        "CALL db.index.fulltext.queryNodes($__ft_nodes, $q) YIELD node AS n, score "
+        "WITH n "
+        "MATCH (n)-[r]-(m) "
+        "RETURN n.name, type(r), m.name LIMIT 10",
+        parameters={"q": "kefir~"},
+    )
+    c = _compact(compiled.cypher)
+    assert "{run_id:$__run_id}" in c
+    assert "$__run_idinn.run_ids" not in c
+    assert "$__run_idinnode.run_ids" not in c
+
+
+def test_fulltext_query_nodes_where_without_hop_merges_predicate():
+    compiled = _ok(
+        "CALL db.index.fulltext.queryNodes($__ft_nodes, $q) YIELD node, score "
+        "WHERE score > 1 "
+        "RETURN node.name LIMIT 10",
+        parameters={"q": "kefir~"},
+    )
+    c = _compact(compiled.cypher)
+    assert "$__run_idinnode.run_idsandscore>1" in c or "$__run_idinnode.run_idsandscore>1.0" in c
+
+
+def test_fulltext_query_nodes_where_then_hop_skips_node_run_ids():
+    compiled = _ok(
+        "CALL db.index.fulltext.queryNodes($__ft_nodes, $q) YIELD node, score "
+        "WHERE score > 1 "
+        "MATCH (node)-[r]-(m) "
+        "RETURN node.name LIMIT 10",
+        parameters={"q": "kefir~"},
+    )
+    c = _compact(compiled.cypher)
+    assert "{run_id:$__run_id}" in c
+    assert "$__run_idinnode.run_ids" not in c
+    assert "score>1" in c
+
+
+def test_fulltext_query_nodes_with_star_then_hop_skips_node_run_ids():
+    compiled = _ok(
+        "CALL db.index.fulltext.queryNodes($__ft_nodes, $q) YIELD node, score "
+        "WITH * "
+        "MATCH (node)-[r]-(m) "
+        "RETURN node.name LIMIT 10",
+        parameters={"q": "kefir~"},
+    )
+    c = _compact(compiled.cypher)
+    assert "{run_id:$__run_id}" in c
+    assert "$__run_idinnode.run_ids" not in c
+
+
+def test_fulltext_query_relationships_without_match_filters_run_id():
+    compiled = _ok(
+        "CALL db.index.fulltext.queryRelationships($__ft_rels, $q) "
+        "YIELD relationship, score "
+        "RETURN relationship.evidence LIMIT 10",
+        parameters={"q": "kefir~"},
+    )
+    c = _compact(compiled.cypher)
+    assert "relationship.run_id=$__run_id" in c
+
+
+def test_fulltext_query_relationships_merges_existing_where():
+    compiled = _ok(
+        "CALL db.index.fulltext.queryRelationships($__ft_rels, $q) "
+        "YIELD relationship, score "
+        "WHERE score > 0.5 "
+        "RETURN relationship.evidence LIMIT 10",
+        parameters={"q": "kefir~"},
+    )
+    c = _compact(compiled.cypher)
+    assert "relationship.run_id=$__run_idandscore>0.5" in c
 
 
 def test_anonymous_arrows_become_maps():
@@ -281,6 +493,46 @@ def test_format_records_markdown_and_sources():
     stub = history_stub(text)
     assert "query_graph result" in stub
     assert "Retrieved data" not in stub
+
+
+def test_format_records_folds_aliased_source_filename():
+    registry = SourceRegistry()
+    text = format_records(
+        [
+            {
+                "src": "The_proteolytic_system_of_lactic_acid_bacteria.pdf",
+                "cnt": "684",
+            },
+            {
+                "src": "PMC6424877_Shotgun Metagenomics of a Water Kefir Fermentation Ecosystem.pdf",
+                "cnt": "462",
+            },
+        ],
+        registry=registry,
+        truncated_rows=True,
+        output_limit=10,
+        is_pure_aggregate=False,
+    )
+    assert "(source:1)" in text
+    assert "(source:2)" in text
+    assert "The_proteolytic_system_of_lactic_acid_bacteria.pdf" not in text
+    assert "Shotgun Metagenomics" not in text
+    assert "684" in text
+    assert registry.resolve(1) == "The_proteolytic_system_of_lactic_acid_bacteria.pdf"
+
+
+def test_format_records_does_not_fold_node_names():
+    registry = SourceRegistry()
+    text = format_records(
+        [{"n": "Lactobacillus", "cnt": "12"}],
+        registry=registry,
+        truncated_rows=False,
+        output_limit=20,
+        is_pure_aggregate=False,
+    )
+    assert "Lactobacillus" in text
+    assert "(source:" not in text
+    assert registry.snapshot() == []
 
 
 def test_history_stub_keeps_aggregates_not_generic_retrieved():
@@ -361,6 +613,10 @@ def test_description_matches_prompt_topics():
     assert "CALL db.index.fulltext.queryNodes($__ft_nodes, $q)" in QUERY_GRAPH_DESCRIPTION
     assert "CALL db.index.fulltext.queryRelationships($__ft_rels, $q)" in QUERY_GRAPH_DESCRIPTION
     assert "potassium" in QUERY_GRAPH_DESCRIPTION
+    assert "honored up to 100" in QUERY_GRAPH_DESCRIPTION
+    assert "NO_MATCHES" in QUERY_GRAPH_DESCRIPTION
+    assert "QUERY_ERROR" in QUERY_GRAPH_DESCRIPTION
+    assert "run_ids" in QUERY_GRAPH_DESCRIPTION
     from pathlib import Path
     prompt = (Path("prompts/assistant_logic.md")).read_text(encoding="utf-8")
     assert "query_graph" in prompt
@@ -368,11 +624,188 @@ def test_description_matches_prompt_topics():
     assert "ask_subgraph" in prompt
     assert "NO_MATCHES" in prompt
     assert "QUERY_ERROR" in prompt
-    assert "не начинай с `MATCH" in prompt
-    assert "queryNodes($__ft_nodes, $q)" in prompt
-    assert "queryRelationships($__ft_rels, $q)" in prompt
-    mention_at = prompt.index("Поиск упоминаний")
-    contains_fallback_at = prompt.index("toLower(n.name) CONTAINS")
-    dialect_at = prompt.index("Пиши один read-запрос")
-    assert mention_at < dialect_at
-    assert mention_at < contains_fallback_at
+    assert "get_service_guide" in prompt
+    assert "фундамент" in prompt
+    assert "queryNodes($__ft_nodes, $q)" not in prompt
+    assert "queryRelationships($__ft_rels, $q)" not in prompt
+    assert "CALL db.index.fulltext" not in prompt
+
+
+def test_schema_cypher_is_current_corpus_only():
+    from server.tools.query_graph import _SCHEMA_CYPHER_LABELS, _SCHEMA_CYPHER_TYPES
+
+    assert "db.labels" not in _SCHEMA_CYPHER_LABELS
+    assert "db.relationshipTypes" not in _SCHEMA_CYPHER_TYPES
+    assert "$__run_id" in _SCHEMA_CYPHER_LABELS
+    assert "$__run_id" in _SCHEMA_CYPHER_TYPES
+    assert "r.run_id" in _SCHEMA_CYPHER_LABELS
+    assert "r.run_id" in _SCHEMA_CYPHER_TYPES
+
+
+def test_api_graph_schema_is_run_scoped():
+    import inspect
+
+    from server.core.app import graph_schema
+
+    src = inspect.getsource(graph_schema)
+    assert "db.labels" not in src
+    assert "db.relationshipTypes" not in src
+    assert "r.run_id = $run_id" in src
+
+
+def test_directed_and_self_loop_are_incident():
+    compiled = _ok("MATCH (a)-[r]->(b) RETURN a.name LIMIT 5")
+    c = _compact(compiled.cypher)
+    assert "{run_id:$__run_id}" in c
+    assert "$__run_idina.run_ids" not in c
+    compiled = _ok("MATCH (a)-[r]-(a) RETURN a.name LIMIT 5")
+    c = _compact(compiled.cypher)
+    assert "{run_id:$__run_id}" in c
+    assert "$__run_idina.run_ids" not in c
+
+
+def test_two_hop_chain_is_incident():
+    compiled = _ok("MATCH (a)-[r]->(b)-[s]->(c) RETURN a.name LIMIT 5")
+    c = _compact(compiled.cypher)
+    assert c.count("{run_id:$__run_id}") == 2
+    assert "$__run_idina.run_ids" not in c
+    assert "$__run_idinb.run_ids" not in c
+    assert "$__run_idinc.run_ids" not in c
+
+
+def test_optional_match_on_already_bound_node_is_incident():
+    compiled = _ok(
+        "MATCH (n) WHERE toLower(n.name) CONTAINS $q "
+        "OPTIONAL MATCH (n)-[r]-(m) "
+        "RETURN n.name, type(r), m.name LIMIT 10",
+        parameters={"q": "x"},
+    )
+    c = _compact(compiled.cypher)
+    assert "$__run_idinn.run_ids" in c
+    assert "{run_id:$__run_id}" in c
+    assert "$__run_idinm.run_ids" not in c
+
+
+def test_query_nodes_dropping_node_in_with_still_filters():
+    compiled = _ok(
+        "CALL db.index.fulltext.queryNodes($__ft_nodes, $q) YIELD node, score "
+        "WITH score "
+        "RETURN score LIMIT 10",
+        parameters={"q": "kefir~"},
+    )
+    c = _compact(compiled.cypher)
+    assert "$__run_idinnode.run_ids" in c
+
+
+def test_query_nodes_plus_unrelated_match_filters_both():
+    compiled = _ok(
+        "CALL db.index.fulltext.queryNodes($__ft_nodes, $q) YIELD node, score "
+        "MATCH (other) "
+        "RETURN node.name, other.name LIMIT 10",
+        parameters={"q": "kefir~"},
+    )
+    c = _compact(compiled.cypher)
+    assert "$__run_idinnode.run_ids" in c
+    assert "$__run_idinother.run_ids" in c
+
+
+def test_labeled_floating_nodes_each_get_run_ids():
+    compiled = _ok("MATCH (n:Person), (m:Org) RETURN n.name, m.name LIMIT 5")
+    c = _compact(compiled.cypher)
+    assert "$__run_idinn.run_ids" in c
+    assert "$__run_idinm.run_ids" in c
+
+
+def test_does_not_duplicate_existing_run_ids_predicate():
+    compiled = _ok("MATCH (n) WHERE $x IN n.run_ids RETURN n.name LIMIT 5", parameters={"x": "ignored"})
+    c = _compact(compiled.cypher)
+    assert "'ignored'" not in compiled.cypher
+    assert c.count("$__run_idinn.run_ids") == 1
+
+
+def test_fulltext_query_relationships_with_hop_keeps_rel_filter():
+    compiled = _ok(
+        "CALL db.index.fulltext.queryRelationships($__ft_rels, $q) "
+        "YIELD relationship, score "
+        "MATCH (a)-[relationship]-(b) "
+        "RETURN a.name, b.name LIMIT 10",
+        parameters={"q": "kefir~"},
+    )
+    c = _compact(compiled.cypher)
+    assert "relationship.run_id=$__run_id" in c
+    assert "{run_id:$__run_id}" in c
+    assert "$__run_idina.run_ids" not in c
+    assert "$__run_idinb.run_ids" not in c
+
+
+def test_nested_exists_with_edge_does_not_add_node_run_ids():
+    compiled = _ok(
+        "MATCH (a)-[r]-(b) "
+        "WHERE EXISTS { MATCH (n)-[e]-(m) WHERE n.name = a.name } "
+        "RETURN a.name LIMIT 5"
+    )
+    c = _compact(compiled.cypher)
+    assert c.count("{run_id:$__run_id}") == 2
+    assert "$__run_idinn.run_ids" not in c
+    assert "$__run_idinm.run_ids" not in c
+
+
+def test_query_nodes_optional_match_hop_skips_node_run_ids():
+    compiled = _ok(
+        "CALL db.index.fulltext.queryNodes($__ft_nodes, $q) YIELD node, score "
+        "OPTIONAL MATCH (node)-[r]-(m) "
+        "RETURN node.name, type(r) LIMIT 10",
+        parameters={"q": "kefir~"},
+    )
+    c = _compact(compiled.cypher)
+    assert "{run_id:$__run_id}" in c
+    assert "$__run_idinnode.run_ids" not in c
+
+
+def test_three_floating_nodes_each_get_run_ids():
+    compiled = _ok("MATCH (a), (b), (c) RETURN a.name, b.name, c.name LIMIT 5")
+    c = _compact(compiled.cypher)
+    assert "$__run_idina.run_ids" in c
+    assert "$__run_idinb.run_ids" in c
+    assert "$__run_idinc.run_ids" in c
+
+
+def test_node_property_map_still_gets_run_ids():
+    compiled = _ok("MATCH (n {name: $q}) RETURN n.name LIMIT 5", parameters={"q": "kefir"})
+    c = _compact(compiled.cypher)
+    assert "$__run_idinn.run_ids" in c
+    assert "{name:$q}" in c or "{name: $q}" in compiled.cypher.replace(" ", "")
+
+
+def test_node_only_keeps_existing_where_and_appends_run_ids():
+    compiled = _ok(
+        "MATCH (n) WHERE toLower(n.name) CONTAINS $q RETURN n.name LIMIT 5",
+        parameters={"q": "kefir"},
+    )
+    c = _compact(compiled.cypher)
+    assert "tolower(n.name)contains$qand$__run_idinn.run_ids" in c
+
+
+def test_union_mixed_node_and_edge_branches():
+    compiled = _ok(
+        "MATCH (n) RETURN n.name "
+        "UNION "
+        "MATCH (a)-[r]-(b) RETURN a.name"
+    )
+    c = _compact(compiled.cypher)
+    assert "$__run_idinn.run_ids" in c
+    assert "{run_id:$__run_id}" in c
+    assert "$__run_idina.run_ids" not in c
+
+
+def test_two_query_nodes_calls_each_get_run_ids():
+    compiled = _ok(
+        "CALL db.index.fulltext.queryNodes($__ft_nodes, $q) YIELD node, score "
+        "RETURN node.name AS name "
+        "UNION "
+        "CALL db.index.fulltext.queryNodes($__ft_nodes, $q2) YIELD node, score "
+        "RETURN node.name AS name",
+        parameters={"q": "kefir~", "q2": "milk~"},
+    )
+    c = _compact(compiled.cypher)
+    assert c.count("$__run_idinnode.run_ids") == 2

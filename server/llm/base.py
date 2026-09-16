@@ -402,7 +402,8 @@ def _tool_budget_footer(turn: int, max_turns: int) -> str:
     calls = "call" if left == 1 else "calls"
     return (
         f"\n\n[Tool budget: {used}/{budget} used. "
-        f"{left} {calls} left, or answer now.]"
+        f"{left} {calls} left. Use remaining calls to close remaining gaps; "
+        "answer now only if there is no new search direction.]"
     )
 
 

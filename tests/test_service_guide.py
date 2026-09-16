@@ -48,6 +48,8 @@ def test_service_guide_is_shared_and_available_in_every_mode(tmp_path):
             "properties": {},
             "additionalProperties": False,
         }
+        assert "how to use" in help_schema["description"].lower()
+        assert "graph search" in help_schema["description"].lower()
 
     # UI and tool read on demand, so editing the one Markdown source cannot
     # leave either consumer with a stale embedded copy.

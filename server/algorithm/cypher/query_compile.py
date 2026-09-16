@@ -1,8 +1,10 @@
 """Compile model Cypher into a corpus-scoped read query.
 
 The model writes Cypher; this module tokenizes it (so strings/comments cannot
-hide writes), rejects mutating or uncheckable constructs, injects run_id onto
-every relationship, and caps RETURN LIMIT. Neo4j is not consulted here.
+hide writes), rejects mutating or uncheckable constructs, injects r.run_id onto
+every relationship and `$__run_id IN n.run_ids` onto nodes that are not
+incident to such a relationship, and applies RETURN LIMIT (honor the query's
+LIMIT up to 100; default 20 if omitted). Neo4j is not consulted here.
 """
 
 from __future__ import annotations
@@ -114,6 +116,19 @@ def clamp_max_rows(value: object) -> int:
     return max(1, min(MAX_MAX_ROWS, n))
 
 
+def resolve_output_limit(*, user_limit: int | None, max_rows: object) -> int:
+    """Cypher LIMIT wins (capped at 100). Else explicit max_rows. Else 20."""
+    if user_limit is not None:
+        try:
+            n = int(user_limit)
+        except (TypeError, ValueError):
+            n = DEFAULT_MAX_ROWS
+        return max(1, min(MAX_MAX_ROWS, n))
+    if max_rows is not None:
+        return clamp_max_rows(max_rows)
+    return DEFAULT_MAX_ROWS
+
+
 def compile_query(
     cypher: str,
     *,
@@ -145,10 +160,11 @@ def compile_query(
     tokens = rewrite_call_fulltext(tokens)
     tokens = rewrite_relationship_maps(tokens)
     tokens = rewrite_run_id_predicates(tokens)
-    tokens = apply_node_exists(tokens)
+    tokens = apply_node_run_ids(tokens)
     enforce_scope(tokens)
-    output_limit = clamp_max_rows(max_rows)
-    tokens, fetch_limit, is_pure_aggregate = apply_return_limits(tokens, output_limit)
+    tokens, fetch_limit, is_pure_aggregate, output_limit = apply_return_limits(
+        tokens, max_rows
+    )
     compiled = emit(tokens)
     return CompiledQuery(
         cypher=compiled,
@@ -475,10 +491,8 @@ def rewrite_call_fulltext(tokens: list[Tok]) -> list[Tok]:
             new_inner.extend(args[1])
             chunk = tokens[i : j + 1] + new_inner + [tokens[close]]
             i = close + 1
-            # Keep YIELD … and, for relationships, force run_id on the yielded rel.
             if i < len(tokens) and tokens[i].kind == "keyword" and tokens[i].value == "YIELD":
                 y_end = i + 1
-                names: list[str] = []
                 while y_end < len(tokens):
                     yt = tokens[y_end]
                     if yt.kind == "keyword" and yt.value in {
@@ -486,21 +500,62 @@ def rewrite_call_fulltext(tokens: list[Tok]) -> list[Tok]:
                         "UNION", "ORDER", "SKIP", "LIMIT", "WHERE",
                     }:
                         break
-                    if yt.kind in {"ident", "keyword"} and yt.value not in {"AS"}:
-                        names.append(yt.raw)
                     y_end += 1
                 chunk.extend(tokens[i:y_end])
+                binding = _yield_first_binding(tokens, i + 1, y_end)
                 i = y_end
-                if name.endswith("queryrelationships") and names:
-                    rel = names[0]
-                    chunk.extend(tokenize(
-                        f"WHERE {rel}.run_id = ${SERVER_RUN_ID_PARAM}"
-                    ))
+                if binding:
+                    if name.endswith("queryrelationships"):
+                        pred = tokenize(
+                            f"WHERE {binding}.run_id = ${SERVER_RUN_ID_PARAM}"
+                        )
+                        pred, i = _merge_where(pred, tokens, i)
+                        chunk.extend(pred)
+                    elif name.endswith("querynodes"):
+                        if not _yielded_node_has_rel_hop(tokens, i, {binding}):
+                            pred = tokenize(
+                                f"WHERE ${SERVER_RUN_ID_PARAM} IN {binding}.run_ids"
+                            )
+                            pred, i = _merge_where(pred, tokens, i)
+                            chunk.extend(pred)
             out.extend(chunk)
             continue
         out.append(tokens[i])
         i += 1
     return out
+
+
+def _merge_where(
+    where_clause: list[Tok], tokens: list[Tok], i: int
+) -> tuple[list[Tok], int]:
+    """If the next token is WHERE, fold its predicate with AND; else keep WHERE …."""
+    if i < len(tokens) and tokens[i].kind == "keyword" and tokens[i].value == "WHERE":
+        end = _clause_end(tokens, i + 1)
+        extra = tokens[i + 1 : end]
+        i = end
+        return (
+            where_clause
+            + [Tok("keyword", "AND", "AND", 0)]
+            + extra,
+            i,
+        )
+    return where_clause, i
+
+
+def _yield_first_binding(tokens: list[Tok], start: int, end: int) -> str:
+    """In-scope name of the first YIELD item (`node AS n` → `n`)."""
+    parts = _split_top(tokens[start:end], ",")
+    if not parts or not parts[0]:
+        return ""
+    part = parts[0]
+    for k, tok in enumerate(part):
+        if tok.kind == "keyword" and tok.value == "AS" and k + 1 < len(part):
+            nxt = part[k + 1]
+            if nxt.kind in {"ident", "keyword"}:
+                return nxt.raw
+    if part[0].kind in {"ident", "keyword"}:
+        return part[0].raw
+    return ""
 
 
 def rewrite_relationship_maps(tokens: list[Tok]) -> list[Tok]:
@@ -610,10 +665,24 @@ def _strip_map_key(body: list[Tok], key: str) -> list[Tok]:
 
 
 def rewrite_run_id_predicates(tokens: list[Tok]) -> list[Tok]:
-    """Force any `.run_id` comparison to the server parameter."""
+    """Force `.run_id` / `IN n.run_ids` comparisons to the server parameter."""
     out: list[Tok] = []
     i = 0
     while i < len(tokens):
+        if (
+            i + 4 < len(tokens)
+            and tokens[i].kind in {"ident", "keyword", "string", "param", "number"}
+            and tokens[i + 1].kind == "keyword"
+            and tokens[i + 1].value == "IN"
+            and tokens[i + 2].kind in {"ident", "keyword"}
+            and tokens[i + 3].raw == "."
+            and tokens[i + 4].value.lower() == "run_ids"
+        ):
+            out.append(Tok("param", SERVER_RUN_ID_PARAM, f"${SERVER_RUN_ID_PARAM}", 0))
+            out.append(tokens[i + 1])
+            out.extend(tokens[i + 2 : i + 5])
+            i += 5
+            continue
         if (
             i + 3 < len(tokens)
             and tokens[i].kind in {"ident", "keyword"}
@@ -624,7 +693,6 @@ def rewrite_run_id_predicates(tokens: list[Tok]) -> list[Tok]:
             out.extend(tokens[i : i + 3])
             out.append(tokens[i + 3])
             if tokens[i + 3].value == "IN":
-                # replace the next list/expr atom with [$__run_id]
                 j = i + 4
                 if j < len(tokens) and tokens[j].raw == "[":
                     close = _matching(tokens, j, "[", "]")
@@ -636,11 +704,9 @@ def rewrite_run_id_predicates(tokens: list[Tok]) -> list[Tok]:
                     i = close + 1
                     continue
             if tokens[i + 3].value == "IS":
-                # IS NULL / IS NOT NULL — keep, isolation already on the pattern
                 out.append(tokens[i + 4] if i + 4 < len(tokens) else Tok("keyword", "NULL", "NULL", 0))
                 i += 5
                 continue
-            # skip original RHS atom
             j = i + 4
             if j < len(tokens) and tokens[j].raw in {"(", "["}:
                 close = _matching(tokens, j, tokens[j].raw, ")" if tokens[j].raw == "(" else "]")
@@ -665,13 +731,10 @@ def enforce_scope(tokens: list[Tok]) -> None:
             "syntax",
             "Broken here: missing RETURN. Fix the Cypher; do not restate the user question.",
         )
-    yielded_nodes: set[str] = set()
-    yielded_rels: set[str] = set()
     i = 0
     while i < len(tokens):
         tok = tokens[i]
         if tok.kind == "keyword" and tok.value == "CALL" and _is_allowed_fulltext_call(tokens, i):
-            name = _dotted_name(tokens, i + 1, 4) or ""
             y_i = _find_keyword_from(tokens, i, "YIELD")
             if y_i is None:
                 raise QueryCompileError(
@@ -684,10 +747,6 @@ def enforce_scope(tokens: list[Tok]) -> None:
                     "syntax",
                     "Broken here: YIELD is empty. Fix the Cypher; do not restate the user question.",
                 )
-            if name.endswith("querynodes"):
-                yielded_nodes.add(names[0].lower())
-            else:
-                yielded_rels.add(names[0].lower())
             i = y_i + 1
             continue
         if tok.kind == "keyword" and tok.value == "MATCH":
@@ -700,74 +759,254 @@ def enforce_scope(tokens: list[Tok]) -> None:
                         "scope",
                         "The query cannot be isolated to this corpus: OPTIONAL MATCH must include a relationship. Add an edge pattern, not a node-only MATCH.",
                     )
-                has_exists = any(
-                    t.kind == "keyword" and t.value == "EXISTS"
-                    for t in tokens[i + 1 : end]
-                ) or any(
-                    t.kind == "keyword" and t.value == "EXISTS"
-                    for t in tokens[end : min(end + 40, len(tokens))]
-                )
-                if not nodes and not has_exists:
+                if not nodes:
                     raise QueryCompileError(
                         "scope",
-                        "The query cannot be isolated to this corpus: MATCH only by node. Add an explicit relationship or EXISTS pattern.",
+                        "The query cannot be isolated to this corpus: MATCH only by node. Add an explicit relationship or a named node.",
                     )
             i = end
             continue
         i += 1
-    if yielded_nodes and not _yielded_node_has_edge(tokens, yielded_nodes):
-        raise QueryCompileError(
-            "scope",
-            "The query cannot be isolated to this corpus: after fulltext queryNodes, MATCH the node to a relationship. Fulltext does not filter run_id.",
-        )
 
 
-def apply_node_exists(tokens: list[Tok]) -> list[Tok]:
-    out: list[Tok] = []
+def apply_node_run_ids(tokens: list[Tok]) -> list[Tok]:
+    """`$__run_id IN n.run_ids` on named nodes that are not incident to a relationship."""
+    match_at = [
+        i
+        for i, tok in enumerate(tokens)
+        if tok.kind == "keyword" and tok.value == "MATCH"
+    ]
+    for match_i in reversed(match_at):
+        optional = match_i > 0 and tokens[match_i - 1].kind == "keyword" and tokens[match_i - 1].value == "OPTIONAL"
+        end = _match_end(tokens, match_i)
+        body = tokens[match_i + 1 : end]
+        pattern, _where_at = _split_pattern_where(body)
+        if optional and _pattern_rel_count(pattern) == 0:
+            raise QueryCompileError(
+                "scope",
+                "The query cannot be isolated to this corpus: OPTIONAL MATCH must include a relationship. Add an edge pattern, not a node-only MATCH.",
+            )
+        floating = _floating_node_vars(pattern)
+        preds: list[Tok] = []
+        for var in floating:
+            if _already_has_run_ids(body, var):
+                continue
+            if preds:
+                preds.append(Tok("keyword", "AND", "AND", 0))
+            preds.extend(_run_ids_pred(var))
+        if not preds:
+            continue
+        if _where_at is not None:
+            injected = [Tok("keyword", "AND", "AND", 0)] + preds
+            tokens[match_i:end] = tokens[match_i:end] + injected
+        else:
+            injected = [Tok("keyword", "WHERE", "WHERE", 0)] + preds
+            tokens[match_i:end] = [tokens[match_i]] + body + injected
+    return tokens
+
+
+def _run_ids_pred(var: str) -> list[Tok]:
+    return tokenize(f"${SERVER_RUN_ID_PARAM} IN {var}.run_ids")
+
+
+def _already_has_run_ids(body: list[Tok], var: str) -> bool:
+    needle = emit(_run_ids_pred(var)).replace(" ", "")
+    return needle.lower() in emit(body).replace(" ", "").lower()
+
+
+def _split_pattern_where(body: list[Tok]) -> tuple[list[Tok], int | None]:
+    depth_paren = depth_brack = depth_brace = 0
+    for i, tok in enumerate(body):
+        if tok.raw == "(":
+            depth_paren += 1
+        elif tok.raw == ")":
+            depth_paren -= 1
+        elif tok.raw == "[":
+            depth_brack += 1
+        elif tok.raw == "]":
+            depth_brack -= 1
+        elif tok.raw == "{":
+            depth_brace += 1
+        elif tok.raw == "}":
+            depth_brace -= 1
+        elif (
+            depth_paren == depth_brack == depth_brace == 0
+            and tok.kind == "keyword"
+            and tok.value == "WHERE"
+        ):
+            return body[:i], i
+    return body, None
+
+
+def _pattern_rel_count(pattern: list[Tok]) -> int:
+    rels, _ = _pattern_stats(pattern)
+    return rels
+
+
+def _match_end(tokens: list[Tok], match_i: int) -> int:
+    """End index of this MATCH clause, stopping at `}` that closes an enclosing EXISTS."""
+    base_brace = _brace_depth(tokens, match_i)
+    depth_paren = depth_brack = 0
+    depth_brace = 0
+    i = match_i + 1
+    while i < len(tokens):
+        t = tokens[i]
+        if depth_paren == 0 and depth_brack == 0 and depth_brace == 0:
+            if t.raw == "}" and base_brace > 0:
+                return i
+            if t.kind == "keyword" and t.value in {
+                "MATCH",
+                "OPTIONAL",
+                "WITH",
+                "RETURN",
+                "UNWIND",
+                "CALL",
+                "UNION",
+                "ORDER",
+                "SKIP",
+                "LIMIT",
+            }:
+                return i
+        if t.raw == "(":
+            depth_paren += 1
+        elif t.raw == ")":
+            depth_paren -= 1
+        elif t.raw == "[":
+            depth_brack += 1
+        elif t.raw == "]":
+            depth_brack -= 1
+        elif t.raw == "{":
+            depth_brace += 1
+        elif t.raw == "}":
+            depth_brace -= 1
+        i += 1
+    return len(tokens)
+
+
+def _brace_depth(tokens: list[Tok], idx: int) -> int:
+    depth = 0
+    for tok in tokens[:idx]:
+        if tok.raw == "{":
+            depth += 1
+        elif tok.raw == "}":
+            depth -= 1
+    return depth
+
+
+def _floating_node_vars(pattern: list[Tok]) -> list[str]:
+    """Named nodes in a MATCH pattern that do not touch a relationship."""
+    incident: set[str] = set()
+    named: list[str] = []
+    seen: set[str] = set()
+    prev: str | None = None
+    pending_after_rel = False
+    depth_paren = depth_brack = depth_brace = 0
     i = 0
+    while i < len(pattern):
+        tok = pattern[i]
+        if tok.raw == "(" and depth_brack == 0 and depth_brace == 0 and depth_paren == 0:
+            close = _matching(pattern, i, "(", ")")
+            inner = pattern[i + 1 : close]
+            name = None
+            if inner and inner[0].kind in {"ident", "keyword"} and inner[0].raw not in {":"}:
+                name = inner[0].raw
+                key = name.lower()
+                if key not in seen:
+                    named.append(name)
+                    seen.add(key)
+            if pending_after_rel and name:
+                incident.add(name.lower())
+            pending_after_rel = False
+            prev = name
+            i = close + 1
+            continue
+        if _is_rel_open(pattern, i) and depth_paren == 0 and depth_brace == 0:
+            if prev:
+                incident.add(prev.lower())
+            pending_after_rel = True
+            close = _matching(pattern, i, "[", "]")
+            i = close + 1
+            continue
+        if tok.raw == "," and depth_paren == depth_brack == depth_brace == 0:
+            prev = None
+            pending_after_rel = False
+        if tok.raw == "(":
+            depth_paren += 1
+        elif tok.raw == ")":
+            depth_paren -= 1
+        elif tok.raw == "[":
+            depth_brack += 1
+        elif tok.raw == "]":
+            depth_brack -= 1
+        elif tok.raw == "{":
+            depth_brace += 1
+        elif tok.raw == "}":
+            depth_brace -= 1
+        i += 1
+    return [name for name in named if name.lower() not in incident]
+
+
+def _yielded_node_has_rel_hop(tokens: list[Tok], start: int, live: set[str]) -> bool:
+    """True if a later MATCH uses the yielded node (or a WITH alias) on a relationship."""
+    live_l = {name.lower() for name in live}
+    i = start
     while i < len(tokens):
         tok = tokens[i]
-        if tok.kind == "keyword" and tok.value == "MATCH":
-            optional = bool(out) and out[-1].kind == "keyword" and out[-1].value == "OPTIONAL"
+        if tok.kind == "keyword" and tok.value == "WHERE":
+            i = _clause_end(tokens, i + 1)
+            continue
+        if tok.kind == "keyword" and tok.value == "WITH":
             end = _clause_end(tokens, i + 1)
-            chunk = tokens[i:end]
-            rels, nodes = _pattern_stats(tokens[i + 1 : end])
-            already = any(t.kind == "keyword" and t.value == "EXISTS" for t in chunk)
-            out.extend(chunk)
-            if rels == 0 and not optional and nodes and not already:
-                exists = _exists_tokens(nodes[0])
-                if any(t.kind == "keyword" and t.value == "WHERE" for t in chunk):
-                    out.append(Tok("keyword", "AND", "AND", 0))
-                    out.extend(exists)
-                else:
-                    out.append(Tok("keyword", "WHERE", "WHERE", 0))
-                    out.extend(exists)
+            live_l = _with_live(tokens[i + 1 : end], live_l)
             i = end
             continue
-        out.append(tok)
-        i += 1
-    return out
-
-
-def _exists_tokens(node_var: str) -> list[Tok]:
-    # EXISTS { MATCH (v)-[__e {run_id:$__run_id}]-() }
-    e = f"__e_{node_var}"
-    return tokenize(
-        f"EXISTS {{ MATCH ({node_var})-[{e} {{run_id: ${SERVER_RUN_ID_PARAM}}}]-() }}"
-    )
-
-
-def _yielded_node_has_edge(tokens: list[Tok], names: set[str]) -> bool:
-    i = 0
-    while i < len(tokens):
-        if tokens[i].kind == "keyword" and tokens[i].value == "MATCH":
-            end = _clause_end(tokens, i + 1)
-            rels, nodes = _pattern_stats(tokens[i + 1 : end])
-            node_set = {n.lower() for n in nodes}
-            if rels > 0 and node_set & names:
-                return True
+        if tok.kind == "keyword" and tok.value == "OPTIONAL":
+            nxt = tokens[i + 1] if i + 1 < len(tokens) else None
+            if nxt is not None and nxt.kind == "keyword" and nxt.value == "MATCH":
+                i += 1
+                continue
+        if tok.kind == "keyword" and tok.value == "MATCH":
+            end = _match_end(tokens, i)
+            body = tokens[i + 1 : end]
+            pattern, _ = _split_pattern_where(body)
+            rels, nodes = _pattern_stats(pattern)
+            if rels > 0:
+                floating = {name.lower() for name in _floating_node_vars(pattern)}
+                incident = {name.lower() for name in nodes if name.lower() not in floating}
+                if live_l & incident:
+                    return True
+            i = end
+            continue
+        if tok.kind == "keyword" and tok.value in {"RETURN", "UNION"}:
+            break
         i += 1
     return False
+
+
+def _with_live(body: list[Tok], live: set[str]) -> set[str]:
+    """Names that still refer to the yielded node after this WITH."""
+    items_part, _ = _split_pattern_where(body)
+    new_live: set[str] = set()
+    for part in _split_top(items_part, ","):
+        part = [tok for tok in part if not (tok.kind == "keyword" and tok.value == "DISTINCT")]
+        if not part:
+            continue
+        if len(part) == 1 and part[0].raw == "*":
+            new_live |= live
+            continue
+        alias = None
+        expr = part
+        for k, tok in enumerate(part):
+            if tok.kind == "keyword" and tok.value == "AS" and _depth_zero_at(part, k):
+                expr = part[:k]
+                if k + 1 < len(part) and part[k + 1].kind in {"ident", "keyword"}:
+                    alias = part[k + 1].raw.lower()
+                break
+        if len(expr) == 1 and expr[0].kind in {"ident", "keyword"}:
+            src = expr[0].raw.lower()
+            if src in live:
+                new_live.add(alias or src)
+    return new_live
 
 
 def _yield_names(tokens: list[Tok], start: int) -> list[str]:
@@ -858,11 +1097,14 @@ def _clause_end(tokens: list[Tok], start: int) -> int:
     return len(tokens)
 
 
-def apply_return_limits(tokens: list[Tok], max_rows: int) -> tuple[list[Tok], int | None, bool]:
+def apply_return_limits(
+    tokens: list[Tok], max_rows: object = None
+) -> tuple[list[Tok], int | None, bool, int]:
     branches = _split_top(tokens, "UNION")
     # UNION ALL is UNION + ALL — _split_top on keyword UNION leaves ALL on the next branch.
     rebuilt: list[list[Tok]] = []
     fetch_limit: int | None = None
+    output_limit = DEFAULT_MAX_ROWS
     any_non_agg = False
     for branch in branches:
         # drop leading ALL from UNION ALL
@@ -871,8 +1113,12 @@ def apply_return_limits(tokens: list[Tok], max_rows: int) -> tuple[list[Tok], in
             b = b[1:]
         if not b:
             continue
-        b, branch_fetch, pure = _limit_one_return(b, max_rows)
+        b, branch_fetch, pure, branch_cap = _limit_one_return(b, max_rows)
         if not pure:
+            if not any_non_agg:
+                output_limit = branch_cap
+            else:
+                output_limit = max(output_limit, branch_cap)
             any_non_agg = True
             fetch_limit = max(fetch_limit or 0, branch_fetch or 0) or branch_fetch
         rebuilt.append(b)
@@ -888,7 +1134,10 @@ def apply_return_limits(tokens: list[Tok], max_rows: int) -> tuple[list[Tok], in
         # Recover UNION ALL: if original tokens had ALL after UNION, keep it
         out = _restore_union_all(tokens, rebuilt)
     is_pure = not any_non_agg
-    return out, (None if is_pure else (fetch_limit or max_rows + 1)), is_pure
+    if is_pure:
+        output_limit = resolve_output_limit(user_limit=None, max_rows=max_rows)
+        return out, None, True, output_limit
+    return out, (fetch_limit or output_limit + 1), False, output_limit
 
 
 def _restore_union_all(original: list[Tok], branches: list[list[Tok]]) -> list[Tok]:
@@ -915,7 +1164,9 @@ def _restore_union_all(original: list[Tok], branches: list[list[Tok]]) -> list[T
     return out
 
 
-def _limit_one_return(tokens: list[Tok], max_rows: int) -> tuple[list[Tok], int | None, bool]:
+def _limit_one_return(
+    tokens: list[Tok], max_rows: object = None
+) -> tuple[list[Tok], int | None, bool, int]:
     r_i = None
     for i, t in enumerate(tokens):
         if t.kind == "keyword" and t.value == "RETURN":
@@ -949,18 +1200,16 @@ def _limit_one_return(tokens: list[Tok], max_rows: int) -> tuple[list[Tok], int 
             proj_end = min(proj_end, marker)
     projection = tail[:proj_end]
     pure = _is_pure_aggregate(projection)
-    if pure:
-        # keep user LIMIT if any but do not add a wrapping one
-        return tokens, None, True
     user_limit = None
     if lim_i is not None and lim_i + 1 < len(tail) and tail[lim_i + 1].kind == "number":
         try:
             user_limit = int(float(tail[lim_i + 1].value))
         except ValueError:
             user_limit = None
-    cap = max_rows
-    if user_limit is not None:
-        cap = min(user_limit, max_rows)
+    cap = resolve_output_limit(user_limit=user_limit, max_rows=max_rows)
+    if pure:
+        # keep user LIMIT if any but do not add a wrapping one
+        return tokens, None, True, cap
     fetch = cap + 1
     new_tail: list[Tok]
     if lim_i is not None:
@@ -971,7 +1220,7 @@ def _limit_one_return(tokens: list[Tok], max_rows: int) -> tuple[list[Tok], int 
             Tok("keyword", "LIMIT", "LIMIT", 0),
             Tok("number", str(fetch), str(fetch), 0),
         ]
-    return tokens[: r_i + 1] + new_tail, fetch, False
+    return tokens[: r_i + 1] + new_tail, fetch, False, cap
 
 
 def _is_pure_aggregate(projection: list[Tok]) -> bool:

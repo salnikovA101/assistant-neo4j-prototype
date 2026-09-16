@@ -7,8 +7,21 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from server.llm.base import _tool_budget_footer
 from server.llm.providers.openai_provider import OpenAIProvider
 from server.utils.config import OpenAIProfile
+
+
+def test_tool_budget_footer_asks_to_close_gaps():
+    remaining = _tool_budget_footer(2, 10)
+    assert "2/10 used" in remaining
+    assert "8 calls left" in remaining
+    assert "close remaining gaps" in remaining
+    assert "no new search direction" in remaining
+    assert "or answer now" not in remaining
+    exhausted = _tool_budget_footer(10, 10)
+    assert "10/10 exhausted" in exhausted
+    assert "Do not call tools again" in exhausted
 
 
 class _Delta:

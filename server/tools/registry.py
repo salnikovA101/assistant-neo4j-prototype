@@ -19,12 +19,13 @@ def _service_guide_tool_schema() -> dict[str, Any]:
         "function": {
             "name": "get_service_guide",
             "description": (
-                "Read the current Neo4j Assistant user guide. Call this when the "
-                "user asks what the service or assistant can do, or how to use a UI "
-                "feature, work mode, search, sources, research map, branches, cards, "
-                "settings, or troubleshooting. Do not call it for domain research. "
-                "When answering from this documentation, do not expose internal "
-                "source markers or citation ids."
+                "Product how-to, not a graph search. The guide explains how to use "
+                "the service: answer vs research modes, corpus upload and isolation, "
+                "search depth, graph and cards, voice input, what the assistant can do, "
+                "and how citations work. Call when the user asks how to use the product, "
+                "the UI, capabilities, or onboarding. Do not call it for domain research "
+                "instead of ask_subgraph or query_graph. When answering from this "
+                "documentation, do not expose internal source markers or citation ids."
             ),
             "parameters": {
                 "type": "object",
@@ -229,13 +230,35 @@ class Tools:
                 "function": {
                     "name": "ask_subgraph",
                     "description": (
-                        "Search the English knowledge graph for food technology "
-                        "(starter cultures, freshness indicators, smart packaging). "
-                        "Call it when the question names a product, substance, "
-                        "culture, process, class or goal — including catalogs and "
-                        "selection questions. Returns evidence UNITs: tours of "
-                        "cards, each card a triple plus its evidence text and "
-                        "(source:N). Search depth is set in the UI, not here."
+                        "Semantic search over relationship evidence in the English "
+                        "knowledge graph (food technology: starter cultures, freshness "
+                        "indicators, smart packaging). Use on a blank slate (no graph "
+                        "names yet) and to build a foundation from context: the first "
+                        "evidence cut, names and conditions for later query_graph. "
+                        "Call when the question names a product, substance, culture, "
+                        "process, class or goal — including catalogs and comparison. "
+                        "Not a proof that a fact is absent. Search depth is set in the "
+                        "UI, not here.\n"
+                        "How to write subquestions: 1–5 standalone neutral English "
+                        "questions, one aspect each, no Russian, no paraphrases of the "
+                        "same thought. Preserve the user's product, constraints and "
+                        "unknowns; do not plant an expected answer. A user hypothesis "
+                        "stays a check, not a fact. GOOD: 'Which starter cultures are "
+                        "used in cottage cheese production?' BAD: 'What starter "
+                        "cultures are used?' (missing product).\n"
+                        "How to read the result: a card is `A —relation→ B` (node names) "
+                        "plus the evidence text and (source:N). Chain = a walk; "
+                        "consecutive cards share a vertex. @Hub = still at that vertex "
+                        "(sibling edge), not the next process step. Properties stay "
+                        "inside the card they appear on. conf and Chain numbers are "
+                        "service fields.\n"
+                        "Feedback: NO_RESULTS — no new evidence for these questions; try "
+                        "a remaining independent aspect or query_graph. Answer with GAPS "
+                        "only when both tools are empty for that aspect, there is no new "
+                        "search direction, or the budget is spent. TOOL_ERROR "
+                        "— read the reason: fix input format; if search budget is spent, "
+                        "stop calling tools and answer from what you have; if search "
+                        "failed, state the technical limit. Do not invent cards."
                     ),
                     "parameters": {
                         "type": "object",
