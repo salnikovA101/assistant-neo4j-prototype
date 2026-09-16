@@ -26,6 +26,7 @@ LEAKED_ARTEFACTS: tuple[str, ...] = (
     ".pdf",
     "ask_subgraph",
     "advance_research",
+    "query_graph",
     "source:",
     "TOOL_ERROR",
     "NO_RESULTS",

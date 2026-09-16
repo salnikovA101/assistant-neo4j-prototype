@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, CSSProperties } from "react";
 import type { AgendaItem, CardDraft, CardTemplate, ChatMessage, ChatStep, PendingApproval } from "../types";
+import { copyText } from "../clipboard";
+import { answerMarkdownForCopy } from "../copyAnswer";
 import { prettyJson, renderAnswerMarkdown, renderMarkdown, renderReasoningMarkdown } from "../format";
 import { blankData, fallbackSchemaForData } from "../cardModel";
-import { IconFork, IconGraph } from "./Icons";
+import { IconCopy, IconFork, IconGraph } from "./Icons";
 import { CardVisual } from "./CardVisual";
 
 function templateForVersion(templates: CardTemplate[], versionId: string): CardTemplate | undefined {
@@ -93,6 +95,9 @@ function streamLabel(msg: ChatMessage): string {
   if (runningTool?.kind === "tool" && runningTool.name === "get_service_guide") {
     return "открывает помощь…";
   }
+  if (runningTool?.kind === "tool" && runningTool.name === "query_graph") {
+    return "запрос к графу…";
+  }
   if (runningTool) {
     return "поиск в базе…";
   }
@@ -101,7 +106,9 @@ function streamLabel(msg: ChatMessage): string {
 }
 
 function toolLabel(name: string): string {
-  return name === "get_service_guide" ? "Помощь сервиса" : "Поиск в базе";
+  if (name === "get_service_guide") return "Помощь сервиса";
+  if (name === "query_graph") return "Запрос к графу";
+  return "Поиск в базе";
 }
 
 function thinkIndex(steps: ChatStep[], index: number): number {
@@ -345,6 +352,7 @@ export function ChatThread({
   const frameRef = useRef<number | null>(null);
   const [openSourcesMessageId, setOpenSourcesMessageId] = useState<string | null>(null);
   const [citationTarget, setCitationTarget] = useState<{ messageId: string; number: string } | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState<{ id: string; ok: boolean } | null>(null);
   const isStreaming = messages.some((message) => message.status === "streaming");
   const activeBranchVisual = branchVisuals[activeBranchId];
   const branchStartsAfterHistory = Boolean(
@@ -498,7 +506,7 @@ export function ChatThread({
             {msg.cardDraft && (
               <InlineCardDraft draft={msg.cardDraft} template={templateForVersion(cardTemplates, msg.cardDraft.templateVersionId)} templateName={msg.cardTemplateName || "Карточка"} onSave={onSaveCard} readOnly={readOnly} />
             )}
-            {msg.role === "assistant" && msg.status === "done" && (renderedAnswer?.sourcesHtml || msg.checkpointId) && (
+            {msg.role === "assistant" && msg.status === "done" && (msg.text.trim() || renderedAnswer?.sourcesHtml || msg.checkpointId) && (
               <div className="assistant-message-actions" aria-label="Действия с ответом">
                 {renderedAnswer?.sourcesHtml && (
                   <button
@@ -507,6 +515,30 @@ export function ChatThread({
                     aria-expanded={openSourcesMessageId === msg.id}
                     onClick={() => { setCitationTarget(null); setOpenSourcesMessageId((current) => current === msg.id ? null : msg.id); }}
                   >Источники{renderedAnswer.sourceCount ? ` · ${renderedAnswer.sourceCount}` : ""}</button>
+                )}
+                {msg.text.trim() && (
+                  <button
+                    type="button"
+                    className="copy-action"
+                    onClick={() => {
+                      void (async () => {
+                        try {
+                          await copyText(answerMarkdownForCopy(msg.text));
+                          setCopyFeedback({ id: msg.id, ok: true });
+                        } catch {
+                          setCopyFeedback({ id: msg.id, ok: false });
+                        }
+                        window.setTimeout(() => {
+                          setCopyFeedback((current) => (current?.id === msg.id ? null : current));
+                        }, 1600);
+                      })();
+                    }}
+                  >
+                    <IconCopy />
+                    {copyFeedback?.id === msg.id
+                      ? (copyFeedback.ok ? "Скопировано" : "Не удалось скопировать")
+                      : "Копировать"}
+                  </button>
                 )}
                 {msg.checkpointId && msg.graphChainCount && openGraphId !== msg.checkpointId && (
                   <button

@@ -117,6 +117,9 @@ def test_single_message_and_card_actions_are_direct():
     assert 'className="source-action"' in chat
     assert "Данные ответа" in chat
     assert "Новый вариант" in chat
+    assert "Копировать" in chat
+    assert 'className="copy-action"' in chat
+    assert "answerMarkdownForCopy" in chat
     assert "answer-source-panel" in chat
     assert "more-actions-menu" not in cards
     assert "IconTrash" in cards
@@ -286,3 +289,7 @@ def test_missing_qwen_key_shows_warning_not_block():
     assert ".settings-key-warning" in styles
     assert "focusHeading" in help_ws
     assert "## Как подключить ключ QwenCloud" in guide
+    copy_section = guide.split("### Копировать", 1)[1].split("### ", 1)[0]
+    assert "`[1]`" in copy_section
+    assert "[1] - имя файла" in copy_section
+    assert "не подставляются" in copy_section

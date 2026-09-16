@@ -4,6 +4,7 @@ import "vis-network/styles/vis-network.min.css";
 import type { GraphCollectionItem, GraphEdge, GraphNode, GraphPayload } from "../types";
 import { colorForLabels, DEFAULT_GRAPH_NODE_COLOR } from "../graphColors";
 import { normalizedLabels, visibleNodeRef, visibleTripletCaption } from "../uiLabels";
+import { copyText } from "../clipboard";
 import { IconClose, IconCopy, IconSidebar } from "./Icons";
 
 type Selected = { kind: "node"; node: GraphNode } | { kind: "edge"; edge: GraphEdge } | null;
@@ -73,16 +74,6 @@ function collectionNode(edge: GraphEdge, side: "from" | "to"): GraphNode {
   return { id, label: group, caption, labels, group, color: colorForLabels(labels), properties: { labels } };
 }
 
-async function copyText(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return; }
-  const ta = document.createElement("textarea");
-  ta.value = text;
-  ta.style.cssText = "position:fixed;opacity:0";
-  document.body.appendChild(ta);
-  ta.select();
-  document.execCommand("copy");
-  ta.remove();
-}
 
 function hasSize(el: HTMLElement): boolean { return el.clientWidth >= 16 && el.clientHeight >= 16; }
 

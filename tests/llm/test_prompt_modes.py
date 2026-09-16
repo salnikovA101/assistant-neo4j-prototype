@@ -45,13 +45,15 @@ def test_auto_prompt_describes_goal_completion_and_grounded_search():
     loader = PromptLoader("prompts", TTSModes.QUALITY, audio_enabled=False)
     prompt = loader.get_system_prompt("auto")
     assert "Главная цель — довести текущий запрос пользователя до проверяемого результата" in prompt
+    assert "query_graph" in prompt
+    assert "Для точных запросов к текущему корпусу Neo4j" in prompt
     assert "Не устанавливай себе фиксированное число вызовов" in prompt
     assert "Не повторяй тот же запрос" in prompt
     assert "Технический лимит контролирует сервер" in prompt
     assert "Не выдавай остановку по лимиту или сбою за исчерпание всех направлений поиска" in prompt
     assert "в полученных данных инструмента" in prompt
-    assert "Максимум 2 вызова" not in prompt
-    assert "Вызов 2 —" not in prompt
+    assert "Пользователь уже видит нормальные имена файлов" in prompt
+    assert "номер файла, он одинаков" not in prompt
 
 
 def test_ui_reports_autonomous_search_budget_independent_of_model():

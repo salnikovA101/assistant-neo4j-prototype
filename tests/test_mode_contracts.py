@@ -161,9 +161,11 @@ def test_model_contract_uses_research_questions_and_evidence_language():
     assert "CURRENT SQ AGENDA" not in prompt_text
     assert "дословная цитата" not in prompt_text
     assert "точным текстом evidence" in prompt_text
-    assert prompt_text.count("Ты отвечаешь по данным пользователя и базы знаний Neo4j") == 2
-    assert prompt_text.count("считай источником предоставленной пользователем информации") == 2
-    assert prompt_text.count("если пользователь не просит их проверить") == 2
+    staged_prompt = (prompt_root / "assistant_staged.md").read_text(encoding="utf-8")
+    assert "Ты отвечаешь по данным пользователя и базы знаний Neo4j" in staged_prompt
+    assert "считай источником предоставленной пользователем информации" in prompt_text
+    assert "если пользователь не просит проверить" in (prompt_root / "assistant_logic.md").read_text(encoding="utf-8")
+    assert "если пользователь не просит их проверить" in staged_prompt
     assert "research-question list" in staged_tool["description"]
     assert "agenda" not in staged_tool["description"].lower()
     assert "evidence text" in formatted

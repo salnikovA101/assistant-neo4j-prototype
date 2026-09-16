@@ -728,7 +728,9 @@ class BaseLLMProvider(ABC):
                         {
                             "role": "tool",
                             "tool_call_id": tc.id,
-                            "content": tool_history_stub(display_result, ok=ok),
+                            "content": tool_history_stub(
+                                display_result, ok=ok, name=tc.name
+                            ),
                         }
                     )
 

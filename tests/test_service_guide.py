@@ -27,7 +27,11 @@ def test_service_guide_is_shared_and_available_in_every_mode(tmp_path):
     assert first.startswith("# Guide\n\nFirst version.")
     assert "source:" not in first
     assert tools.source_registry.snapshot() == []
-    assert set(tools.get_tool_map("auto")) == {"ask_subgraph", "get_service_guide"}
+    assert set(tools.get_tool_map("auto")) == {
+        "ask_subgraph",
+        "query_graph",
+        "get_service_guide",
+    }
     assert set(tools.get_tool_map("staged")) == {
         "advance_research",
         "get_service_guide",

@@ -151,11 +151,14 @@ def format_source_id_list(ids: Iterable[int]) -> str:
     return ", ".join(parts)
 
 
-def tool_history_stub(result: str, *, ok: bool = True) -> str:
+def tool_history_stub(result: str, *, ok: bool = True, name: str = "") -> str:
     """
     Compact tool.content for chat history. Not an empty-search marker.
     Full UNIT stays in the live UI event only.
     """
+    if name == "query_graph":
+        from server.algorithm.cypher.query_format import history_stub
+        return history_stub(result, ok=ok)
     if not ok:
         msg = (result or "unknown").strip()
         if msg.lower().startswith("error:"):

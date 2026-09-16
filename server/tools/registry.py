@@ -5,6 +5,7 @@ from typing import Any
 
 from server.core.turn_state import current_turn, search_depth
 from server.service_guide import load_service_guide
+from server.tools.query_graph import QueryGraphTool, query_graph_openai_schema
 from server.tools.source_registry import SourceRegistry
 from server.tools.subgraph_search import TOOL_ERROR, SubgraphSearchAgent
 from server.utils.config import AppConfig
@@ -55,6 +56,7 @@ class Tools:
         self.subgraph_search = SubgraphSearchAgent(
             source_registry=self.source_registry,
         )
+        self.query_graph_tool = QueryGraphTool(self.source_registry)
 
     async def ask_subgraph(
         self,
@@ -85,6 +87,23 @@ class Tools:
             logger.info("  sq%s: %s", i, text)
 
         return await self.subgraph_search.query(subquestions=subquestions)
+
+    async def query_graph(
+        self,
+        cypher: str | None = None,
+        parameters: dict[str, Any] | None = None,
+        max_rows: int | None = None,
+        action: str | None = None,
+        **ignored: Any,
+    ) -> str:
+        """Read-only Cypher against the current corpus; markdown, not JSON."""
+        return await self.query_graph_tool(
+            cypher=cypher,
+            parameters=parameters,
+            max_rows=max_rows,
+            action=action,
+            **ignored,
+        )
 
     async def advance_research(
         self,
@@ -143,7 +162,9 @@ class Tools:
         Возвращает список всех доступных функций-инструментов.
         """
         mode_tool = self.advance_research if mode == "staged" else self.ask_subgraph
-        return [mode_tool, self.get_service_guide]
+        if mode == "staged":
+            return [mode_tool, self.get_service_guide]
+        return [mode_tool, self.query_graph, self.get_service_guide]
 
     def get_tool_map(self, mode: str = "auto") -> dict[str, Callable]:
         """
@@ -240,5 +261,6 @@ class Tools:
                     },
                 },
             },
+            query_graph_openai_schema(),
             _service_guide_tool_schema(),
         ]
