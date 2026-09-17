@@ -16,6 +16,15 @@ export function Welcome({ mode, onMode, stagedEnabled, onHelp }: {
         <button
           type="button"
           className="welcome-mode-card"
+          aria-pressed={mode === "auto"}
+          onClick={() => onMode("auto")}
+        >
+          <strong className="welcome-mode-heading"><IconSearch />Вопрос по базе</strong>
+          <span className="welcome-mode-description">Для отдельного вопроса: ассистент самостоятельно ищет данные в базе и формирует развёрнутый ответ. Если переходите к другой теме, начните новый чат.</span>
+        </button>
+        <button
+          type="button"
+          className="welcome-mode-card"
           aria-pressed={mode === "staged"}
           disabled={!stagedEnabled}
           onClick={() => onMode("staged")}
@@ -23,15 +32,6 @@ export function Welcome({ mode, onMode, stagedEnabled, onHelp }: {
           <strong className="welcome-mode-heading"><IconGraph />Исследование</strong>
           <span className="welcome-mode-description">Для поэтапного исследования одной задачи. Ассистент предлагает направления поиска — выберите, что изучить. Смотрите, где уже найдены ответы, а где данных пока недостаточно, и выбирайте, что исследовать дальше. Уточняйте результаты в том же чате.</span>
           {!stagedEnabled && <span className="welcome-mode-description">Режим отключён администратором.</span>}
-        </button>
-        <button
-          type="button"
-          className="welcome-mode-card"
-          aria-pressed={mode === "auto"}
-          onClick={() => onMode("auto")}
-        >
-          <strong className="welcome-mode-heading"><IconSearch />Вопрос по базе</strong>
-          <span className="welcome-mode-description">Для отдельного вопроса: ассистент самостоятельно ищет данные в базе и формирует развёрнутый ответ. Если переходите к другой теме, начните новый чат.</span>
         </button>
       </div>
     </div>

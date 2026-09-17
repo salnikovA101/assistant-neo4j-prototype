@@ -228,7 +228,7 @@ class ConversationPatchBody(BaseModel):
 
 
 class ConversationCreateBody(BaseModel):
-    mode: Literal["auto", "staged"] = "staged"
+    mode: Literal["auto", "staged"] = "auto"
 
 
 class ForkBody(BaseModel):

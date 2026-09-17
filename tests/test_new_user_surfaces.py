@@ -145,6 +145,9 @@ def test_chat_has_one_cards_entry_and_compact_user_question():
     assert "onOpenDocuments()" in composer
     assert "Объём данных" not in composer
     assert "onDepth" not in composer
+    assert 'useState<"auto" | "staged">("auto")' in app
+    assert 'setMode("auto")' in app
+    assert 'placeholder={mode === "staged" ? "Что исследовать?" : "Спросите базу…"}' in composer
     assert 'openResearch("map")' in app
     assert "GRAPH_PANEL_MIN" in app
     assert "min={GRAPH_PANEL_MIN}" in app
@@ -200,6 +203,24 @@ def test_empty_chat_welcome_is_only_help():
     assert "onClick={onHelp}" in welcome
     assert "<h1" not in welcome
     assert "onPrompt" not in welcome
+
+
+def test_welcome_mode_cards_emphasize_the_selected_default():
+    welcome = (WEB / "components" / "Welcome.tsx").read_text(encoding="utf-8")
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
+    composer = (WEB / "components" / "Composer.tsx").read_text(encoding="utf-8")
+    assert welcome.index("Вопрос по базе") < welcome.index("Исследование")
+    assert 'aria-pressed={mode === "auto"}' in welcome
+    assert 'aria-pressed={mode === "staged"}' in welcome
+    card = styles.split(".welcome-mode-card {", 1)[1].split(".welcome-mode-card[", 1)[0]
+    selected = styles.split('.welcome-mode-card[aria-pressed="true"] {', 1)[1].split("}", 1)[0]
+    assert "opacity:.58" in card
+    assert "opacity:1" in selected
+    assert "background:var(--elevated)" in selected
+    assert "box-shadow:" not in selected
+    assert ".welcome-mode-card[aria-pressed=\"true\"]::before" not in styles
+    assert ".sidebar-action.sidebar-action-primary.is-active::before" in styles
+    assert 'placeholder={mode === "staged" ? "Что исследовать?" : "Спросите базу…"}' in composer
 
 
 def test_empty_research_branch_placeholder_is_selectable():

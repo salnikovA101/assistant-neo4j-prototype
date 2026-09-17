@@ -241,7 +241,7 @@ export function App() {
   const [forkingCheckpointId, setForkingCheckpointId] = useState("");
   const [effort, setEffort] = useState("");
   const [profile, setProfile] = useState("");
-  const [mode, setMode] = useState<"auto" | "staged">("staged");
+  const [mode, setMode] = useState<"auto" | "staged">("auto");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [qwenKeyDraft, setQwenKeyDraft] = useState("");
   const [qwenKeyInputUnlocked, setQwenKeyInputUnlocked] = useState(false);
@@ -589,9 +589,8 @@ export function App() {
     setPendingApproval(null);
     setMessages([]);
     setDraft("");
-    const nextMode = config?.staged_enabled === false ? "auto" : "staged";
-    setMode(nextMode);
-    localStorage.setItem("retrieval_mode", nextMode);
+    setMode("auto");
+    localStorage.setItem("retrieval_mode", "auto");
     setWorkspace("chat");
   }
 

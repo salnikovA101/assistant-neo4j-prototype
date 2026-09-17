@@ -137,7 +137,7 @@ export async function fetchConversations(): Promise<ConversationSummary[]> {
   return body.items;
 }
 
-export async function createConversation(mode: "auto" | "staged" = "staged"): Promise<ConversationSummary> {
+export async function createConversation(mode: "auto" | "staged" = "auto"): Promise<ConversationSummary> {
   return json(
     await apiFetch("/api/conversations", {
       method: "POST",
