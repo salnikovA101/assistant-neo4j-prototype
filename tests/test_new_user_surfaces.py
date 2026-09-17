@@ -292,6 +292,32 @@ def test_journal_shows_full_thinking():
     assert "max-height" not in thinking_rule
 
 
+def test_markdown_strips_leaked_think_markup():
+    fmt = (WEB / "format.ts").read_text(encoding="utf-8")
+    assert "function stripLeakedThinkMarkup" in fmt
+    assert "densifyCitations(stripLeakedThinkMarkup(prepared))" in fmt
+    assert r"<\/\>" in fmt
+    assert r"<\/?think>" in fmt
+
+
+def test_journal_keeps_stage_reports_as_progress():
+    source = (WEB / "components" / "ChatThread.tsx").read_text(encoding="utf-8")
+    app = (WEB / "App.tsx").read_text(encoding="utf-8")
+    types = (WEB / "types.ts").read_text(encoding="utf-8")
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
+    assert 'kind: "progress"' in types
+    assert 'event === "progress"' in app
+    assert "applyContentRewind" in app
+    assert 'step.kind === "progress"' in source
+    assert "Ход работы" in source
+    assert "status === \"streaming\" && (!hasAnswer || steps.length > 0)" in source
+    progress_rule = styles.split(".trace-progress {", 1)[1].split("}", 1)[0]
+    assert "max-height" not in progress_rule
+    assert "rgba(135,177,250,.08)" in progress_rule
+    assert "border-left" not in progress_rule
+    assert ".trace-entry-progress .trace-entry-title" in styles
+
+
 def test_history_can_only_be_deleted_and_approved_stream_can_abort():
     app = (WEB / "App.tsx").read_text(encoding="utf-8")
     api = (WEB / "api.ts").read_text(encoding="utf-8")

@@ -55,6 +55,22 @@ def test_content_think_tags():
     assert "secret" in (a.thinking + b.thinking) or "secret" in a.thinking
 
 
+def test_stray_think_close_is_not_visible_content():
+    profile = OpenAIProfile(think=True)
+    splitter = ContentThinkSplitter(profile)
+    norm = normalize_chunk({"content": "</think>\n</think>\n"}, splitter)
+    assert norm.content.strip() == ""
+    assert "<" not in norm.content
+
+
+def test_fragment_lines_are_stripped_from_content():
+    profile = OpenAIProfile(think=True)
+    splitter = ContentThinkSplitter(profile)
+    norm = normalize_chunk({"content": "</>\n</>\nhello"}, splitter)
+    assert "</>" not in norm.content
+    assert "hello" in norm.content
+
+
 def test_bare_think_token_not_swallow():
     profile = OpenAIProfile(think=True, think_token="<|think|>")
     splitter = ContentThinkSplitter(profile)
@@ -130,6 +146,16 @@ def test_content_rewind_sse_serializes():
     sse = event.to_sse()
     assert sse.startswith("event: content_rewind\n")
     assert '"text": "Let me look."' in sse
+    assert sse.endswith("\n\n")
+
+
+def test_progress_sse_serializes():
+    from server.llm.stream_events import StreamEvent
+
+    event = StreamEvent("progress", {"delta": "Let me look."})
+    sse = event.to_sse()
+    assert sse.startswith("event: progress\n")
+    assert '"delta": "Let me look."' in sse
     assert sse.endswith("\n\n")
 
 

@@ -9,6 +9,7 @@ from server.core.app import (
     _conversation_session_key,
     _guarded_turn_stream,
     _persistent_stream,
+    _rewind_answer_to_progress,
     _revised_approval_stream,
     process_text_stream,
 )
@@ -61,6 +62,28 @@ class FakeNamedPipeline(FakePipeline):
 class FakeAbortedPipeline(FakePipeline):
     async def process_text_stream(self, *_args, **_kwargs):
         yield StreamEvent("content", {"delta": "partial"})
+
+
+class FakeRewindPipeline(FakePipeline):
+    async def process_text_stream(self, *_args, **_kwargs):
+        yield StreamEvent("thinking", {"delta": "plan"})
+        yield StreamEvent("content", {"delta": "Let me look."})
+        yield StreamEvent("progress", {"delta": "Let me look."})
+        yield StreamEvent("content_rewind", {"text": "Let me look."})
+        yield StreamEvent(
+            "done",
+            {"final_content": "Final answer"},
+        )
+
+
+class FakeRewindOnlyPipeline(FakePipeline):
+    async def process_text_stream(self, *_args, **_kwargs):
+        yield StreamEvent("content", {"delta": "Let me look."})
+        yield StreamEvent("content_rewind", {"text": "Let me look."})
+        yield StreamEvent(
+            "done",
+            {"final_content": "Final answer"},
+        )
 
 
 class FakeErrorPipeline(FakePipeline):
@@ -187,6 +210,86 @@ async def test_stream_persists_ui_model_context_and_graph_without_leaking_privat
     finally:
         session_store.drop(session_key)
         await store.close()
+
+
+def test_rewind_answer_to_progress_does_not_duplicate_existing_step():
+    steps = [{"kind": "progress", "text": "Let me look."}]
+    answer = _rewind_answer_to_progress("Let me look.", steps, "Let me look.")
+    assert answer == ""
+    assert steps == [{"kind": "progress", "text": "Let me look."}]
+
+
+def test_rewind_answer_to_progress_creates_step_without_progress_event():
+    steps = [{"kind": "think", "text": "plan"}]
+    answer = _rewind_answer_to_progress("Let me look.", steps, "Let me look.")
+    assert answer == ""
+    assert steps[-1] == {"kind": "progress", "text": "Let me look."}
+
+
+async def _run_persistent_pipeline(tmp_path, pipeline, db_name: str):
+    store = AppStore(str(tmp_path / db_name))
+    await store.open()
+    session_key = ""
+    try:
+        user = await store.create_user("rewind-user", "long rewind user password")
+        conv = await store.create_conversation(user.id)
+        session_key = _conversation_session_key(user.id, conv["id"])
+        session_store.hydrate(session_key, 6, [], [])
+        _, assistant_id = await store.begin_turn(
+            user.id,
+            conv["id"],
+            "66666666-6666-4666-8666-666666666666",
+            "question",
+        )
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(pipeline=pipeline, app_store=store)
+            ),
+            state=SimpleNamespace(workspace_run_id="full_corpus_20260713"),
+            headers={},
+        )
+        chunks = [
+            chunk
+            async for chunk in _persistent_stream(
+                request,
+                TextProcessBody(text="question"),
+                user=user,
+                conversation_id=conv["id"],
+                session_key=session_key,
+                assistant_message_id=assistant_id,
+            )
+        ]
+        detail = await store.get_conversation(user.id, conv["id"])
+        assert detail is not None
+        return "".join(chunks), detail["messages"][-1]
+    finally:
+        if session_key:
+            session_store.drop(session_key)
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_stream_persists_rewound_content_as_progress_step(tmp_path):
+    joined, assistant = await _run_persistent_pipeline(
+        tmp_path, FakeRewindPipeline(), "rewind.db"
+    )
+    assert "event: progress" in joined
+    assert assistant["text"] == "Final answer"
+    assert "Let me look." not in assistant["text"]
+    kinds = [step["kind"] for step in assistant["steps"]]
+    assert kinds.count("progress") == 1
+    progress = next(step for step in assistant["steps"] if step["kind"] == "progress")
+    assert progress["text"] == "Let me look."
+
+
+@pytest.mark.asyncio
+async def test_stream_persists_rewind_without_progress_event(tmp_path):
+    _, assistant = await _run_persistent_pipeline(
+        tmp_path, FakeRewindOnlyPipeline(), "rewind-only.db"
+    )
+    assert assistant["text"] == "Final answer"
+    progress = next(step for step in assistant["steps"] if step["kind"] == "progress")
+    assert progress["text"] == "Let me look."
 
 
 @pytest.mark.asyncio

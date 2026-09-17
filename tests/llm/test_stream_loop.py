@@ -260,18 +260,24 @@ async def test_generate_response_stream_tool_loop(monkeypatch):
     assert "tool_call" in types
     assert "tool_result" in types
     assert "content_rewind" in types
+    assert "progress" in types
+    assert types.index("progress") < types.index("content_rewind")
     assert types[-1] == "done"
     assert events[-1].data["final_content"] == "Final answer"
 
     visible = ""
+    journal = ""
     for ev in events:
         if ev.type == "content":
             visible += ev.data.get("delta") or ""
+        elif ev.type == "progress":
+            journal += ev.data.get("delta") or ""
         elif ev.type == "content_rewind":
             text = ev.data.get("text") or ""
             if text and visible.endswith(text):
                 visible = visible[: -len(text)]
     assert visible == "Final answer"
+    assert journal == "Let me look."
     assert "Let me look." not in events[-1].data["final_content"]
 
     tool_call = next(e for e in events if e.type == "tool_call")

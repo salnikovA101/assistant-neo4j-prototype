@@ -117,6 +117,26 @@ function uid(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+function appendProgress(steps: ChatStep[], delta: string): ChatStep[] {
+  if (!delta) return steps;
+  const last = steps[steps.length - 1];
+  if (last?.kind === "progress") {
+    return [...steps.slice(0, -1), { kind: "progress", text: last.text + delta }];
+  }
+  return [...steps, { kind: "progress", text: delta }];
+}
+
+function applyContentRewind(answer: string, steps: ChatStep[], rewind: string): { answer: string; steps: ChatStep[] } {
+  let nextAnswer = answer;
+  let nextSteps = steps;
+  if (rewind && nextAnswer.endsWith(rewind)) nextAnswer = nextAnswer.slice(0, -rewind.length);
+  const last = nextSteps[nextSteps.length - 1];
+  if (rewind && !(last?.kind === "progress" && last.text.endsWith(rewind))) {
+    nextSteps = appendProgress(nextSteps, rewind);
+  }
+  return { answer: nextAnswer, steps: nextSteps };
+}
+
 const QWEN_CLOUD_KEY_HEADING = "Как подключить ключ QwenCloud";
 
 type PanelSide = "sidebar" | "graph";
@@ -834,9 +854,11 @@ export function App() {
           modelId = String(data.id || "");
           modelLabel = String(data.label || "");
         } else if (event === "content") answer += String(data.delta || "");
+        else if (event === "progress") steps = appendProgress(steps, String(data.delta || data.text || ""));
         else if (event === "content_rewind") {
-          const rewind = String(data.text || "");
-          if (rewind && answer.endsWith(rewind)) answer = answer.slice(0, -rewind.length);
+          const rewound = applyContentRewind(answer, steps, String(data.text || ""));
+          answer = rewound.answer;
+          steps = rewound.steps;
         } else if (event === "tool_call") {
           const id = String(data.id || `t${tools.length}`);
           const card = {
@@ -1053,6 +1075,12 @@ export function App() {
               else steps = [...steps, { kind: "think", text: delta }];
             } else if (parsed?.event === "content") {
               answer += String(parsed.data.delta || "");
+            } else if (parsed?.event === "progress") {
+              steps = appendProgress(steps, String(parsed.data.delta || parsed.data.text || ""));
+            } else if (parsed?.event === "content_rewind") {
+              const rewound = applyContentRewind(answer, steps, String(parsed.data.text || ""));
+              answer = rewound.answer;
+              steps = rewound.steps;
             } else if (parsed?.event === "tool_call") {
               const id = String(parsed.data.id || `tool-${steps.length}`);
               const tool = {

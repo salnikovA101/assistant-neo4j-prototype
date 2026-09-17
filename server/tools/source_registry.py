@@ -67,7 +67,7 @@ _SOURCE_GROUP_RE = re.compile(
     r"\(\s*source\s*:?\s*\d+[^)]*\)",
     flags=re.IGNORECASE,
 )
-ANSWER_STREAM_EVENT_TYPES = frozenset({"content", "thinking", "content_rewind", "done"})
+ANSWER_STREAM_EVENT_TYPES = frozenset({"content", "thinking", "content_rewind", "progress", "done"})
 _SOURCE_ID_RE = re.compile(r"source\s*:?\s*(\d+)", flags=re.IGNORECASE)
 
 _ISTOCHNIKI_SECTION_RE = re.compile(

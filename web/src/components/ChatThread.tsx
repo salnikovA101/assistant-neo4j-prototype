@@ -115,6 +115,10 @@ function thinkIndex(steps: ChatStep[], index: number): number {
   return steps.slice(0, index + 1).filter((step) => step.kind === "think").length;
 }
 
+function progressIndex(steps: ChatStep[], index: number): number {
+  return steps.slice(0, index + 1).filter((step) => step.kind === "progress").length;
+}
+
 function TraceBundle({
   steps,
   status,
@@ -125,9 +129,11 @@ function TraceBundle({
   hasAnswer: boolean;
 }) {
   const thinkCount = steps.filter((step) => step.kind === "think").length;
-  const isLive = status === "streaming" && !hasAnswer;
+  const progressCount = steps.filter((step) => step.kind === "progress").length;
+  const isLive = status === "streaming" && (!hasAnswer || steps.length > 0);
   if (!steps.length && !isLive) return null;
   const lastThinkIndex = steps.reduce((last, step, index) => (step.kind === "think" ? index : last), -1);
+  const lastProgressIndex = steps.reduce((last, step, index) => (step.kind === "progress" ? index : last), -1);
 
   return (
     <details className="trace-bundle" open={isLive}>
@@ -152,6 +158,21 @@ function TraceBundle({
                   __html: renderReasoningMarkdown(
                     step.text,
                     status === "streaming" && index === lastThinkIndex,
+                  ),
+                }}
+              />
+            </section>
+          ) : step.kind === "progress" ? (
+            <section key={`progress-${index}`} className="trace-entry trace-entry-progress">
+              <p className="trace-entry-title">
+                Ход работы{progressCount > 1 ? ` ${progressIndex(steps, index)}` : ""}
+              </p>
+              <div
+                className="trace-progress md"
+                dangerouslySetInnerHTML={{
+                  __html: renderReasoningMarkdown(
+                    step.text,
+                    status === "streaming" && index === lastProgressIndex,
                   ),
                 }}
               />

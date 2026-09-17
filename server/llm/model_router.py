@@ -14,7 +14,7 @@ AUTH = "auth"
 KEY_DEAD = "key_dead"
 OTHER = "other"
 
-_OUTPUT_EVENT_TYPES = frozenset({"thinking", "content", "tool_call", "card_draft"})
+_OUTPUT_EVENT_TYPES = frozenset({"thinking", "content", "progress", "tool_call", "card_draft"})
 
 
 class BanStore(Protocol):

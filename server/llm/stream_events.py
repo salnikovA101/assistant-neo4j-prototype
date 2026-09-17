@@ -15,6 +15,7 @@ StreamEventType = Literal[
     "tool_result",
     "content",
     "content_rewind",
+    "progress",
     "graph_highlight",
     "approval_required",
     "agenda_updated",
@@ -32,8 +33,20 @@ _OPEN_THINK_RE = re.compile(
     r"(?s)^(?:<think>|<\|think\|>|<\|channel\>thought)"
 )
 _CLOSE_THINK_RE = re.compile(
-    r"(?s)(?:</think>|<channel\|>)"
+    r"(?s)(?:</think>|<channel\|>|</>)"
 )
+_THINK_MARKUP_RE = re.compile(
+    r"(?is)<think>\s*|</think>|<\|think\|>|<\|/think\|>"
+)
+_BARE_FRAGMENT_LINE_RE = re.compile(r"(?m)^[ \t]*</>[ \t]*\n?")
+
+
+def strip_leaked_think_markup(text: str) -> str:
+    """Drop think-tag debris so it cannot render as a visible `</>` column."""
+    if not text:
+        return ""
+    cleaned = _THINK_MARKUP_RE.sub("", text)
+    return _BARE_FRAGMENT_LINE_RE.sub("", cleaned)
 
 
 @dataclass
@@ -245,7 +258,7 @@ class ContentThinkSplitter:
         return "", rest
 
     def _partial_hold_len(self, buf: str) -> int:
-        candidates = ["<think>", "</think>", "<|think|>", "<|channel>", "<channel|>"]
+        candidates = ["<think>", "</think>", "</>", "<|think|>", "<|channel>", "<channel|>"]
         if self._bare_token:
             candidates.append(self._bare_token)
         hold = 0
@@ -267,11 +280,12 @@ def normalize_chunk(delta: Any, splitter: ContentThinkSplitter) -> NormalizedDel
         raw_content = str(raw_content) if raw_content else ""
 
     tag_think, clean_content = splitter.feed(raw_content)
-    thinking = reasoning + tag_think
+    thinking = strip_leaked_think_markup(reasoning + tag_think)
+    content = strip_leaked_think_markup(clean_content)
 
     return NormalizedDelta(
         thinking=thinking,
-        content=clean_content,
+        content=content,
         tool_call_deltas=_tool_calls_as_dicts(d.get("tool_calls")),
     )
 

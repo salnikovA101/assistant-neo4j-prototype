@@ -1124,6 +1124,34 @@ async def _card_generation_events(
     )
 
 
+def _append_journal_progress(steps: list[dict[str, Any]], delta: str) -> None:
+    text = str(delta or "")
+    if not text:
+        return
+    last = steps[-1] if steps else None
+    if last and last.get("kind") == "progress":
+        steps[-1] = {"kind": "progress", "text": str(last.get("text") or "") + text}
+    else:
+        steps.append({"kind": "progress", "text": text})
+
+
+def _rewind_answer_to_progress(
+    answer: str, steps: list[dict[str, Any]], rewind: str
+) -> str:
+    text = str(rewind or "")
+    if text and answer.endswith(text):
+        answer = answer[: -len(text)]
+    last = steps[-1] if steps else None
+    already = (
+        last
+        and last.get("kind") == "progress"
+        and str(last.get("text") or "").endswith(text)
+    )
+    if text and not already:
+        _append_journal_progress(steps, text)
+    return answer
+
+
 async def _persistent_stream(
     request: Request,
     body: TextProcessBody,
@@ -1332,10 +1360,12 @@ async def _persistent_stream(
                     steps.append({"kind": "think", "text": delta})
             elif event.type == "content":
                 answer += str(data.get("delta") or "")
+            elif event.type == "progress":
+                _append_journal_progress(steps, str(data.get("delta") or data.get("text") or ""))
             elif event.type == "content_rewind":
-                rewind = str(data.get("text") or "")
-                if rewind and answer.endswith(rewind):
-                    answer = answer[:-len(rewind)]
+                answer = _rewind_answer_to_progress(
+                    answer, steps, str(data.get("text") or "")
+                )
             elif event.type == "card_draft":
                 card_draft = dict(data.get("draft") or {})
                 card_template_name = str(data.get("template_name") or "Карточка")
@@ -1736,6 +1766,12 @@ async def _approved_stream(
                     steps.append({"kind": "think", "text": delta})
             elif event.type == "content":
                 answer += str(data.get("delta") or "")
+            elif event.type == "progress":
+                _append_journal_progress(steps, str(data.get("delta") or data.get("text") or ""))
+            elif event.type == "content_rewind":
+                answer = _rewind_answer_to_progress(
+                    answer, steps, str(data.get("text") or "")
+                )
             elif event.type == "model":
                 model_id = str(data.get("id") or "")
                 model_label = str(data.get("label") or "")

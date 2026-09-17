@@ -41,6 +41,27 @@ _COT_MARKER_RE = re.compile(
 _CYRILLIC_LINE_RE = re.compile(r"(?m)^[^\n]*[А-Яа-яЁё]{3,}")
 
 
+def _rewind_speculative_content(
+    final_content_parts: List[str],
+    candidate_content: str,
+    yielded_content: str,
+) -> tuple[List[str], List[StreamEvent]]:
+    """Drop pre-tool prose from the answer and keep it as a journal progress step."""
+    parts = final_content_parts
+    if candidate_content:
+        joined = "".join(parts)
+        if joined.endswith(candidate_content):
+            rest = joined[: -len(candidate_content)]
+            parts = [rest] if rest else []
+        else:
+            parts = [joined.replace(candidate_content, "", 1)]
+    events: List[StreamEvent] = []
+    if yielded_content:
+        events.append(StreamEvent("progress", {"delta": yielded_content}))
+        events.append(StreamEvent("content_rewind", {"text": yielded_content}))
+    return parts, events
+
+
 def strip_leaked_cot_preamble(text: str) -> str:
     """
     Drop untagged English planning preamble before a Cyrillic final answer.
@@ -569,18 +590,13 @@ class BaseLLMProvider(ABC):
                         yield StreamEvent("thinking", {"delta": norm.thinking})
                     if norm.tool_call_deltas:
                         if not saw_tool_deltas and candidate_content:
-                            joined = "".join(final_content_parts)
-                            if joined.endswith(candidate_content):
-                                rest = joined[: -len(candidate_content)]
-                                final_content_parts = [rest] if rest else []
-                            else:
-                                final_content_parts = [
-                                    joined.replace(candidate_content, "", 1)
-                                ]
-                            if yielded_content:
-                                yield StreamEvent(
-                                    "content_rewind", {"text": yielded_content}
-                                )
+                            final_content_parts, rewind_events = _rewind_speculative_content(
+                                final_content_parts,
+                                candidate_content,
+                                yielded_content,
+                            )
+                            for event in rewind_events:
+                                yield event
                             yielded_content = ""
                             candidate_content = ""
                         saw_tool_deltas = True
@@ -641,6 +657,7 @@ class BaseLLMProvider(ABC):
                         max_turns,
                     )
                     if yielded_content:
+                        yield StreamEvent("progress", {"delta": yielded_content})
                         yield StreamEvent("content_rewind", {"text": yielded_content})
                     yield StreamEvent(
                         "error",
@@ -662,14 +679,13 @@ class BaseLLMProvider(ABC):
                 # tokens were rewound when tool deltas arrived; this is a fallback
                 # if the assembler found calls without streaming those deltas.
                 if candidate_content:
-                    joined = "".join(final_content_parts)
-                    if joined.endswith(candidate_content):
-                        rest = joined[: -len(candidate_content)]
-                        final_content_parts = [rest] if rest else []
-                    else:
-                        final_content_parts = [joined.replace(candidate_content, "", 1)]
-                    if yielded_content:
-                        yield StreamEvent("content_rewind", {"text": yielded_content})
+                    final_content_parts, rewind_events = _rewind_speculative_content(
+                        final_content_parts,
+                        candidate_content,
+                        yielded_content,
+                    )
+                    for event in rewind_events:
+                        yield event
                     yielded_content = ""
                     candidate_content = ""
 

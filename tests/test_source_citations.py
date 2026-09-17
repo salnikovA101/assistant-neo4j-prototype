@@ -86,6 +86,7 @@ def test_live_answer_events_keep_source_aliases():
     delta = {"delta": "факт (source:1)"}
     assert present_live_event_data("content", delta, sources) == delta
     assert present_live_event_data("thinking", delta, sources) == delta
+    assert present_live_event_data("progress", delta, sources) == delta
     presented = present_live_event_data(
         "tool_result", {"result": "факт (source:1)"}, sources
     )

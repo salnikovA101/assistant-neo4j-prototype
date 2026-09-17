@@ -136,9 +136,16 @@ function wrapMarkdownTables(html: string): string {
   return parsed.body.innerHTML;
 }
 
+export function stripLeakedThinkMarkup(text: string): string {
+  return text
+    .replace(/<\/?think>/gi, "")
+    .replace(/<\|\/?think\|>/g, "")
+    .replace(/^[ \t]*<\/\>[ \t]*\r?\n?/gm, "");
+}
+
 export function renderMarkdown(text: string, streaming = false): string {
   const prepared = streaming ? holdIncompleteCitation(holdIncompleteFence(text)) : text;
-  const src = renderLatex(densifyCitations(prepared));
+  const src = renderLatex(densifyCitations(stripLeakedThinkMarkup(prepared)));
   const raw = marked.parse(src) as string;
   return wrapMarkdownTables(DOMPurify.sanitize(raw));
 }

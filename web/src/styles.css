@@ -124,6 +124,11 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 .trace-thinking p, .trace-thinking ul, .trace-thinking ol { margin:0 0 8px; }
 .trace-thinking > :last-child { margin-bottom:0; }
 .trace-thinking .latex-display { margin:10px auto; font-size:1.08em; }
+.trace-entry-progress .trace-entry-title { color:var(--accent); }
+.trace-progress { margin-top:8px; border-radius:5px; padding:9px 10px; background:rgba(135,177,250,.08); color:var(--soft); font-size:12px; line-height:1.6; }
+.trace-progress p, .trace-progress ul, .trace-progress ol { margin:0 0 8px; }
+.trace-progress > :last-child { margin-bottom:0; }
+.trace-progress .latex-display { margin:10px auto; font-size:1.08em; }
 .trace-entry .tool-kicker { margin-top:10px; }.trace-entry .muted { margin:7px 0 0; padding:0; font-size:11px; }
 .trace-entry-pending .muted { display:flex; align-items:center; gap:7px; color:var(--soft); }
 .trace-pending-dot { width:7px; height:7px; flex:0 0 auto; border-radius:999px; background:var(--accent); animation:trace-pending-pulse 1.15s ease-in-out infinite; }

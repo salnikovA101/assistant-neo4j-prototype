@@ -130,8 +130,9 @@ export type ToolCard = {
 };
 
 export type ThinkStep = { kind: "think"; text: string };
+export type ProgressStep = { kind: "progress"; text: string };
 export type ToolStep = ToolCard & { kind: "tool" };
-export type ChatStep = ThinkStep | ToolStep;
+export type ChatStep = ThinkStep | ProgressStep | ToolStep;
 
 export type ChatMessage = {
   id: string;
