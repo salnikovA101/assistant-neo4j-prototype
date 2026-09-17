@@ -45,7 +45,11 @@ def test_auto_prompt_describes_goal_completion_and_grounded_search():
     loader = PromptLoader("prompts", TTSModes.QUALITY, audio_enabled=False)
     prompt = loader.get_system_prompt("auto")
     assert "Главная цель — довести текущий запрос пользователя до проверяемого результата" in prompt
+    assert "Своих знаний не добавляешь" in prompt
     assert "query_graph" in prompt
+    assert "Связи направленные" in prompt
+    assert "один факт — одно ребро" in prompt
+    assert "(a)-[r]->(b)" not in prompt
     assert "get_service_guide" in prompt
     assert "не больше 2 успешных `ask_subgraph`" in prompt
     assert "8 успешных `query_graph`" in prompt
@@ -62,6 +66,10 @@ def test_auto_prompt_describes_goal_completion_and_grounded_search():
     assert "не подтверждает утверждение про объект вопроса" in prompt
     assert "Пользователь уже видит нормальные имена файлов" in prompt
     assert "номер файла, он одинаков" not in prompt
+    assert "«из общих знаний» запрещены" in prompt
+    assert "Общее объяснение — без подтверждения в найденных материалах" not in prompt
+    assert "Четыре основания" not in prompt
+    assert "общие знания модели" not in prompt.lower()
 
 
 def test_ui_reports_autonomous_search_budget_independent_of_model():

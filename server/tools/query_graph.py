@@ -71,7 +71,10 @@ English-only strings (translate from Russian first).
 
 Graph: nodes have `name`, labels (omit if unsure), and `run_ids` (server-applied).
 Facts live on relationships: type(r), evidence, source_file, chunk_id, confidence
-in [0,1]. Do not write run_id. Never RETURN embeddings, properties(), or elementId.
+in [0,1]. Relationships are stored once, directed (a)-[r]->(b). For counts,
+rankings, and sum use that pattern or count(DISTINCT r). Undirected (a)-[r]-(b)
+is for neighbors and the fulltext templates above; it visits each edge twice,
+so totals double. Do not write run_id. Never RETURN embeddings, properties(), or elementId.
 Forbidden: CREATE/MERGE/SET/DELETE/REMOVE, APOC, SHOW, DDL, unbounded *,
 shortestPath, any CALL except these fulltext helpers.
 
@@ -229,6 +232,8 @@ class QueryGraphTool:
         return (
             "### Corpus schema\n"
             "This corpus only (evidence edges with the current run_id; not the whole database).\n"
+            "Edges are directed; one relationship = one fact. Count with "
+            "MATCH (a)-[r]->(b) or count(DISTINCT r). Undirected MATCH doubles counts.\n"
             f"Node labels: {label_line}\n"
             f"Relationship types: {rel_line}\n"
             "Node fields: name, labels(n), run_ids (server-applied)\n"

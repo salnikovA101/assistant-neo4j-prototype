@@ -618,6 +618,9 @@ def test_description_matches_prompt_topics():
     assert "QUERY_ERROR" in QUERY_GRAPH_DESCRIPTION
     assert "run_ids" in QUERY_GRAPH_DESCRIPTION
     assert "8 successful" in QUERY_GRAPH_DESCRIPTION
+    assert "stored once, directed" in QUERY_GRAPH_DESCRIPTION
+    assert "count(DISTINCT r)" in QUERY_GRAPH_DESCRIPTION
+    assert "visits each edge twice" in QUERY_GRAPH_DESCRIPTION
     from pathlib import Path
     prompt = (Path("prompts/assistant_logic.md")).read_text(encoding="utf-8")
     assert "query_graph" in prompt
@@ -629,13 +632,22 @@ def test_description_matches_prompt_topics():
     assert "фундамент" in prompt
     assert "не больше 2 успешных" in prompt
     assert "8 успешных `query_graph`" in prompt
+    assert "Связи направленные" in prompt
+    assert "один факт — одно ребро" in prompt
     assert "queryNodes($__ft_nodes, $q)" not in prompt
     assert "queryRelationships($__ft_rels, $q)" not in prompt
     assert "CALL db.index.fulltext" not in prompt
+    assert "(a)-[r]->(b)" not in prompt
 
 
 def test_schema_cypher_is_current_corpus_only():
-    from server.tools.query_graph import _SCHEMA_CYPHER_LABELS, _SCHEMA_CYPHER_TYPES
+    import inspect
+
+    from server.tools.query_graph import (
+        QueryGraphTool,
+        _SCHEMA_CYPHER_LABELS,
+        _SCHEMA_CYPHER_TYPES,
+    )
 
     assert "db.labels" not in _SCHEMA_CYPHER_LABELS
     assert "db.relationshipTypes" not in _SCHEMA_CYPHER_TYPES
@@ -643,6 +655,10 @@ def test_schema_cypher_is_current_corpus_only():
     assert "$__run_id" in _SCHEMA_CYPHER_TYPES
     assert "r.run_id" in _SCHEMA_CYPHER_LABELS
     assert "r.run_id" in _SCHEMA_CYPHER_TYPES
+    schema_src = inspect.getsource(QueryGraphTool._schema)
+    assert "Edges are directed" in schema_src
+    assert "Undirected MATCH doubles counts" in schema_src
+    assert "count(DISTINCT r)" in schema_src
 
 
 def test_api_graph_schema_is_run_scoped():

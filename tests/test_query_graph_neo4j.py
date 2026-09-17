@@ -133,6 +133,8 @@ async def test_live_schema_action():
         text = await tool(action="schema")
     assert text.startswith("### Corpus schema")
     assert "This corpus only" in text
+    assert "Edges are directed" in text
+    assert "Undirected MATCH doubles counts" in text
     assert "Node labels:" in text
     assert "Relationship types:" in text
     assert "run_ids" in text

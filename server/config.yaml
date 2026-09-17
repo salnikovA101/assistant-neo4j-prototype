@@ -80,8 +80,8 @@ llm:
     # Credentials come from LLM__PROFILES__OTHER__* in the local .env.
     other:
       provider: "openai"
-      model: "qwen/qwen3.8-flash"
-      display_name: "Qwen3.8 Flash (OpenRouter)"
+      model: "qwen/qwen3.8-27b"
+      display_name: "Qwen3.8 27B (OpenRouter)"
       max_output_tokens: 16384
       max_turns: 2
       think: true
