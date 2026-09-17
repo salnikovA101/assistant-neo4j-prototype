@@ -66,7 +66,7 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 .topbar-right { display:flex; align-items:center; gap:8px; }
 .health { display:inline-flex; width:10px; height:10px; align-items:center; justify-content:center; color:var(--muted); cursor:help; }.health i { display:block; width:7px; height:7px; border-radius:999px; background:var(--danger); }.health.is-ok i { background:var(--ok); box-shadow:0 0 0 3px rgba(114,213,156,.11); }.health.is-error i { box-shadow:0 0 0 3px rgba(255,145,145,.1); }
 .chat-col { position:relative; min-width:0; min-height:0; flex:1; display:flex; flex-direction:column; overflow:hidden; }.chat-col.is-empty { justify-content:center; }
-.thread { min-height:0; flex:1; overflow:auto; padding:32px 24px 20px; }
+.thread { min-height:0; flex:1; overflow:auto; overflow-anchor:none; padding:32px 24px 20px; }
 .welcome { width:min(660px,100%); margin:auto; padding:36px 24px 16px; text-align:center; }
 .welcome > p + p { margin-top:6px; }
 .welcome-help-link { display:inline; margin:0; border:0; padding:0; background:none; color:var(--accent); cursor:pointer; text-decoration:underline; text-underline-offset:3px; }

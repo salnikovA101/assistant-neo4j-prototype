@@ -265,6 +265,23 @@ def test_stream_markdown_holds_incomplete_source_groups():
     assert "Пробелы в данных" in fmt
 
 
+def test_thread_follow_tail_unpins_while_streaming():
+    chat = (WEB / "components" / "ChatThread.tsx").read_text(encoding="utf-8")
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
+    assert "if (isStreaming) followTailRef.current = true" not in chat
+    assert "if (isStreaming) return" not in chat
+    assert "const TAIL_REPIN_PX = 4;" in chat
+    assert "if (isStreaming && !wasStreamingRef.current)" in chat
+    assert "skipRepinRef.current = false;" in chat
+    assert "setFollowTail(true);" in chat
+    assert "if (event.deltaY < 0)" in chat
+    assert "skipRepinRef.current = true;" in chat
+    assert "if (ignoreScrollRef.current) return;" in chat
+    assert "overflowAnchor = follow ? \"none\" : \"auto\"" in chat
+    assert "delta * 0.28" not in chat
+    assert "overflow-anchor:none" in styles.split(".thread {", 1)[1].split("}", 1)[0]
+
+
 def test_journal_shows_full_thinking():
     source = (WEB / "components" / "ChatThread.tsx").read_text(encoding="utf-8")
     styles = (WEB / "styles.css").read_text(encoding="utf-8")

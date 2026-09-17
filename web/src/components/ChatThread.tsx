@@ -308,6 +308,12 @@ function ApprovalCard({
   );
 }
 
+const TAIL_REPIN_PX = 4;
+
+function distanceFromTail(node: HTMLElement) {
+  return node.scrollHeight - node.scrollTop - node.clientHeight;
+}
+
 export function ChatThread({
   messages,
   cardTemplates,
@@ -349,7 +355,31 @@ export function ChatThread({
 }) {
   const threadRef = useRef<HTMLDivElement>(null);
   const followTailRef = useRef(true);
+  const wasStreamingRef = useRef(false);
   const frameRef = useRef<number | null>(null);
+  const ignoreScrollRef = useRef(false);
+  const skipRepinRef = useRef(false);
+  const cancelStick = () => {
+    if (frameRef.current != null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+  };
+  const setFollowTail = (follow: boolean) => {
+    followTailRef.current = follow;
+    const thread = threadRef.current;
+    if (thread) thread.style.overflowAnchor = follow ? "none" : "auto";
+    if (!follow) cancelStick();
+  };
+  const stickToTail = (thread: HTMLElement) => {
+    ignoreScrollRef.current = true;
+    thread.scrollTop = Math.max(0, thread.scrollHeight - thread.clientHeight);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        ignoreScrollRef.current = false;
+      });
+    });
+  };
   const [openSourcesMessageId, setOpenSourcesMessageId] = useState<string | null>(null);
   const [citationTarget, setCitationTarget] = useState<{ messageId: string; number: string } | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<{ id: string; ok: boolean } | null>(null);
@@ -393,22 +423,25 @@ export function ChatThread({
 
   useEffect(() => {
     const thread = threadRef.current;
-    if (!thread || (!isStreaming && !followTailRef.current)) return;
-    if (isStreaming) followTailRef.current = true;
-    if (frameRef.current != null) return;
-
-    const easeToTail = () => {
-      const target = Math.max(0, thread.scrollHeight - thread.clientHeight);
-      const delta = target - thread.scrollTop;
-      if (delta <= 1) {
-        thread.scrollTop = target;
-        frameRef.current = null;
-        return;
-      }
-      thread.scrollTop += Math.max(1, delta * 0.28);
-      frameRef.current = requestAnimationFrame(easeToTail);
+    if (!thread) return;
+    if (isStreaming && !wasStreamingRef.current) {
+      skipRepinRef.current = false;
+      setFollowTail(true);
+    }
+    wasStreamingRef.current = isStreaming;
+    if (!followTailRef.current) {
+      cancelStick();
+      return;
+    }
+    const stick = () => {
+      if (followTailRef.current) stickToTail(thread);
     };
-    frameRef.current = requestAnimationFrame(easeToTail);
+    stick();
+    cancelStick();
+    frameRef.current = requestAnimationFrame(() => {
+      stick();
+      frameRef.current = null;
+    });
   }, [isStreaming, messages]);
 
   useEffect(
@@ -424,10 +457,24 @@ export function ChatThread({
     <div
       ref={threadRef}
       className="thread"
+      onWheel={(event) => {
+        if (event.deltaY < 0) {
+          skipRepinRef.current = true;
+          setFollowTail(false);
+        } else if (event.deltaY > 0) {
+          skipRepinRef.current = false;
+        }
+      }}
       onScroll={(event) => {
-        if (isStreaming) return;
-        const { clientHeight, scrollHeight, scrollTop } = event.currentTarget;
-        followTailRef.current = scrollHeight - scrollTop - clientHeight < 56;
+        if (ignoreScrollRef.current) return;
+        const atBottom = distanceFromTail(event.currentTarget) <= TAIL_REPIN_PX;
+        if (!atBottom) {
+          skipRepinRef.current = false;
+          setFollowTail(false);
+          return;
+        }
+        if (skipRepinRef.current) return;
+        setFollowTail(true);
       }}
     >
       {messages.map((msg) => {
