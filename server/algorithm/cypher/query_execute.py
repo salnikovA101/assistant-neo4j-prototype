@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from neo4j import READ_ACCESS, AsyncDriver, Query
@@ -14,6 +15,19 @@ from server.algorithm.cypher.query_compile import (
     merge_params,
 )
 from server.algorithm.cypher.query_format import format_db_error, stringify
+from server.algorithm.cypher.query_materialize import (
+    VizRow,
+    extract_viz_row,
+    is_hidden_column,
+    split_public_row,
+)
+
+
+@dataclass
+class ExecutedQuery:
+    rows: list[dict[str, Any]]
+    truncated: bool
+    viz_rows: list[VizRow]
 
 
 async def execute_compiled(
@@ -22,7 +36,7 @@ async def execute_compiled(
     *,
     user_params: dict[str, Any],
     run_id: str,
-) -> tuple[list[dict[str, Any]], bool]:
+) -> ExecutedQuery:
     params = merge_params(compiled, user_params, run_id)
     query = Query(compiled.cypher, timeout=QUERY_TIMEOUT_SEC)
     try:
@@ -41,11 +55,16 @@ async def execute_compiled(
             format_db_error("write was rejected by the read session", timeout=False)
         )
     truncated = False
-    rows = [_plain(rec) for rec in records]
+    rows: list[dict[str, Any]] = []
+    viz_rows: list[VizRow] = []
+    for rec in records:
+        viz_rows.append(extract_viz_row(rec, compiled.viz_ids))
+        rows.append(_plain(split_public_row(rec)))
     if compiled.fetch_limit is not None and len(rows) > compiled.output_limit:
         truncated = True
         rows = rows[: compiled.output_limit]
-    return rows, truncated
+        viz_rows = viz_rows[: compiled.output_limit]
+    return ExecutedQuery(rows=rows, truncated=truncated, viz_rows=viz_rows)
 
 
 class QueryExecuteError(Exception):
@@ -57,7 +76,7 @@ class QueryExecuteError(Exception):
 def _plain(row: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for key, value in row.items():
-        if str(key).lower() in {"embedding"} or str(key).lower().endswith("_embedding"):
+        if is_hidden_column(key):
             continue
         out[str(key)] = stringify(value) if _is_graphy(value) else value
     return out

@@ -863,7 +863,24 @@ class AppStore:
                 for item in (chain.get("walk") or chain.get("edges") or [])
                 if isinstance(item, dict)
             ]
-        blob = json.dumps(raw, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        kind = str(chain.get("kind") or "")
+        node_ids = sorted(
+            {
+                str(item.get("element_id") or item.get("id") or "")
+                for item in (chain.get("nodes") or [])
+                if isinstance(item, dict)
+            }
+            - {""}
+        )
+        if not kind and not node_ids:
+            blob = json.dumps(raw, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        else:
+            blob = json.dumps(
+                {"kind": kind, "edges": raw, "nodes": node_ids},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
     async def _ensure_conversation_tree(self, conversation_id: str, mode: str = "auto") -> str:

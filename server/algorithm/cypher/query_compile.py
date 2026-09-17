@@ -98,6 +98,15 @@ class Tok:
     pos: int
 
 
+@dataclass(frozen=True)
+class VizIdColumn:
+    """Hidden RETURN column: elementId(var) AS __id_* for graph accounting."""
+
+    alias: str
+    kind: str  # node | rel
+    var: str
+
+
 @dataclass
 class CompiledQuery:
     cypher: str
@@ -106,6 +115,7 @@ class CompiledQuery:
     output_limit: int
     is_pure_aggregate: bool
     notes: list[str] = field(default_factory=list)
+    viz_ids: list[VizIdColumn] = field(default_factory=list)
 
 
 def clamp_max_rows(value: object) -> int:
@@ -165,6 +175,9 @@ def compile_query(
     tokens, fetch_limit, is_pure_aggregate, output_limit = apply_return_limits(
         tokens, max_rows
     )
+    viz_ids: list[VizIdColumn] = []
+    if not is_pure_aggregate:
+        tokens, viz_ids = inject_viz_element_ids(tokens)
     compiled = emit(tokens)
     return CompiledQuery(
         cypher=compiled,
@@ -176,6 +189,7 @@ def compile_query(
         fetch_limit=fetch_limit,
         output_limit=output_limit,
         is_pure_aggregate=is_pure_aggregate,
+        viz_ids=viz_ids,
     )
 
 
@@ -1355,6 +1369,322 @@ def _join_parts(parts: list[list[Tok]], sep: Tok) -> list[Tok]:
             out.append(sep)
         out.extend(part)
     return out
+
+
+def inject_viz_element_ids(tokens: list[Tok]) -> tuple[list[Tok], list[VizIdColumn]]:
+    """Append elementId(var) AS __id_* for graph vars already in RETURN.
+
+    Skips DISTINCT, aggregates, and UNION branches that would not share the
+    same hidden columns. Does not add MATCH variables that the projection
+    never mentioned. Path variables are not injected (sidecar handles Path).
+    """
+    branches = _split_top(tokens, "UNION")
+    rebuilt: list[tuple[bool, list[Tok], list[VizIdColumn]]] = []
+    for branch in branches:
+        leading_all = bool(branch and branch[0].kind == "keyword" and branch[0].value == "ALL")
+        body = branch[1:] if leading_all else list(branch)
+        if not body:
+            continue
+        new_body, cols = _inject_one_return(body)
+        rebuilt.append((leading_all, new_body, cols))
+    if not rebuilt:
+        return tokens, []
+    col_sigs = [tuple((c.alias, c.kind) for c in cols) for _, _, cols in rebuilt]
+    if len(rebuilt) > 1 and (not col_sigs[0] or any(sig != col_sigs[0] for sig in col_sigs[1:])):
+        return tokens, []
+    out: list[Tok] = []
+    for n, (leading_all, body, _cols) in enumerate(rebuilt):
+        if n:
+            out.append(Tok("keyword", "UNION", "UNION", 0))
+            if leading_all:
+                out.append(Tok("keyword", "ALL", "ALL", 0))
+        out.extend(body)
+    return out, list(rebuilt[0][2])
+
+
+def _inject_one_return(tokens: list[Tok]) -> tuple[list[Tok], list[VizIdColumn]]:
+    r_i = None
+    for i, tok in enumerate(tokens):
+        if tok.kind == "keyword" and tok.value == "RETURN":
+            r_i = i
+    if r_i is None:
+        return tokens, []
+    tail = tokens[r_i + 1 :]
+    proj_end = _return_projection_end(tail)
+    projection = tail[:proj_end]
+    rest = tail[proj_end:]
+    if _return_has_distinct(projection) or _projection_has_aggregate(projection):
+        return tokens, []
+    scope = _graph_scope(tokens[:r_i])
+    refs = _referenced_graph_vars(projection, scope)
+    if not refs:
+        return tokens, []
+    extra: list[Tok] = []
+    cols: list[VizIdColumn] = []
+    used_aliases: set[str] = set()
+    for original, kind in refs:
+        alias = _viz_id_alias(original)
+        n = 2
+        while alias in used_aliases:
+            alias = f"{_viz_id_alias(original)}_{n}"
+            n += 1
+        used_aliases.add(alias)
+        if extra:
+            extra.append(Tok("symbol", ",", ",", 0))
+        extra.extend(_element_id_item(original, alias))
+        cols.append(VizIdColumn(alias=alias, kind=kind, var=original))
+    new_proj = list(projection)
+    if new_proj:
+        new_proj.append(Tok("symbol", ",", ",", 0))
+    new_proj.extend(extra)
+    return tokens[: r_i + 1] + new_proj + rest, cols
+
+
+def _return_projection_end(tail: list[Tok]) -> int:
+    lim_i = skip_i = order_i = None
+    depth = 0
+    for j, t in enumerate(tail):
+        if t.raw in "([{":
+            depth += 1
+        elif t.raw in ")]}":
+            depth -= 1
+        elif depth == 0 and t.kind == "keyword":
+            if t.value == "ORDER" and order_i is None:
+                order_i = j
+            elif t.value == "SKIP" and skip_i is None:
+                skip_i = j
+            elif t.value == "LIMIT" and lim_i is None:
+                lim_i = j
+    proj_end = len(tail)
+    for marker in (order_i, skip_i, lim_i):
+        if marker is not None:
+            proj_end = min(proj_end, marker)
+    return proj_end
+
+
+def _return_has_distinct(projection: list[Tok]) -> bool:
+    return bool(projection) and projection[0].kind == "keyword" and projection[0].value == "DISTINCT"
+
+
+def _projection_has_aggregate(projection: list[Tok]) -> bool:
+    items = list(projection)
+    if items and items[0].kind == "keyword" and items[0].value == "DISTINCT":
+        items = items[1:]
+    for item in _split_top(items, ","):
+        expr = item
+        for k, t in enumerate(item):
+            if t.kind == "keyword" and t.value == "AS" and _depth_zero_at(item, k):
+                expr = item[:k]
+                break
+        if _item_is_aggregate(expr):
+            return True
+    return False
+
+
+def _viz_id_alias(var: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in var)
+    if not cleaned or cleaned[0].isdigit():
+        cleaned = f"v{cleaned}"
+    return f"__id_{cleaned}"
+
+
+def _element_id_item(var: str, alias: str) -> list[Tok]:
+    return [
+        Tok("ident", "elementId", "elementId", 0),
+        Tok("symbol", "(", "(", 0),
+        Tok("ident", var, var, 0),
+        Tok("symbol", ")", ")", 0),
+        Tok("keyword", "AS", "AS", 0),
+        Tok("ident", alias, alias, 0),
+    ]
+
+
+def _graph_scope(tokens: list[Tok]) -> dict[str, tuple[str, str]]:
+    """In-scope graph variables before RETURN: name.lower() → (original, node|rel|path)."""
+    scope: dict[str, tuple[str, str]] = {}
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok.kind == "keyword" and tok.value == "OPTIONAL":
+            i += 1
+            continue
+        if tok.kind == "keyword" and tok.value == "MATCH":
+            end = _match_end(tokens, i)
+            body = tokens[i + 1 : end]
+            pattern, _ = _split_pattern_where(body)
+            _add_pattern_vars(pattern, scope)
+            i = end
+            continue
+        if tok.kind == "keyword" and tok.value == "CALL" and _is_allowed_fulltext_call(tokens, i):
+            dotted = _dotted_name(tokens, i + 1, 4) or ""
+            kind = "rel" if dotted.endswith("queryrelationships") else "node"
+            y_i = _find_keyword_from(tokens, i, "YIELD")
+            if y_i is None:
+                i += 1
+                continue
+            aliases = _yield_aliases(tokens, y_i + 1)
+            if aliases:
+                name = aliases[0]
+                scope[name.lower()] = (name, kind)
+            i = y_i + 1
+            continue
+        if tok.kind == "keyword" and tok.value == "WITH":
+            end = _clause_end(tokens, i + 1)
+            scope = _with_graph_scope(tokens[i + 1 : end], scope)
+            i = end
+            continue
+        if tok.kind == "keyword" and tok.value in {"RETURN", "UNION"}:
+            break
+        i += 1
+    return scope
+
+
+def _add_pattern_vars(pattern: list[Tok], scope: dict[str, tuple[str, str]]) -> None:
+    depth_paren = depth_brack = depth_brace = 0
+    i = 0
+    while i < len(pattern):
+        tok = pattern[i]
+        nxt = pattern[i + 1] if i + 1 < len(pattern) else None
+        if (
+            depth_paren == depth_brack == depth_brace == 0
+            and tok.kind in {"ident", "keyword"}
+            and nxt is not None
+            and nxt.raw == "="
+        ):
+            scope[tok.raw.lower()] = (tok.raw, "path")
+            i += 2
+            continue
+        if tok.raw == "(" and depth_brack == 0 and depth_brace == 0 and depth_paren == 0:
+            close = _matching(pattern, i, "(", ")")
+            inner = pattern[i + 1 : close]
+            if inner and inner[0].kind in {"ident", "keyword"} and inner[0].raw not in {":"}:
+                name = inner[0].raw
+                prev = scope.get(name.lower())
+                if prev is None or prev[1] != "path":
+                    scope[name.lower()] = (name, "node")
+            i = close + 1
+            continue
+        if _is_rel_open(pattern, i) and depth_paren == 0 and depth_brace == 0:
+            close = _matching(pattern, i, "[", "]")
+            rel = _rel_var_name(pattern[i + 1 : close])
+            if rel:
+                scope[rel.lower()] = (rel, "rel")
+            i = close + 1
+            continue
+        if tok.raw == "(":
+            depth_paren += 1
+        elif tok.raw == ")":
+            depth_paren -= 1
+        elif tok.raw == "[":
+            depth_brack += 1
+        elif tok.raw == "]":
+            depth_brack -= 1
+        elif tok.raw == "{":
+            depth_brace += 1
+        elif tok.raw == "}":
+            depth_brace -= 1
+        i += 1
+
+
+def _rel_var_name(inner: list[Tok]) -> str | None:
+    if not inner:
+        return None
+    tok = inner[0]
+    if tok.raw in {"*", ":"}:
+        return None
+    if tok.kind in {"ident", "keyword"}:
+        return tok.raw
+    return None
+
+
+def _yield_aliases(tokens: list[Tok], start: int) -> list[str]:
+    end = start
+    while end < len(tokens):
+        tok = tokens[end]
+        if tok.kind == "keyword" and tok.value in {
+            "MATCH",
+            "OPTIONAL",
+            "WITH",
+            "RETURN",
+            "UNWIND",
+            "CALL",
+            "UNION",
+            "ORDER",
+            "SKIP",
+            "LIMIT",
+            "WHERE",
+        }:
+            break
+        end += 1
+    aliases: list[str] = []
+    for part in _split_top(tokens[start:end], ","):
+        part = [tok for tok in part if not (tok.kind == "keyword" and tok.value == "DISTINCT")]
+        if not part:
+            continue
+        alias = None
+        for k, tok in enumerate(part):
+            if tok.kind == "keyword" and tok.value == "AS" and _depth_zero_at(part, k):
+                if k + 1 < len(part) and part[k + 1].kind in {"ident", "keyword"}:
+                    alias = part[k + 1].raw
+                break
+        if alias is None and part[0].kind in {"ident", "keyword"}:
+            alias = part[0].raw
+        if alias:
+            aliases.append(alias)
+    return aliases
+
+
+def _with_graph_scope(
+    body: list[Tok], scope: dict[str, tuple[str, str]]
+) -> dict[str, tuple[str, str]]:
+    items_part, _ = _split_pattern_where(body)
+    new_scope: dict[str, tuple[str, str]] = {}
+    for part in _split_top(items_part, ","):
+        part = [tok for tok in part if not (tok.kind == "keyword" and tok.value == "DISTINCT")]
+        if not part:
+            continue
+        if len(part) == 1 and part[0].raw == "*":
+            new_scope.update(scope)
+            continue
+        alias = None
+        expr = part
+        for k, tok in enumerate(part):
+            if tok.kind == "keyword" and tok.value == "AS" and _depth_zero_at(part, k):
+                expr = part[:k]
+                if k + 1 < len(part) and part[k + 1].kind in {"ident", "keyword"}:
+                    alias = part[k + 1].raw
+                break
+        if len(expr) == 1 and expr[0].kind in {"ident", "keyword"}:
+            src = expr[0].raw.lower()
+            if src in scope:
+                _original, kind = scope[src]
+                dest = alias or _original
+                new_scope[dest.lower()] = (dest, kind)
+    return new_scope
+
+
+def _referenced_graph_vars(
+    expr: list[Tok], scope: dict[str, tuple[str, str]]
+) -> list[tuple[str, str]]:
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    i = 0
+    while i < len(expr):
+        tok = expr[i]
+        nxt = expr[i + 1] if i + 1 < len(expr) else None
+        if tok.kind in {"ident", "keyword"} and nxt is not None and nxt.raw == "(":
+            i += 1
+            continue
+        if tok.kind in {"ident", "keyword"}:
+            key = tok.raw.lower()
+            hit = scope.get(key)
+            if hit is not None:
+                original, kind = hit
+                if kind in {"node", "rel"} and key not in seen:
+                    seen.add(key)
+                    found.append((original, kind))
+        i += 1
+    return found
 
 
 def emit(tokens: list[Tok]) -> str:

@@ -1,4 +1,4 @@
-from server.algorithm.cypher.edges import FETCH_VIZ_BY_EDGE_IDS
+from server.algorithm.cypher.edges import FETCH_VIZ_BY_EDGE_IDS, FETCH_VIZ_BY_NODE_IDS
 from server.algorithm.models import EdgeRecord
 from server.core.graph_runs import (
     chain_unit_index,
@@ -54,6 +54,7 @@ def test_to_dict_edge_has_viz_ids_and_no_embedding() -> None:
 
 def test_viz_query_selects_no_embeddings() -> None:
     assert "embedding" not in FETCH_VIZ_BY_EDGE_IDS
+    assert "embedding" not in FETCH_VIZ_BY_NODE_IDS
 
 
 def test_build_chain_views_roles_and_merge_dedupe() -> None:

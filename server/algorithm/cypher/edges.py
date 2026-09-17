@@ -114,6 +114,17 @@ RETURN elementId(r) AS rid,
 """
 
 
+FETCH_VIZ_BY_NODE_IDS = """
+UNWIND $ids AS nid
+MATCH (n)
+WHERE elementId(n) = nid
+  AND $run_id IN n.run_ids
+RETURN elementId(n) AS id,
+       coalesce(n.name, '') AS name,
+       labels(n) AS labels,
+       n.leiden_community AS community
+"""
+
 # Read-only hydration for UI graph; intentionally selects no embedding fields.
 FETCH_VIZ_BY_EDGE_IDS = f"""
 UNWIND $ids AS rid
@@ -214,6 +225,32 @@ async def fetch_viz_edges(
         async with driver.session() as session:
             result = await session.run(
                 FETCH_VIZ_BY_EDGE_IDS, ids=chunk, run_id=corpus_run_id
+            )
+            return [dict(r) async for r in result]
+
+    parts = await asyncio.gather(*[_one(c) for c in chunks])
+    out: list[dict[str, Any]] = []
+    for p in parts:
+        out.extend(p)
+    return out
+
+
+async def fetch_viz_nodes(
+    driver: AsyncDriver, element_ids: Iterable[str], *, run_id: str
+) -> list[dict[str, Any]]:
+    corpus_run_id = (run_id or "").strip()
+    if not corpus_run_id:
+        raise ValueError("run_id is required for graph hydration")
+    ids = list({i for i in element_ids if i})
+    if not ids:
+        return []
+    batch_size = 400
+    chunks = [ids[i : i + batch_size] for i in range(0, len(ids), batch_size)]
+
+    async def _one(chunk: list[str]) -> list[dict[str, Any]]:
+        async with driver.session() as session:
+            result = await session.run(
+                FETCH_VIZ_BY_NODE_IDS, ids=chunk, run_id=corpus_run_id
             )
             return [dict(r) async for r in result]
 

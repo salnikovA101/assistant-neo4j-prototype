@@ -6,7 +6,7 @@ from typing import Any, Iterable
 
 from neo4j import AsyncDriver
 
-from server.algorithm.cypher.edges import fetch_viz_edges
+from server.algorithm.cypher.edges import fetch_viz_edges, fetch_viz_nodes
 from server.algorithm.models import normalize_labels
 
 DEFAULT_NODE_COLOR = "#a5abb6"
@@ -275,8 +275,10 @@ def _merge_node(nodes: dict[str, dict[str, Any]], node: dict[str, Any]) -> None:
 def build_chain_views(
     chains: list[dict[str, Any]],
     hydration: dict[str, dict[str, Any]] | None = None,
+    node_hydration: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     hydration = hydration or {}
+    node_hydration = node_hydration or {}
     views: list[dict[str, Any]] = []
 
     for idx, chain in enumerate(chains, 1):
@@ -334,6 +336,21 @@ def build_chain_views(
             _fill_if_blank(payload, "to_group", nodes.get(payload["to"], {}).get("group"))
             _merge_edge(edges, payload)
 
+        for raw in chain.get("nodes") or []:
+            if not isinstance(raw, dict):
+                continue
+            nid = str(_first(raw.get("element_id"), raw.get("id"), "") or "")
+            if not nid:
+                continue
+            hyd = node_hydration.get(nid, {})
+            _add_node(
+                nodes,
+                nid,
+                name=_first(hyd.get("name"), raw.get("name"), raw.get("caption"), ""),
+                labels=_first(hyd.get("labels"), raw.get("labels"), []),
+                community=_first(hyd.get("community"), raw.get("community")),
+            )
+
         views.append(
             {
                 "id": view_id,
@@ -390,8 +407,27 @@ async def build_graph_viz_payload(
         raise ValueError("graph chains belong to another run_id")
     rows = await fetch_viz_edges(driver, edge_ids, run_id=corpus_run_id)
     hydration = {str(row.get("id")): row for row in rows if row.get("id")}
+    known_nodes = {
+        str(row.get("from_id") or "")
+        for row in rows
+        if row.get("from_id")
+    } | {
+        str(row.get("to_id") or "")
+        for row in rows
+        if row.get("to_id")
+    }
+    node_ids: list[str] = []
+    for chain in chains:
+        for raw in chain.get("nodes") or []:
+            if not isinstance(raw, dict):
+                continue
+            nid = str(_first(raw.get("element_id"), raw.get("id"), "") or "")
+            if nid and nid not in known_nodes:
+                node_ids.append(nid)
+    node_rows = await fetch_viz_nodes(driver, node_ids, run_id=corpus_run_id)
+    node_hydration = {str(row.get("id")): row for row in node_rows if row.get("id")}
 
-    views = build_chain_views(chains, hydration)
+    views = build_chain_views(chains, hydration, node_hydration)
     return {
         "views": views,
         "all": merge_views(views),

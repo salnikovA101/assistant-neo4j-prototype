@@ -59,9 +59,10 @@ async def test_live_mentions_and_source_ranking():
         parameters={"q": "kefir"},
         max_rows=5,
     )
-    rows, truncated = await execute_compiled(
+    executed = await execute_compiled(
         driver, compiled, user_params={"q": "kefir"}, run_id=run_id
     )
+    rows, truncated = executed.rows, executed.truncated
     text = format_records(
         rows,
         registry=SourceRegistry(),
@@ -70,13 +71,19 @@ async def test_live_mentions_and_source_ranking():
         is_pure_aggregate=False,
     )
     assert "QUERY_ERROR" not in text
+    assert all("__id_" not in row for row in rows)
+    if rows:
+        assert any(item.nodes or item.edges for item in executed.viz_rows)
     ranking = compile_query(
         "MATCH ()-[r]->() RETURN r.source_file AS source_file, count(r) AS edge_count "
         "ORDER BY edge_count DESC LIMIT 5"
     )
-    rows, _ = await execute_compiled(driver, ranking, user_params={}, run_id=run_id)
+    ranked = await execute_compiled(driver, ranking, user_params={}, run_id=run_id)
+    rows = ranked.rows
     assert rows
     assert "edge_count" in rows[0]
+    assert ranking.viz_ids == []
+    assert all(not item.nodes and not item.edges for item in ranked.viz_rows)
 
 
 @pytest.mark.asyncio
@@ -92,9 +99,10 @@ async def test_live_fulltext_name_lookup():
         parameters={"q": "kefir~"},
         max_rows=5,
     )
-    rows, truncated = await execute_compiled(
+    executed = await execute_compiled(
         driver, compiled, user_params={"q": "kefir~"}, run_id=run_id
     )
+    rows, truncated = executed.rows, executed.truncated
     text = format_records(
         rows,
         registry=SourceRegistry(),
@@ -103,6 +111,9 @@ async def test_live_fulltext_name_lookup():
         is_pure_aggregate=False,
     )
     assert "QUERY_ERROR" not in text
+    assert compiled.viz_ids
+    if rows:
+        assert any(item.edges or item.nodes for item in executed.viz_rows)
 
 
 @pytest.mark.asyncio

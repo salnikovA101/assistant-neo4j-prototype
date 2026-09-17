@@ -13,7 +13,9 @@ from server.algorithm.cypher.query_compile import (
 )
 from server.algorithm.cypher.query_execute import QueryExecuteError, execute_compiled
 from server.algorithm.cypher.query_format import format_empty, format_records
+from server.algorithm.cypher.query_materialize import VizRow, materialize_query_chain
 from server.core.db import get_driver
+from server.core.graph_runs import record_accepted_chains
 from server.core.sessions import current_sources
 from server.core.turn_state import current_turn
 from server.tools.source_registry import SourceRegistry
@@ -136,7 +138,7 @@ class QueryGraphTool:
             return exc.as_tool_text()
         user_params = dict(parameters or {})
         try:
-            rows, truncated = await execute_compiled(
+            executed = await execute_compiled(
                 get_driver(),
                 compiled,
                 user_params=user_params,
@@ -146,6 +148,7 @@ class QueryGraphTool:
             return exc.tool_text
         except QueryCompileError as exc:
             return exc.as_tool_text()
+        rows, truncated = executed.rows, executed.truncated
         registry = current_sources() or self.source_registry
         if turn is not None and turn.store is not None and turn.conversation_id:
             snapshot = await turn.store.conversation_source_snapshot(turn.conversation_id)
@@ -169,6 +172,7 @@ class QueryGraphTool:
             registry.restore(snapshot)
         if not rows:
             return format_empty()
+        _record_query_graph_chain(executed.viz_rows)
         return text
 
     async def _schema(self) -> str:
@@ -223,6 +227,13 @@ class QueryGraphTool:
 def _source_ids(text: str) -> list[int]:
     from server.tools.source_registry import session_source_ids_in_text
     return session_source_ids_in_text(text)
+
+
+def _record_query_graph_chain(viz_rows: list[VizRow]) -> None:
+    chain = materialize_query_chain(viz_rows)
+    if chain is None:
+        return
+    record_accepted_chains([chain])
 
 
 def query_graph_openai_schema() -> dict[str, Any]:

@@ -7,6 +7,7 @@ import pytest
 from server.algorithm.cypher.edges import (
     EVIDENCE_BY_CHUNKS,
     FETCH_VIZ_BY_EDGE_IDS,
+    FETCH_VIZ_BY_NODE_IDS,
     induced_bridges_query,
     relationship_ann_query,
     sanitize_vector_index_name,
@@ -74,6 +75,8 @@ def test_induced_bridges_query_run_id():
 def test_hydration_queries_are_run_scoped():
     assert "AND r.run_id = $run_id" in FETCH_VIZ_BY_EDGE_IDS
     assert "AND r.run_id = $run_id" in EVIDENCE_BY_CHUNKS
+    assert "$run_id IN n.run_ids" in FETCH_VIZ_BY_NODE_IDS
+    assert "embedding" not in FETCH_VIZ_BY_NODE_IDS
 
 
 def test_s3_fingerprint_includes_run_id():
