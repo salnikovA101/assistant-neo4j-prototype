@@ -12,7 +12,7 @@ from server.core.sq_status import (
     parse_sq_status_response,
     resolve_active_sq_refs,
 )
-from server.core.turn_state import bind_turn, searches_state
+from server.core.turn_state import DEFAULT_MAX_QUERY, DEFAULT_MAX_SEARCHES, bind_turn, searches_state
 from server.llm.base import BaseLLMProvider, public_llm_error_message
 from server.llm.model_router import (
     AUTH,
@@ -242,12 +242,17 @@ class LLMManager:
                 self.config.auto_max_tool_turns if mode == "auto"
                 else max(1, int(provider.profile.max_turns))
             )
-            max_searches = 1 if mode == "staged" else max_tool_turns
+            max_searches = 1 if mode == "staged" else DEFAULT_MAX_SEARCHES
             yielded_output = False
             announced = False
             retry_next = False
             try:
-                with bind_turn(search_depth, max_searches=max_searches, context=turn_context) as turn_state:
+                with bind_turn(
+                    search_depth,
+                    max_searches=max_searches,
+                    max_query=DEFAULT_MAX_QUERY,
+                    context=turn_context,
+                ) as turn_state:
                     sq_stream_filter = SqStatusStreamFilter(mode == "staged")
                     async for event in provider.generate_response_stream(
                         user_text=model_user_text,

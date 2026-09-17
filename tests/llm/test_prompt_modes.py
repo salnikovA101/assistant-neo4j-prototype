@@ -9,7 +9,7 @@ def test_prompt_loader_routes_auto_staged_and_card() -> None:
 
     auto = loader.get_system_prompt("auto")
     staged = loader.get_system_prompt("staged")
-    assert "Не устанавливай себе фиксированное число вызовов" in auto
+    assert "Не останавливайся только потому, что уже сделал один поиск" in auto
     assert "Максимум 2 вызова" not in auto
     assert "Вызов 2 —" not in auto
     assert "не подмешиваются" in auto
@@ -47,15 +47,15 @@ def test_auto_prompt_describes_goal_completion_and_grounded_search():
     assert "Главная цель — довести текущий запрос пользователя до проверяемого результата" in prompt
     assert "query_graph" in prompt
     assert "get_service_guide" in prompt
-    assert "Не устанавливай себе фиксированное число вызовов" in prompt
+    assert "не больше 2 успешных `ask_subgraph`" in prompt
+    assert "8 успешных `query_graph`" in prompt
+    assert "инструменты кончились, отвечай" in prompt
+    assert "n/X" in prompt
     assert "Не повторяй тот же запрос" in prompt
     assert "Технический лимит ходов контролирует сервер" in prompt
     assert "Не выдавай остановку по лимиту или сбою за исчерпание всех направлений поиска" in prompt
     assert "фундамент" in prompt
     assert "без открытых GAPS" in prompt
-    assert "1–3 `ask_subgraph`" in prompt
-    assert "1–6 `query_graph`" in prompt
-    assert "не квота" in prompt
     assert "Один пустой `ask_subgraph`" in prompt
     assert "только после проверки обоими" in prompt
     assert "не выдавай за найденное по этому объекту" in prompt
@@ -71,4 +71,4 @@ def test_ui_reports_autonomous_search_budget_independent_of_model():
     cfg = load_config()
     cfg.llm.current_profile = "qwen38_flash"
     assert cfg.llm.profiles.qwen38_flash.max_turns == 2
-    assert build_ui_config(SimpleNamespace(config=cfg))["max_searches_per_answer"] == 10
+    assert build_ui_config(SimpleNamespace(config=cfg))["max_searches_per_answer"] == 12

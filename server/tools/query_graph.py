@@ -17,7 +17,14 @@ from server.algorithm.cypher.query_materialize import VizRow, materialize_query_
 from server.core.db import get_driver
 from server.core.graph_runs import record_accepted_chains
 from server.core.sessions import current_sources
-from server.core.turn_state import current_turn
+from server.core.turn_state import (
+    QUERY_GRAPH_TOOL,
+    current_turn,
+    finalize_tool_result,
+    has_tool_slot,
+    is_quota_error_result,
+    tool_limit_message,
+)
 from server.tools.source_registry import SourceRegistry
 
 logger = logging.getLogger(__name__)
@@ -74,9 +81,13 @@ Feedback: NO_MATCHES = no rows for this Cypher, not “the object is absent from
 the database”. If you used CONTAINS, retry the fulltext templates (names, then
 evidence); do not broaden to potassium. QUERY_ERROR <code> — read the code
 (syntax / unsupported / scope / db / timeout) and fix the Cypher; do not
-restate the user question. Sources in the tool markdown are already folded to
-(source:N); the user sees the same document names in their source list. Do not
-say the graph only stores file numbers.
+restate the user question. QUERY_ERROR does not spend a call slot. Server limit:
+8 successful query_graph calls per answer (schema counts). Each result ends with
+n/8; if this tool is exhausted, use ask_subgraph if it still has slots. If both
+limits are spent, the result says tools are exhausted — answer now. Sources in
+the tool markdown are already folded to (source:N); the user sees the same
+document names in their source list. Do not say the graph only stores file
+numbers.
 """
 
 _SCHEMA_CYPHER_LABELS = """
@@ -110,14 +121,22 @@ class QueryGraphTool:
         if ignored:
             logger.info("query_graph: ignoring extra arguments %s", list(ignored))
         act = (action or "query").strip().lower()
+        if not has_tool_slot(QUERY_GRAPH_TOOL):
+            return tool_limit_message(QUERY_GRAPH_TOOL)
         if act == "schema":
-            return await self._schema()
-        if act not in {"query", ""}:
-            return (
+            text = await self._schema()
+        elif act not in {"query", ""}:
+            text = (
                 "QUERY_ERROR syntax\n"
                 "Broken here: action must be query or schema. Fix the call; do not restate the user question."
             )
-        return await self._query(cypher, parameters, max_rows)
+        else:
+            text = await self._query(cypher, parameters, max_rows)
+        return finalize_tool_result(
+            QUERY_GRAPH_TOOL,
+            text,
+            success=not is_quota_error_result(text),
+        )
 
     async def _query(
         self,

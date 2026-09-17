@@ -46,7 +46,7 @@ tts:
 # Deploy switches: workspaces and rerank_enabled at the top of this file.
 # Embeddings: local Ollama embeddinggemma:300m-qat-q8_0 (EMBED__* in .env, not yaml).
 llm:
-  auto_max_tool_turns: 10
+  auto_max_tool_turns: 12
   current_profile: "auto"
   tool_profile: "ollama"
   fallback_profile: "ollama"
@@ -80,13 +80,13 @@ llm:
     # Credentials come from LLM__PROFILES__OTHER__* in the local .env.
     other:
       provider: "openai"
-      model: "z-ai/glm-5.3-flash"
-      display_name: "GLM 5.3 Flash (OpenRouter)"
+      model: "qwen/qwen3.8-flash"
+      display_name: "Qwen3.8 Flash (OpenRouter)"
       max_output_tokens: 16384
       max_turns: 2
       think: true
-      think_effort: "high"
-      think_efforts: ["high"]
+      think_effort: "xhigh"
+      think_efforts: ["xhigh"]
     ollama:
       provider: "openai"
       model: "gemma4:31b-cloud"

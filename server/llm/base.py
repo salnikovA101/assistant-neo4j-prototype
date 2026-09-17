@@ -8,6 +8,7 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Sequence
 
 from openai import AsyncOpenAI
 
+from server.core.turn_state import QUOTA_TOOLS
 from server.llm.stream_events import (
     ContentThinkSplitter,
     StreamEvent,
@@ -695,14 +696,16 @@ class BaseLLMProvider(ABC):
                         else:
                             result = await asyncio.to_thread(fn, **args)
                         display_result = str(result).rstrip()
-                        payload = f"{display_result}{budget_footer}"
+                        extra = "" if tc.name in QUOTA_TOOLS else budget_footer
+                        payload = f"{display_result}{extra}"
                     except Exception as tool_err:
                         ok = False
                         logger.error(
                             "Инструмент '%s' ошибка: %s", tc.name, tool_err
                         )
                         display_result = f"Error: {tool_err}"
-                        payload = f"{display_result}{budget_footer}"
+                        extra = "" if tc.name in QUOTA_TOOLS else budget_footer
+                        payload = f"{display_result}{extra}"
 
                     yield StreamEvent(
                         "tool_result",

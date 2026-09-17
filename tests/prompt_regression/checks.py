@@ -113,9 +113,16 @@ def _check_tool_usage(case: dict[str, Any], transcript: Transcript) -> list[str]
                 f"ожидался {expected_name}, получен {', '.join(dict.fromkeys(wrong))}"
             )
 
-    limit = int(case.get("max_tool_calls", 1 if mode == "staged" else 10))
+    limit = int(case.get("max_tool_calls", 1 if mode == "staged" else 2))
     if len(searches) > limit:
         failures.append(f"{len(searches)} вызовов поиска при лимите {limit}")
+
+    query_calls = [tc for tc in transcript.tool_calls if tc.name == "query_graph"]
+    query_limit = int(case.get("max_query_calls", 0 if mode == "staged" else 8))
+    if len(query_calls) > query_limit:
+        failures.append(
+            f"{len(query_calls)} вызовов query_graph при лимите {query_limit}"
+        )
 
     if case.get("expect_approval_required") and not transcript.approval_required:
         failures.append("ожидалась заявка approval, её нет")

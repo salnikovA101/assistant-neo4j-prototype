@@ -277,13 +277,19 @@ async def test_app_store_bans_are_keyed_by_fingerprint(tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode,expected_rounds,expected_searches", [("auto", 10, 10), ("staged", 2, 1)])
+@pytest.mark.parametrize("mode,expected_rounds,expected_searches", [("auto", 12, 2), ("staged", 2, 1)])
 async def test_manager_applies_autonomous_budget_only_to_auto(monkeypatch, mode, expected_rounds, expected_searches):
-    from server.core.turn_state import searches_state, take_search_slot
+    from server.core.turn_state import (
+        QUERY_GRAPH_TOOL,
+        searches_state,
+        take_search_slot,
+        take_tool_slot,
+        tool_quota_state,
+    )
     from server.llm.manager import LLMManager
 
     cfg = load_config()
-    assert cfg.llm.auto_max_tool_turns == 10
+    assert cfg.llm.auto_max_tool_turns == 12
     mgr = LLMManager(cfg)
 
     class BudgetProvider(_OkProvider):
@@ -294,6 +300,11 @@ async def test_manager_applies_autonomous_budget_only_to_auto(monkeypatch, mode,
                 assert take_search_slot()
             assert not take_search_slot()
             assert searches_state() == (expected_searches, expected_searches)
+            if mode == "auto":
+                for _ in range(8):
+                    assert take_tool_slot(QUERY_GRAPH_TOOL)
+                assert not take_tool_slot(QUERY_GRAPH_TOOL)
+                assert tool_quota_state(QUERY_GRAPH_TOOL) == (8, 8)
             async for event in super().generate_response_stream(**kwargs):
                 yield event
 

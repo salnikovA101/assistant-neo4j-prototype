@@ -24,6 +24,71 @@ def test_tool_budget_footer_asks_to_close_gaps():
     assert "Do not call tools again" in exhausted
 
 
+@pytest.mark.asyncio
+async def test_quota_tools_skip_global_tool_budget_footer():
+    profile = OpenAIProfile(
+        model="test-model",
+        base_url="http://localhost",
+        api_key="x",
+        think=False,
+        max_turns=3,
+    )
+    provider = OpenAIProvider(profile)
+    last_contents: List[str] = []
+
+    async def fake_create(**kwargs):
+        messages = kwargs.get("messages") or []
+        last_contents.append(str((messages[-1] or {}).get("content") or "") if messages else "")
+        n = len(last_contents)
+        if n == 1:
+            return _aiter([_Chunk(_Delta(tool_calls=[{
+                "index": 0,
+                "id": "call_ask",
+                "type": "function",
+                "function": {
+                    "name": "ask_subgraph",
+                    "arguments": '{"subquestions":["a"]}',
+                },
+            }]))])
+        if n == 2:
+            return _aiter([_Chunk(_Delta(tool_calls=[{
+                "index": 0,
+                "id": "call_guide",
+                "type": "function",
+                "function": {
+                    "name": "get_service_guide",
+                    "arguments": '{"section":"modes"}',
+                },
+            }]))])
+        return _aiter([_Chunk(_Delta(content="Done."))])
+
+    async def fake_ask(**_kwargs):
+        return "UNIT evidence"
+
+    async def fake_guide(**_kwargs):
+        return "Guide text"
+
+    provider.client.chat.completions.create = AsyncMock(side_effect=fake_create)
+    events = [
+        event
+        async for event in provider.generate_response_stream(
+            user_text="q",
+            prompt="sys",
+            tools=[
+                {"type": "function", "function": {"name": "ask_subgraph"}},
+                {"type": "function", "function": {"name": "get_service_guide"}},
+            ],
+            tool_map={"ask_subgraph": fake_ask, "get_service_guide": fake_guide},
+        )
+    ]
+    assert events[-1].type == "done"
+    assert "UNIT evidence" in last_contents[1]
+    assert "Tool budget:" not in last_contents[1]
+    assert "Guide text" in last_contents[2]
+    assert "Tool budget:" in last_contents[2]
+
+
+
 class _Delta:
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
@@ -368,7 +433,7 @@ async def test_invalid_tool_json_does_not_call_tool():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("extra_tool_call", [False, True])
-async def test_autonomous_budget_allows_ten_rounds_then_final_or_existing_error(extra_tool_call):
+async def test_autonomous_budget_allows_twelve_rounds_then_final_or_existing_error(extra_tool_call):
     # The per-request budget must override the old two-round model default.
     profile = OpenAIProfile(model="test", base_url="http://localhost", api_key="x", max_turns=2)
     provider = OpenAIProvider(profile)
@@ -378,7 +443,7 @@ async def test_autonomous_budget_allows_ten_rounds_then_final_or_existing_error(
     async def fake_create(**kwargs):
         requests.append(kwargs["tool_choice"])
         n = len(requests)
-        if n == 11 and not extra_tool_call:
+        if n == 13 and not extra_tool_call:
             return _aiter([_Chunk(_Delta(content="Confirmed result (source:1)."))])
         return _aiter([_Chunk(_Delta(tool_calls=[{
             "index": 0, "id": f"call_{n}", "type": "function",
@@ -391,12 +456,12 @@ async def test_autonomous_budget_allows_ten_rounds_then_final_or_existing_error(
 
     provider.client.chat.completions.create = AsyncMock(side_effect=fake_create)
     events = [event async for event in provider.generate_response_stream(
-        user_text="q", prompt="sys", max_tool_turns=10,
+        user_text="q", prompt="sys", max_tool_turns=12,
         tools=[{"type": "function", "function": {"name": "ask_subgraph"}}],
         tool_map={"ask_subgraph": fake_tool},
     )]
-    assert executed == list(range(1, 11))
-    assert requests == ["auto"] * 10 + ["none"]
+    assert executed == list(range(1, 13))
+    assert requests == ["auto"] * 12 + ["none"]
     assert profile.max_turns == 2
     if extra_tool_call:
         assert events[-1].type == "error"
@@ -405,4 +470,4 @@ async def test_autonomous_budget_allows_ten_rounds_then_final_or_existing_error(
     else:
         assert events[-1].type == "done"
         assert events[-1].data["final_content"] == "Confirmed result (source:1)."
-        assert len(events[-1].data["history_tool_messages"]) == 20
+        assert len(events[-1].data["history_tool_messages"]) == 24

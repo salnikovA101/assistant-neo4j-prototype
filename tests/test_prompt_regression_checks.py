@@ -107,14 +107,25 @@ def test_repeat_across_calls_fails():
     assert any("повтор фразы" in f for f in result.failures)
 
 
-@pytest.mark.parametrize("count,overrun", [(10, False), (11, True)])
+@pytest.mark.parametrize("count,overrun", [(2, False), (3, True)])
 def test_budget_overrun_fails(count, overrun):
     transcript = Transcript(
         answer=GOOD_ANSWER,
         tool_calls=[ToolCall("ask_subgraph", [f"Which data describe sample {n}?"]) for n in range(count)],
     )
     result = check_case(_case(), transcript)
-    assert any("при лимите 10" in f for f in result.failures) is overrun
+    assert any("при лимите 2" in f for f in result.failures) is overrun
+
+
+@pytest.mark.parametrize("count,overrun", [(8, False), (9, True)])
+def test_query_graph_overrun_fails(count, overrun):
+    transcript = Transcript(
+        answer=GOOD_ANSWER,
+        tool_calls=[ToolCall("ask_subgraph", ["Which cultures are used in kefir?"])]
+        + [ToolCall("query_graph") for _ in range(count)],
+    )
+    result = check_case(_case(), transcript)
+    assert any("query_graph при лимите 8" in f for f in result.failures) is overrun
 
 
 def test_unexpected_tool_call_fails():

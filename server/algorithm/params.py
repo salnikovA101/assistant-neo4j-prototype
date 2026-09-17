@@ -23,7 +23,7 @@ class Params:
     # L is also CE keep (S2b) and S3 anchor budget — one shared top-K.
     L: int = 100
     L_raw_max: int = 300
-    ann_concurrency: int = 30
+    ann_concurrency: int = 10
     max_ann_texts: int = 16
 
     # S2b Ettin CE: score full ANN pool (≤ L_raw_max), keep top L

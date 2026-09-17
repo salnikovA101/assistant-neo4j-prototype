@@ -255,9 +255,13 @@ class Tools:
                         "Feedback: NO_RESULTS — no new evidence for these questions; try "
                         "a remaining independent aspect or query_graph. Answer with GAPS "
                         "only when both tools are empty for that aspect, there is no new "
-                        "search direction, or the budget is spent. TOOL_ERROR "
-                        "— read the reason: fix input format; if search budget is spent, "
-                        "stop calling tools and answer from what you have; if search "
+                        "search direction, or a tool limit is spent. Server limit: 2 "
+                        "successful ask_subgraph calls per answer; each result ends with "
+                        "n/2. TOOL_ERROR does not spend a slot — fix input and retry. If "
+                        "this tool is exhausted, use query_graph if it still has slots. "
+                        "If both limits are spent, the result says tools are exhausted — "
+                        "answer now. TOOL_ERROR — read the reason: fix input format; if "
+                        "this tool's limit is spent, do not call it again; if search "
                         "failed, state the technical limit. Do not invent cards."
                     ),
                     "parameters": {

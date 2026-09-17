@@ -617,6 +617,7 @@ def test_description_matches_prompt_topics():
     assert "NO_MATCHES" in QUERY_GRAPH_DESCRIPTION
     assert "QUERY_ERROR" in QUERY_GRAPH_DESCRIPTION
     assert "run_ids" in QUERY_GRAPH_DESCRIPTION
+    assert "8 successful" in QUERY_GRAPH_DESCRIPTION
     from pathlib import Path
     prompt = (Path("prompts/assistant_logic.md")).read_text(encoding="utf-8")
     assert "query_graph" in prompt
@@ -626,6 +627,8 @@ def test_description_matches_prompt_topics():
     assert "QUERY_ERROR" in prompt
     assert "get_service_guide" in prompt
     assert "фундамент" in prompt
+    assert "не больше 2 успешных" in prompt
+    assert "8 успешных `query_graph`" in prompt
     assert "queryNodes($__ft_nodes, $q)" not in prompt
     assert "queryRelationships($__ft_rels, $q)" not in prompt
     assert "CALL db.index.fulltext" not in prompt

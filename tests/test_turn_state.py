@@ -5,6 +5,9 @@ from __future__ import annotations
 import pytest
 
 from server.core.turn_state import (
+    ASK_SUBGRAPH_TOOL,
+    BOTH_EXHAUSTED_PHRASE,
+    QUERY_GRAPH_TOOL,
     DEFAULT_SEARCH_DEPTH,
     bind_turn,
     current_turn,
@@ -15,6 +18,9 @@ from server.core.turn_state import (
     seen_subquestions,
     subquestion_key,
     take_search_slot,
+    take_tool_slot,
+    tool_quota_footer,
+    tool_quota_state,
 )
 from server.tools.subgraph_search import (
     MAX_SUBQUESTIONS,
@@ -116,6 +122,8 @@ async def test_query_rejects_unusable_input_without_spending_budget():
         assert out.startswith(TOOL_ERROR)
         assert "not English" in out
         assert searches_state() == (0, 2)
+        assert "ask_subgraph 0/2 used" in out
+        assert "You may call it again" in out
 
 
 @pytest.mark.asyncio
@@ -134,8 +142,14 @@ async def test_query_refuses_third_search_in_one_turn(monkeypatch):
 
     assert first.startswith(NO_RESULTS)
     assert second.startswith(NO_RESULTS)
+    assert "ask_subgraph 1/2 used" in first
+    assert "You may call it again" in first
+    assert "query_graph 0/8 remaining" in first
+    assert "ask_subgraph 2/2 exhausted for this tool" in second
     assert third.startswith(TOOL_ERROR)
-    assert "budget" in third
+    assert "limit" in third
+    assert BOTH_EXHAUSTED_PHRASE not in second
+    assert BOTH_EXHAUSTED_PHRASE not in third
 
 
 @pytest.mark.asyncio
@@ -184,6 +198,55 @@ async def test_ten_search_budget_blocks_eleventh_pipeline_execution(monkeypatch)
             assert result.startswith(NO_RESULTS)
         result = await agent.query(["Which conditions affect fermentation?"])
         assert result.startswith(TOOL_ERROR)
-        assert "budget" in result
+        assert "limit" in result
         assert searches_state() == (10, 10)
     assert len(calls) == 10
+
+
+def test_tool_quota_footer_nudge_and_both_exhausted():
+    with bind_turn("medium", max_searches=2, max_query=8):
+        assert take_tool_slot(ASK_SUBGRAPH_TOOL)
+        remaining = tool_quota_footer(ASK_SUBGRAPH_TOOL)
+        assert "ask_subgraph 1/2 used" in remaining
+        assert "You may call it again" in remaining
+        assert "query_graph 0/8 remaining" in remaining
+        assert BOTH_EXHAUSTED_PHRASE not in remaining
+        assert take_tool_slot(ASK_SUBGRAPH_TOOL)
+        one_done = tool_quota_footer(ASK_SUBGRAPH_TOOL)
+        assert "ask_subgraph 2/2 exhausted for this tool" in one_done
+        assert "query_graph 0/8 remaining" in one_done
+        assert BOTH_EXHAUSTED_PHRASE not in one_done
+        for _ in range(8):
+            assert take_tool_slot(QUERY_GRAPH_TOOL)
+        both = tool_quota_footer(QUERY_GRAPH_TOOL)
+        assert "ask_subgraph 2/2 exhausted" in both
+        assert "query_graph 8/8 exhausted" in both
+        assert BOTH_EXHAUSTED_PHRASE in both
+
+
+@pytest.mark.asyncio
+async def test_pipeline_error_does_not_spend_ask_slot(monkeypatch):
+    calls = []
+
+    async def fake_run(driver, **kwargs):
+        calls.append(kwargs)
+        return {"error": "neo4j down"}
+
+    monkeypatch.setattr("server.algorithm.pipeline.run", fake_run)
+    monkeypatch.setattr("server.tools.subgraph_search.get_driver", lambda: object())
+    agent = SubgraphSearchAgent()
+    with bind_turn("medium", max_searches=2, context={"run_id": "corpus-test"}):
+        out = await agent.query(["Which starter cultures are used in kefir?"])
+        assert out.startswith(TOOL_ERROR)
+        assert "neo4j down" in out
+        assert searches_state() == (0, 2)
+        assert "ask_subgraph 0/2 used" in out
+    assert len(calls) == 1
+
+
+def test_bind_turn_can_resume_query_used():
+    with bind_turn("low", max_query=8, context={"query_used": 7}):
+        assert tool_quota_state(QUERY_GRAPH_TOOL) == (7, 8)
+        assert take_tool_slot(QUERY_GRAPH_TOOL) is True
+        assert take_tool_slot(QUERY_GRAPH_TOOL) is False
+
