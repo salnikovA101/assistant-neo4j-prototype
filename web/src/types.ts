@@ -18,6 +18,10 @@ export type UiConfig = {
   audio_enabled: boolean;
   staged_enabled: boolean;
   cards_enabled: boolean;
+  document_ingest_enabled: boolean;
+  document_ingest_ready: boolean;
+  document_ingest_max_files: number;
+  document_ingest_max_file_bytes: number;
   current_profile: string;
   llm_key_configured: boolean;
   username: string;
@@ -328,3 +332,33 @@ export type SavedCard = {
 };
 
 export type Account = { id: string; username: string; workspace: string };
+
+export type DocumentIngestStatus =
+  | "unavailable"
+  | "queued"
+  | "processing"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type DocumentBatchItem = {
+  id: string;
+  filename: string;
+  size: number;
+  contentType: string;
+  status: DocumentIngestStatus | string;
+  etaSeconds: number | null;
+  error: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type DocumentBatch = {
+  id: string;
+  status: DocumentIngestStatus | string;
+  etaSeconds: number | null;
+  message: string | null;
+  createdAt: number;
+  updatedAt: number;
+  items: DocumentBatchItem[];
+};

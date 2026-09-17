@@ -112,6 +112,10 @@ def test_ui_config_does_not_leak_api_key():
     assert "username" in payload
     assert payload["models"][0]["id"] == "ollama"
     assert "api_key" not in payload["models"][0]
+    assert payload["document_ingest_enabled"] is True
+    assert payload["document_ingest_ready"] is False
+    assert payload["document_ingest_max_files"] == 10
+    assert payload["document_ingest_max_file_bytes"] == 50 * 1024 * 1024
 
 
 def test_ui_config_models_catalog_hides_secrets():

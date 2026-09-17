@@ -8,6 +8,10 @@ workspaces:
 rerank_enabled: false
 staged_enabled: true
 cards_enabled: true
+# Empty URL keeps PDF ingest as a metadata stub. Set to the processing service
+# to forward multipart files to {url}/batches without changing the UI contract.
+document_ingest_enabled: true
+document_ingest_url: ""
 
 server:
   host: "0.0.0.0"

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ConversationSummary } from "../types";
 import { formatRelativeTime } from "../format";
+import { documentIndicatorLabel, type DocumentIndicator } from "../documents";
 import { IconCards, IconChat, IconGraph, IconHelp, IconLibrary, IconLogout, IconPlus, IconSettings, IconSidebar, IconTrash } from "./Icons";
 
 const RELATIVE_TICK_MS = 30_000;
@@ -26,6 +27,8 @@ export function Sidebar({
   onLogout,
   keyWarning,
   activeWorkspace,
+  ingestEnabled = false,
+  documentIndicator = "idle",
 }: {
   collapsed: boolean;
   onToggle: () => void;
@@ -47,6 +50,8 @@ export function Sidebar({
   onLogout: () => void;
   keyWarning: boolean;
   activeWorkspace: "chat" | "graph" | "library" | "help" | "cards";
+  ingestEnabled?: boolean;
+  documentIndicator?: DocumentIndicator;
 }) {
   const [now, setNow] = useState(() => Date.now());
   const [historyQuery, setHistoryQuery] = useState("");
@@ -78,9 +83,22 @@ export function Sidebar({
         <IconGraph />
         {!collapsed && <span>Вся база</span>}
       </button>
-      <button type="button" className={`sidebar-action ${activeWorkspace === "library" ? "is-active" : ""}`} onClick={onLibrary} title="Открыть документы">
+      <button
+        type="button"
+        className={`sidebar-action sidebar-action-docs ${activeWorkspace === "library" ? "is-active" : ""}`}
+        onClick={onLibrary}
+        title={ingestEnabled ? documentIndicatorLabel(documentIndicator) : "Открыть документы"}
+        aria-label={ingestEnabled ? documentIndicatorLabel(documentIndicator) : "Открыть документы"}
+      >
         <IconLibrary />
-        {!collapsed && <><span>Документы</span><span className="sidebar-nav-badge">Скоро</span></>}
+        {!collapsed && (
+          ingestEnabled
+            ? <span>Документы</span>
+            : <><span>Документы</span><span className="sidebar-nav-badge">Скоро</span></>
+        )}
+        {ingestEnabled && documentIndicator !== "idle" && (
+          <span className={`sidebar-doc-dot is-${documentIndicator}`} aria-hidden="true" />
+        )}
       </button>
       {cardsEnabled && <button type="button" className={`sidebar-action ${activeWorkspace === "cards" ? "is-active" : ""}`} onClick={onCards} title="Карточки">
         <IconCards />

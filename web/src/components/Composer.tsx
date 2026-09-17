@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { SearchDepth, UiModel } from "../types";
 import { effortLabel } from "../format";
 import { MODE_LABELS } from "../uiLabels";
-import { IconCards, IconChevron, IconMic, IconSend, IconStop } from "./Icons";
+import { IconAttach, IconCards, IconChevron, IconMic, IconSend, IconStop } from "./Icons";
 
 export function Composer({
   text,
@@ -29,6 +29,8 @@ export function Composer({
   cardsEnabled,
   cardActionsEnabled,
   onOpenCards,
+  documentsEnabled,
+  onOpenDocuments,
   disabled = false,
   focusKey = 0,
 }: {
@@ -56,6 +58,8 @@ export function Composer({
   cardsEnabled: boolean;
   cardActionsEnabled: boolean;
   onOpenCards: () => void;
+  documentsEnabled: boolean;
+  onOpenDocuments: () => void;
   disabled?: boolean;
   focusKey?: number;
 }) {
@@ -156,6 +160,22 @@ export function Composer({
         }}
       />
       <div className="composer-actions">
+        {documentsEnabled && (
+          <button
+            type="button"
+            className="chip-btn composer-upload-button"
+            aria-label="Добавить PDF в базу"
+            title="Добавить PDF в базу"
+            onClick={() => {
+              formRef.current?.querySelectorAll("details[open]").forEach((menu) => {
+                (menu as HTMLDetailsElement).open = false;
+              });
+              onOpenDocuments();
+            }}
+          >
+            <IconAttach />
+          </button>
+        )}
         {cardsEnabled && (
           <button
             type="button"

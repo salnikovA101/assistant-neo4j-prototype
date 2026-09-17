@@ -1,4 +1,5 @@
 fastapi
+python-multipart
 uvicorn[standard]
 aiosqlite
 argon2-cffi

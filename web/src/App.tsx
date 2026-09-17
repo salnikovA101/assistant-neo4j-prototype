@@ -19,6 +19,7 @@ import {
   deleteConversation,
   fetchConversation,
   fetchConversations,
+  fetchDocumentBatches,
   fetchCardTemplates,
   fetchHealth,
   fetchMe,
@@ -27,6 +28,7 @@ import {
   forkConversation,
   getLlmKey,
   getSessionId,
+  getWorkspace,
   logout,
   insertCardMessage,
   renameBranch,
@@ -42,10 +44,20 @@ import { branchColor } from "./branchVisuals";
 import { ChatThread } from "./components/ChatThread";
 import { Welcome } from "./components/Welcome";
 import { Composer } from "./components/Composer";
+import { DocumentUploadModal } from "./components/DocumentUploadModal";
 import { AgendaDrawer } from "./components/AgendaDrawer";
 import { BranchMenu } from "./components/BranchMenu";
 import { ResearchPanelShell, type ResearchTab } from "./components/ResearchPanelShell";
 import { Sidebar } from "./components/Sidebar";
+import {
+  documentCompletionNotice,
+  documentIndicator,
+  flattenDocumentItems,
+  isActiveDocumentStatus,
+  loadSeenDocumentIds,
+  markTerminalDocumentsSeen,
+  noticeOpensDocuments,
+} from "./documents";
 import { parseSseBlock } from "./format";
 import { clearLegacySessions } from "./sessions";
 import type {
@@ -56,6 +68,7 @@ import type {
   ChatStep,
   ConversationDetail,
   ConversationSummary,
+  DocumentBatch,
   PendingApproval,
   ResearchStep,
   ResearchBranch,
@@ -239,6 +252,17 @@ export function App() {
   const [recording, setRecording] = useState(false);
   const [notice, setNotice] = useState("");
   const [errorNotice, setErrorNotice] = useState<{ text: string; id: string } | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [libraryRefresh, setLibraryRefresh] = useState(0);
+  const [libraryFocusUploads, setLibraryFocusUploads] = useState(0);
+  const [accountId, setAccountId] = useState("");
+  const [documentBatches, setDocumentBatches] = useState<DocumentBatch[]>([]);
+  const [documentBatchesLoading, setDocumentBatchesLoading] = useState(false);
+  const [seenDocumentIds, setSeenDocumentIds] = useState<Set<string>>(() => new Set());
+  const [uploadsVisible, setUploadsVisible] = useState(false);
+  const documentBatchesRef = useRef<DocumentBatch[]>([]);
+  const workspaceRef = useRef<Workspace>("chat");
+  const uploadsVisibleRef = useRef(false);
   const showError = (text: string) => { setNotice(""); setErrorNotice({ text, id: uid() }); };
   const abortRef = useRef<AbortController | null>(null);
   // A history request may complete after a turn has already put its local
@@ -267,6 +291,16 @@ export function App() {
     : "";
   const rightPanelOpen = rightPanel.kind !== "closed";
   const model = config?.models.find((item) => item.id === profile);
+  const ingestEnabled = Boolean(config?.document_ingest_enabled);
+  const ingestReady = Boolean(config?.document_ingest_ready);
+  const ingestMaxFiles = config?.document_ingest_max_files || 10;
+  const ingestMaxFileBytes = config?.document_ingest_max_file_bytes || 50 * 1024 * 1024;
+  const viewingDocumentUploads = workspace === "library" && uploadsVisible;
+  const docsIndicator = viewingDocumentUploads
+    ? "idle"
+    : documentIndicator(documentBatches, seenDocumentIds);
+  workspaceRef.current = workspace;
+  uploadsVisibleRef.current = uploadsVisible;
   const effortOptions =
     model?.reasoning_effort_options || config?.reasoning_effort_options || [];
   const maxGraphWidth = Math.max(
@@ -323,6 +357,7 @@ export function App() {
         }
         if (!cfg.staged_enabled) setMode("auto");
         bindAccount(account.id);
+        setAccountId(account.id);
         setQwenKeyDraft(getLlmKey());
         setHasUserKey(Boolean(getLlmKey()));
         clearLegacySessions();
@@ -442,9 +477,82 @@ export function App() {
 
   useEffect(() => {
     if (!notice) return;
-    const timeout = window.setTimeout(() => setNotice(""), 4200);
+    const timeout = window.setTimeout(() => setNotice(""), noticeOpensDocuments(notice) ? 7000 : 4200);
     return () => window.clearTimeout(timeout);
   }, [notice]);
+
+  useEffect(() => {
+    if (!accountId) return;
+    setSeenDocumentIds(loadSeenDocumentIds(accountId, getWorkspace()));
+  }, [accountId]);
+
+  useEffect(() => {
+    if (!accountId || !viewingDocumentUploads) return;
+    setSeenDocumentIds(markTerminalDocumentsSeen(documentBatches, accountId, getWorkspace()));
+  }, [accountId, viewingDocumentUploads, documentBatches]);
+
+  useEffect(() => {
+    if (!ingestEnabled) {
+      documentBatchesRef.current = [];
+      setDocumentBatches([]);
+      setDocumentBatchesLoading(false);
+      return;
+    }
+    let cancelled = false;
+    let timer: number | undefined;
+    const clearTimer = () => {
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+        timer = undefined;
+      }
+    };
+    const applyBatches = (next: DocumentBatch[], announce: boolean) => {
+      const previous = documentBatchesRef.current;
+      documentBatchesRef.current = next;
+      setDocumentBatches(next);
+      if (!announce) return;
+      const viewing = workspaceRef.current === "library" && uploadsVisibleRef.current;
+      const text = documentCompletionNotice(previous, next);
+      if (text && !viewing) setNotice(text);
+    };
+    const refresh = async (announce: boolean) => {
+      try {
+        const next = await fetchDocumentBatches();
+        if (!cancelled) applyBatches(next, announce);
+      } catch {
+        /* Keep the last snapshot if a poll fails. */
+      } finally {
+        if (!cancelled) setDocumentBatchesLoading(false);
+      }
+    };
+    const delayFor = () => (
+      flattenDocumentItems(documentBatchesRef.current).some((item) => isActiveDocumentStatus(item.status))
+        ? 15_000
+        : 60_000
+    );
+    const loop = async (announce: boolean) => {
+      if (cancelled || document.hidden) return;
+      await refresh(announce);
+      if (cancelled || document.hidden) return;
+      clearTimer();
+      timer = window.setTimeout(() => { void loop(true); }, delayFor());
+    };
+    if (!documentBatchesRef.current.length) setDocumentBatchesLoading(true);
+    void loop(false);
+    const onVisibility = () => {
+      if (document.hidden) {
+        clearTimer();
+        return;
+      }
+      void loop(true);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      clearTimer();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [ingestEnabled, libraryRefresh]);
 
   useEffect(() => {
     if (!errorNotice) return;
@@ -457,6 +565,17 @@ export function App() {
     setRightPanel({ kind: "closed" });
     setHelpSection(section);
     setWorkspace("help");
+  }
+
+  function openLibrary() {
+    setRightPanel({ kind: "closed" });
+    setWorkspace("library");
+  }
+
+  function openLibraryUploads() {
+    openLibrary();
+    setLibraryFocusUploads((value) => value + 1);
+    setNotice("");
   }
 
   async function refreshSessions() {
@@ -1280,7 +1399,7 @@ export function App() {
           } catch (error) { showError(error instanceof Error ? error.message : "Не удалось удалить чат"); }
         }}
         onExplorer={() => { setRightPanel({ kind: "closed" }); setWorkspace("graph"); }}
-        onLibrary={() => { setRightPanel({ kind: "closed" }); setWorkspace("library"); }}
+        onLibrary={() => openLibrary()}
         onHelp={() => openHelp()}
         onCards={() => { setRightPanel({ kind: "closed" }); setWorkspace("cards"); }}
         cardsEnabled={config?.cards_enabled !== false}
@@ -1289,6 +1408,8 @@ export function App() {
         onSettings={() => setSettingsOpen((value) => !value)}
         onLogout={() => void logout()}
         keyWarning={!hasUserKey}
+        ingestEnabled={ingestEnabled}
+        documentIndicator={docsIndicator}
         activeWorkspace={workspace}
       />
       {!collapsed && (
@@ -1303,7 +1424,7 @@ export function App() {
       <div ref={mainColRef} className="main-col">
         <header className="topbar">
           <div className="topbar-title">
-            <span>{workspace === "graph" ? "Вся база" : workspace === "library" ? "Документы · Скоро" : workspace === "help" ? "Помощь" : workspace === "cards" ? "Карточки" : current?.title || "Новый чат"}</span>
+            <span>{workspace === "graph" ? "Вся база" : workspace === "library" ? (ingestEnabled ? "Документы" : "Документы · Скоро") : workspace === "help" ? "Помощь" : workspace === "cards" ? "Карточки" : current?.title || "Новый чат"}</span>
             {workspace === "chat" && branches.length > 0 && (
               <BranchMenu
                 branches={branches}
@@ -1416,6 +1537,8 @@ export function App() {
             cardsEnabled={config?.cards_enabled !== false}
             cardActionsEnabled={Boolean(headCheckpointId && currentId && !pendingApproval && !busy && !current?.readOnly)}
             onOpenCards={() => setRightPanel({ kind: "cards", tab: "templates" })}
+            documentsEnabled={ingestEnabled}
+            onOpenDocuments={() => setUploadOpen(true)}
             disabled={Boolean(current?.readOnly)}
             focusKey={composerFocusKey}
           />
@@ -1430,7 +1553,17 @@ export function App() {
           </Suspense>
         ) : workspace === "library" ? (
           <Suspense fallback={<p className="explorer-status">Загрузка библиотеки…</p>}>
-            <LibraryWorkspace />
+            <LibraryWorkspace
+              ingestEnabled={ingestEnabled}
+              ingestReady={ingestReady}
+              batches={documentBatches}
+              loading={documentBatchesLoading}
+              focusUploadsKey={libraryFocusUploads}
+              onOpenUpload={() => setUploadOpen(true)}
+              onNotice={setNotice}
+              onUploadsVisible={setUploadsVisible}
+              onBatchesChanged={() => setLibraryRefresh((value) => value + 1)}
+            />
           </Suspense>
         ) : workspace === "help" ? (
           <Suspense fallback={<p className="explorer-status">Загрузка помощи…</p>}>
@@ -1571,7 +1704,27 @@ export function App() {
         }}>Сохранить</button>
 
       </div>}
-      {notice && <div className="toast" role="status">{notice}</div>}
+      {ingestEnabled && (
+        <DocumentUploadModal
+          open={uploadOpen}
+          ingestReady={ingestReady}
+          maxFiles={ingestMaxFiles}
+          maxFileBytes={ingestMaxFileBytes}
+          onClose={() => setUploadOpen(false)}
+          onCreated={() => {
+            setUploadOpen(false);
+            setLibraryRefresh((value) => value + 1);
+            setNotice("Принято. Статус — во вкладке Документы.");
+          }}
+        />
+      )}
+      {notice && (
+        noticeOpensDocuments(notice) ? (
+          <button type="button" className="toast is-action" onClick={openLibraryUploads}>{notice}</button>
+        ) : (
+          <div className="toast" role="status">{notice}</div>
+        )
+      )}
       {errorNotice && workspace !== "chat" && <div className="toast is-error" role="status">{errorNotice.text}</div>}
     </div>
   );

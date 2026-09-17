@@ -140,6 +140,9 @@ def test_chat_has_one_cards_entry_and_compact_user_question():
     assert "onOpenCardLibrary" not in app + composer
     assert composer.count("onOpenCards()") == 1
     assert "Открыть карточки" in composer
+    assert "documentsEnabled" in composer
+    assert "Добавить PDF в базу" in composer
+    assert "onOpenDocuments()" in composer
     assert 'openResearch("map")' in app
     assert "GRAPH_PANEL_MIN" in app
     assert "min={GRAPH_PANEL_MIN}" in app
@@ -293,3 +296,37 @@ def test_missing_qwen_key_shows_warning_not_block():
     assert "`[1]`" in copy_section
     assert "[1] - имя файла" in copy_section
     assert "не подставляются" in copy_section
+
+
+def test_document_upload_stub_is_always_visible_and_not_regex_gated():
+    app = (WEB / "App.tsx").read_text(encoding="utf-8")
+    composer = (WEB / "components" / "Composer.tsx").read_text(encoding="utf-8")
+    library = (WEB / "components" / "LibraryWorkspace.tsx").read_text(encoding="utf-8")
+    modal = (WEB / "components" / "DocumentUploadModal.tsx").read_text(encoding="utf-8")
+    chat = (WEB / "components" / "ChatThread.tsx").read_text(encoding="utf-8")
+    sidebar = (WEB / "components" / "Sidebar.tsx").read_text(encoding="utf-8")
+    guide = load_service_guide(ROOT / "prompts")
+    assert "DocumentUploadModal" in app
+    assert "onOpenDocuments={() => setUploadOpen(true)}" in app
+    assert "Загрузить PDF" in library
+    assert 'id: "uploads"' in library
+    assert "accept=\"application/pdf,.pdf\"" in modal
+    assert "Добавить ещё" in modal
+    assert "Обработка документов будет подключена позже." in modal
+    assert "onOpenDocuments" in composer
+    assert "Добавить PDF в базу" not in chat
+    assert "ingestEnabled" in sidebar
+    assert "sidebar-doc-dot" in sidebar
+    assert "documentIndicator" in sidebar
+    assert "document-queue-summary" in library
+    assert "fetchDocumentBatches" in app
+    assert "visibilitychange" in app
+    assert "toast is-action" in app
+    assert "### Документы" in guide
+    assert "жёлтая точка" in guide
+    assert "Скрепка слева" in guide
+    assert "/api/document-batches" in (WEB / "api.ts").read_text(encoding="utf-8")
+    docs = (WEB / "documents.ts").read_text(encoding="utf-8")
+    assert "documentIndicator(" in docs
+    assert "documentQueueSummary(" in docs
+    assert "neo4j-assistant.document-seen" in docs

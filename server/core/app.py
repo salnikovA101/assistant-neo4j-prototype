@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qs, quote
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -38,6 +38,14 @@ from server.core.app_store import (
     ConversationRunMismatchError,
 )
 from server.core.card_schema import blank_card, validate_card_data, validate_template_schema
+from server.core.document_ingest import (
+    MAX_FILE_BYTES,
+    MAX_FILES,
+    DocumentIngestError,
+    IngestFile,
+    build_document_ingest_client,
+    read_pdf_upload,
+)
 from server.core.http_api import (
     CORS_ORIGIN_RE,
     GraphExploreBody,
@@ -827,6 +835,7 @@ async def lifespan(app: FastAPI):
 
     account_count = await app_store.active_user_count()
     logger.info("SQLite accounts ready: active_users=%s db=%s", account_count, config.app_db_path)
+    app.state.document_ingest = build_document_ingest_client(config.document_ingest_url)
 
     pipeline: ServerPipeline | None = None
     pipeline_started = False
@@ -858,6 +867,12 @@ async def _feature_flag_middleware(request: Request, call_next):
     )
     if is_cards_path and pipeline is not None and not pipeline.config.cards_enabled:
         return JSONResponse({"detail": "Cards are disabled"}, status_code=404)
+    if (
+        path.startswith("/api/document-batches")
+        and pipeline is not None
+        and not pipeline.config.document_ingest_enabled
+    ):
+        return JSONResponse({"detail": "Document ingest is disabled"}, status_code=404)
     return await call_next(request)
 
 
@@ -2401,6 +2416,10 @@ def build_ui_config(pipeline: ServerPipeline) -> dict:
         "audio_enabled": bool(pipeline.config.audio_enabled),
         "staged_enabled": bool(pipeline.config.staged_enabled),
         "cards_enabled": bool(pipeline.config.cards_enabled),
+        "document_ingest_enabled": bool(pipeline.config.document_ingest_enabled),
+        "document_ingest_ready": bool(str(pipeline.config.document_ingest_url or "").strip()),
+        "document_ingest_max_files": MAX_FILES,
+        "document_ingest_max_file_bytes": MAX_FILE_BYTES,
         "current_profile": default_name,
         "llm_key_configured": key_configured,
         "username": "",
@@ -2424,6 +2443,101 @@ async def ui_config(request: Request):
 async def account_me(request: Request):
     user = _current_user(request)
     return {"id": user.id, "username": user.username, "workspace": user.workspace}
+
+
+def _document_ingest_client(request: Request):
+    client = getattr(request.app.state, "document_ingest", None)
+    if client is None:
+        return build_document_ingest_client("")
+    return client
+
+
+@app.post("/api/document-batches")
+async def document_batches_create(
+    request: Request,
+    files: list[UploadFile] = File(...),
+):
+    user = _current_user(request)
+    if not files:
+        raise HTTPException(status_code=400, detail="Нужно выбрать хотя бы один PDF")
+    if len(files) > MAX_FILES:
+        raise HTTPException(status_code=400, detail=f"Можно отправить не больше {MAX_FILES} файлов за раз")
+    client = _document_ingest_client(request)
+    keep_content = bool(getattr(client, "requires_content", False))
+    parsed: list[tuple[IngestFile, bytes | None]] = []
+    try:
+        for upload in files:
+            parsed.append(await read_pdf_upload(upload, keep_content=keep_content))
+    except DocumentIngestError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        ack = await client.ingest_batch(parsed)
+    except DocumentIngestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    store: AppStore = request.app.state.app_store
+    items = []
+    for index, (meta, _content) in enumerate(parsed):
+        match = ack.items[index] if index < len(ack.items) else None
+        items.append(
+            {
+                "filename": meta.filename,
+                "size": meta.size,
+                "content_type": meta.content_type,
+                "status": match.status if match else ack.status,
+                "eta_seconds": match.eta_seconds if match else ack.eta_seconds,
+                "error": match.error if match else None,
+            }
+        )
+    payload = await store.create_document_batch(
+        user.id,
+        user.workspace,
+        status=ack.status,
+        eta_seconds=ack.eta_seconds,
+        message=ack.message,
+        items=items,
+    )
+    return JSONResponse(payload, status_code=202)
+
+
+@app.get("/api/document-batches")
+async def document_batches_list(request: Request):
+    user = _current_user(request)
+    store: AppStore = request.app.state.app_store
+    return {"items": await store.list_document_batches(user.id, user.workspace)}
+
+
+@app.get("/api/document-batches/{batch_id}")
+async def document_batches_get(request: Request, batch_id: str):
+    user = _current_user(request)
+    store: AppStore = request.app.state.app_store
+    try:
+        return await store.get_document_batch(user.id, user.workspace, batch_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Загрузка не найдена") from exc
+
+
+@app.delete("/api/document-batches/{batch_id}")
+async def document_batches_delete(request: Request, batch_id: str):
+    user = _current_user(request)
+    store: AppStore = request.app.state.app_store
+    try:
+        await store.delete_document_batch(user.id, user.workspace, batch_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Загрузка не найдена") from exc
+    return {"status": "deleted"}
+
+
+@app.delete("/api/document-batches/{batch_id}/items/{item_id}")
+async def document_batch_item_delete(request: Request, batch_id: str, item_id: str):
+    user = _current_user(request)
+    store: AppStore = request.app.state.app_store
+    try:
+        payload = await store.delete_document_batch_item(
+            user.id, user.workspace, batch_id, item_id
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Файл не найден") from exc
+    return {"status": "deleted", "batch": payload}
 
 
 @app.get("/api/service-guide")

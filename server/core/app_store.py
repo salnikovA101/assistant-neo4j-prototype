@@ -437,6 +437,35 @@ CREATE TABLE IF NOT EXISTS llm_model_bans (
     PRIMARY KEY(key_fp, profile_id)
 );
 CREATE INDEX IF NOT EXISTS idx_llm_model_bans_key ON llm_model_bans(key_fp);
+
+CREATE TABLE IF NOT EXISTS document_batches (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workspace TEXT NOT NULL,
+    status TEXT NOT NULL,
+    eta_seconds INTEGER,
+    message TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_document_batches_user
+    ON document_batches(user_id, workspace, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS document_batch_items (
+    id TEXT PRIMARY KEY,
+    batch_id TEXT NOT NULL REFERENCES document_batches(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    content_type TEXT NOT NULL DEFAULT 'application/pdf',
+    status TEXT NOT NULL,
+    eta_seconds INTEGER,
+    error TEXT,
+    position INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_document_batch_items_batch
+    ON document_batch_items(batch_id, position);
 """
 
 
@@ -4279,6 +4308,181 @@ class AppStore:
             except Exception:
                 await self._conn().rollback()
                 raise
+
+    def _document_item_payload(self, row: aiosqlite.Row) -> dict[str, Any]:
+        error = row["error"]
+        return {
+            "id": str(row["id"]),
+            "filename": str(row["filename"]),
+            "size": int(row["size"]),
+            "contentType": str(row["content_type"]),
+            "status": str(row["status"]),
+            "etaSeconds": int(row["eta_seconds"]) if row["eta_seconds"] is not None else None,
+            "error": str(error) if error not in (None, "") else None,
+            "createdAt": int(row["created_at"]),
+            "updatedAt": int(row["updated_at"]),
+        }
+
+    def _document_batch_payload(
+        self, row: aiosqlite.Row, items: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        message = row["message"]
+        return {
+            "id": str(row["id"]),
+            "status": str(row["status"]),
+            "etaSeconds": int(row["eta_seconds"]) if row["eta_seconds"] is not None else None,
+            "message": str(message) if message not in (None, "") else None,
+            "createdAt": int(row["created_at"]),
+            "updatedAt": int(row["updated_at"]),
+            "items": items,
+        }
+
+    async def _document_batch_for(
+        self, user_id: str, workspace: str, batch_id: str
+    ) -> dict[str, Any] | None:
+        row = await (await self._conn().execute(
+            """SELECT id,status,eta_seconds,message,created_at,updated_at
+               FROM document_batches WHERE id=? AND user_id=? AND workspace=?""",
+            (batch_id, user_id, workspace),
+        )).fetchone()
+        if row is None:
+            return None
+        item_rows = await (await self._conn().execute(
+            """SELECT id,filename,size,content_type,status,eta_seconds,error,
+                      created_at,updated_at
+               FROM document_batch_items WHERE batch_id=? ORDER BY position, id""",
+            (batch_id,),
+        )).fetchall()
+        return self._document_batch_payload(
+            row, [self._document_item_payload(item) for item in item_rows]
+        )
+
+    async def create_document_batch(
+        self,
+        user_id: str,
+        workspace: str,
+        *,
+        status: str,
+        eta_seconds: int | None,
+        message: str | None,
+        items: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        if not items:
+            raise ValueError("Нужно выбрать хотя бы один PDF")
+        batch_id, ts = str(uuid.uuid4()), now_ms()
+        workspace = normalize_workspace(workspace)
+        async with self._write_lock:
+            await self._conn().execute("BEGIN IMMEDIATE")
+            try:
+                await self._conn().execute(
+                    """INSERT INTO document_batches
+                       (id,user_id,workspace,status,eta_seconds,message,created_at,updated_at)
+                       VALUES(?,?,?,?,?,?,?,?)""",
+                    (batch_id, user_id, workspace, status, eta_seconds, message, ts, ts),
+                )
+                for position, item in enumerate(items):
+                    await self._conn().execute(
+                        """INSERT INTO document_batch_items
+                           (id,batch_id,filename,size,content_type,status,eta_seconds,error,
+                            position,created_at,updated_at)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            str(uuid.uuid4()),
+                            batch_id,
+                            str(item["filename"]),
+                            int(item["size"]),
+                            str(item.get("content_type") or "application/pdf"),
+                            str(item["status"]),
+                            item.get("eta_seconds"),
+                            item.get("error"),
+                            position,
+                            ts,
+                            ts,
+                        ),
+                    )
+                await self._conn().commit()
+            except Exception:
+                await self._conn().rollback()
+                raise
+        payload = await self._document_batch_for(user_id, workspace, batch_id)
+        if payload is None:
+            raise RuntimeError("document batch disappeared after insert")
+        return payload
+
+    async def list_document_batches(self, user_id: str, workspace: str) -> list[dict[str, Any]]:
+        workspace = normalize_workspace(workspace)
+        rows = await (await self._conn().execute(
+            """SELECT id,status,eta_seconds,message,created_at,updated_at
+               FROM document_batches
+               WHERE user_id=? AND workspace=?
+               ORDER BY created_at DESC, id DESC""",
+            (user_id, workspace),
+        )).fetchall()
+        batches: list[dict[str, Any]] = []
+        for row in rows:
+            payload = await self._document_batch_for(user_id, workspace, str(row["id"]))
+            if payload is not None:
+                batches.append(payload)
+        return batches
+
+    async def get_document_batch(
+        self, user_id: str, workspace: str, batch_id: str
+    ) -> dict[str, Any]:
+        payload = await self._document_batch_for(
+            user_id, normalize_workspace(workspace), batch_id
+        )
+        if payload is None:
+            raise KeyError("document batch not found")
+        return payload
+
+    async def delete_document_batch(self, user_id: str, workspace: str, batch_id: str) -> None:
+        workspace = normalize_workspace(workspace)
+        async with self._write_lock:
+            cursor = await self._conn().execute(
+                "DELETE FROM document_batches WHERE id=? AND user_id=? AND workspace=?",
+                (batch_id, user_id, workspace),
+            )
+            await self._conn().commit()
+        if cursor.rowcount == 0:
+            raise KeyError("document batch not found")
+
+    async def delete_document_batch_item(
+        self, user_id: str, workspace: str, batch_id: str, item_id: str
+    ) -> dict[str, Any] | None:
+        workspace = normalize_workspace(workspace)
+        existing = await self._document_batch_for(user_id, workspace, batch_id)
+        if existing is None:
+            raise KeyError("document batch not found")
+        async with self._write_lock:
+            await self._conn().execute("BEGIN IMMEDIATE")
+            try:
+                cursor = await self._conn().execute(
+                    """DELETE FROM document_batch_items
+                       WHERE id=? AND batch_id=?""",
+                    (item_id, batch_id),
+                )
+                if cursor.rowcount == 0:
+                    raise KeyError("document not found")
+                leftover = await (await self._conn().execute(
+                    "SELECT COUNT(*) AS n FROM document_batch_items WHERE batch_id=?",
+                    (batch_id,),
+                )).fetchone()
+                if leftover is not None and int(leftover["n"]) == 0:
+                    await self._conn().execute(
+                        "DELETE FROM document_batches WHERE id=? AND user_id=? AND workspace=?",
+                        (batch_id, user_id, workspace),
+                    )
+                    await self._conn().commit()
+                    return None
+                await self._conn().execute(
+                    "UPDATE document_batches SET updated_at=? WHERE id=?",
+                    (now_ms(), batch_id),
+                )
+                await self._conn().commit()
+            except Exception:
+                await self._conn().rollback()
+                raise
+        return await self._document_batch_for(user_id, workspace, batch_id)
 
     async def update_assistant_waiting(
         self,

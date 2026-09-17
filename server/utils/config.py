@@ -155,6 +155,8 @@ class AppConfig(BaseSettings):
     rerank_enabled: bool = True
     staged_enabled: bool = True
     cards_enabled: bool = True
+    document_ingest_enabled: bool = True
+    document_ingest_url: str = ""
     # Account database and browser-session policy.
     app_db_path: str = "data/assistant.db"
     auth_cookie_secure: bool = False
@@ -243,6 +245,8 @@ _YAML_TOP_LEVEL_KEYS = {
     "rerank_enabled",
     "staged_enabled",
     "cards_enabled",
+    "document_ingest_enabled",
+    "document_ingest_url",
     "app_db_path",
     "auth_cookie_secure",
     "auth_session_days",

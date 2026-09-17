@@ -9,6 +9,7 @@ import type {
   ChatMessage,
   ConversationDetail,
   ConversationSummary,
+  DocumentBatch,
   GraphFacets,
   GraphFilters,
   GraphPayload,
@@ -66,6 +67,10 @@ export function bindAccount(id: string): void {
     sessionStorage.removeItem(LLM_KEY_QWEN);
   }
   sessionStorage.setItem(ACCOUNT_KEY, id);
+}
+
+export function getAccountId(): string {
+  return sessionStorage.getItem(ACCOUNT_KEY) || "";
 }
 
 export function getLlmKey(_profile = ""): string {
@@ -560,6 +565,41 @@ export async function insertCardMessage(
     }),
     "Не удалось вставить карточку в диалог"
   );
+}
+
+export async function fetchDocumentBatches(): Promise<DocumentBatch[]> {
+  const payload = await json<{ items: DocumentBatch[] }>(
+    await apiFetch("/api/document-batches"),
+    "Не удалось загрузить список документов"
+  );
+  return payload.items || [];
+}
+
+export async function createDocumentBatch(files: File[]): Promise<DocumentBatch> {
+  const body = new FormData();
+  for (const file of files) body.append("files", file, file.name);
+  return json(
+    await apiFetch("/api/document-batches", { method: "POST", body }),
+    "Не удалось отправить документы"
+  );
+}
+
+export async function deleteDocumentBatch(batchId: string): Promise<void> {
+  await json(
+    await apiFetch(`/api/document-batches/${encodeURIComponent(batchId)}`, { method: "DELETE" }),
+    "Не удалось удалить загрузку"
+  );
+}
+
+export async function deleteDocumentBatchItem(batchId: string, itemId: string): Promise<DocumentBatch | null> {
+  const payload = await json<{ status: string; batch: DocumentBatch | null }>(
+    await apiFetch(
+      `/api/document-batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}`,
+      { method: "DELETE" }
+    ),
+    "Не удалось удалить файл"
+  );
+  return payload.batch;
 }
 
 export function streamBody(
