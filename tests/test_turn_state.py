@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from server.core.turn_state import (
+    ADVANCE_RESEARCH_TOOL,
     ASK_SUBGRAPH_TOOL,
     BOTH_EXHAUSTED_PHRASE,
     QUERY_GRAPH_TOOL,
@@ -222,6 +223,28 @@ def test_tool_quota_footer_nudge_and_both_exhausted():
         assert "ask_subgraph 2/2 exhausted" in both
         assert "query_graph 8/8 exhausted" in both
         assert BOTH_EXHAUSTED_PHRASE in both
+
+
+def test_staged_quota_footer_uses_advance_research_name():
+    with bind_turn(
+        "medium",
+        max_searches=1,
+        max_query=4,
+        context={"mode": "staged"},
+    ):
+        assert take_tool_slot(ADVANCE_RESEARCH_TOOL)
+        used = tool_quota_footer(ADVANCE_RESEARCH_TOOL)
+        assert "advance_research 1/1 exhausted for this tool" in used
+        assert "query_graph 0/4 remaining" in used
+        assert "ask_subgraph" not in used
+        assert BOTH_EXHAUSTED_PHRASE not in used
+        for _ in range(4):
+            assert take_tool_slot(QUERY_GRAPH_TOOL)
+        both = tool_quota_footer(QUERY_GRAPH_TOOL)
+        assert "advance_research 1/1 exhausted" in both
+        assert "query_graph 4/4 exhausted" in both
+        assert BOTH_EXHAUSTED_PHRASE in both
+        assert "ask_subgraph" not in both
 
 
 @pytest.mark.asyncio

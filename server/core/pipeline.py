@@ -15,7 +15,7 @@ from server.core.graph_runs import (
     reset_graph_collector,
 )
 from server.core.sessions import bind_conversation, session_store
-from server.core.turn_state import bind_turn
+from server.core.turn_state import STAGED_MAX_ASK, STAGED_MAX_QUERY, bind_turn
 
 logger = logging.getLogger(__name__)
 
@@ -284,7 +284,8 @@ class ServerPipeline:
                 search_context["searches_used"] = 0
                 with bind_turn(
                     search_depth,
-                    max_searches=1,
+                    max_searches=STAGED_MAX_ASK,
+                    max_query=STAGED_MAX_QUERY,
                     context=search_context,
                 ) as retrieval_turn:
                     evidence = await self.llm.tools.subgraph_search.query(

@@ -22,10 +22,14 @@ DEFAULT_SEARCH_DEPTH = "medium"
 DEFAULT_MAX_ASK = 2
 DEFAULT_MAX_SEARCHES = DEFAULT_MAX_ASK
 DEFAULT_MAX_QUERY = 8
+STAGED_MAX_ASK = 1
+STAGED_MAX_QUERY = 4
 
 ASK_SUBGRAPH_TOOL = "ask_subgraph"
+ADVANCE_RESEARCH_TOOL = "advance_research"
 QUERY_GRAPH_TOOL = "query_graph"
-QUOTA_TOOLS: frozenset[str] = frozenset({ASK_SUBGRAPH_TOOL, QUERY_GRAPH_TOOL})
+SEMANTIC_TOOLS: frozenset[str] = frozenset({ASK_SUBGRAPH_TOOL, ADVANCE_RESEARCH_TOOL})
+QUOTA_TOOLS: frozenset[str] = frozenset({*SEMANTIC_TOOLS, QUERY_GRAPH_TOOL})
 BOTH_EXHAUSTED_PHRASE = "Tools are exhausted, answer now."
 
 _WS_RE = re.compile(r"\s+")
@@ -85,8 +89,23 @@ def search_depth() -> str:
 
 
 def searches_state() -> tuple[int, int]:
-    """(used, max) ask_subgraph slots for this turn; (0, default) outside a bound turn."""
-    return tool_quota_state(ASK_SUBGRAPH_TOOL)
+    """(used, max) semantic-search slots for this turn; (0, default) outside a bound turn."""
+    return tool_quota_state(semantic_tool_name())
+
+
+def semantic_tool_name(turn: TurnState | None = None) -> str:
+    """Mode-facing name of the semantic search tool for footers and schemas."""
+    bound = turn if turn is not None else _current_turn.get()
+    if bound is not None and bound.mode == "staged":
+        return ADVANCE_RESEARCH_TOOL
+    return ASK_SUBGRAPH_TOOL
+
+
+def display_quota_name(name: str) -> str:
+    """Map a quota tool to the name the model should see in this turn."""
+    if name in SEMANTIC_TOOLS:
+        return semantic_tool_name()
+    return name
 
 
 def tool_quota_state(name: str) -> tuple[int, int]:
@@ -95,6 +114,8 @@ def tool_quota_state(name: str) -> tuple[int, int]:
     if turn is None:
         if name == QUERY_GRAPH_TOOL:
             return 0, DEFAULT_MAX_QUERY
+        if name == ADVANCE_RESEARCH_TOOL:
+            return 0, STAGED_MAX_ASK
         return 0, DEFAULT_MAX_SEARCHES
     pair = _quota_pair(turn, name)
     if pair is None:
@@ -103,7 +124,7 @@ def tool_quota_state(name: str) -> tuple[int, int]:
 
 
 def _quota_pair(turn: TurnState, name: str) -> tuple[int, int] | None:
-    if name == ASK_SUBGRAPH_TOOL:
+    if name in SEMANTIC_TOOLS:
         return turn.searches_used, turn.max_searches
     if name == QUERY_GRAPH_TOOL:
         return turn.query_used, turn.max_query
@@ -127,7 +148,7 @@ def take_tool_slot(name: str) -> bool:
     turn = _current_turn.get()
     if turn is None:
         return False
-    if name == ASK_SUBGRAPH_TOOL:
+    if name in SEMANTIC_TOOLS:
         if turn.searches_used >= turn.max_searches:
             return False
         turn.searches_used += 1
@@ -141,12 +162,12 @@ def take_tool_slot(name: str) -> bool:
 
 
 def take_search_slot() -> bool:
-    """Spend one ask_subgraph slot. False → budget exhausted, do not search."""
-    return take_tool_slot(ASK_SUBGRAPH_TOOL)
+    """Spend one semantic-search slot. False → budget exhausted, do not search."""
+    return take_tool_slot(semantic_tool_name())
 
 
 def quotas_exhausted() -> bool:
-    """True when both ask_subgraph and query_graph slots are spent."""
+    """True when both semantic-search and query_graph slots are spent."""
     turn = _current_turn.get()
     if turn is None:
         return False
@@ -163,12 +184,14 @@ def is_quota_error_result(text: str) -> bool:
 
 def tool_quota_footer(name: str) -> str:
     """n/X notice for the called tool plus the other search tool's remaining."""
-    ask_used, ask_max = tool_quota_state(ASK_SUBGRAPH_TOOL)
+    semantic = semantic_tool_name()
+    called = display_quota_name(name)
+    ask_used, ask_max = tool_quota_state(semantic)
     query_used, query_max = tool_quota_state(QUERY_GRAPH_TOOL)
     both_done = ask_used >= ask_max and query_used >= query_max
     parts = [
-        _quota_part(ASK_SUBGRAPH_TOOL, ask_used, ask_max, name, both_done),
-        _quota_part(QUERY_GRAPH_TOOL, query_used, query_max, name, both_done),
+        _quota_part(semantic, ask_used, ask_max, called, both_done),
+        _quota_part(QUERY_GRAPH_TOOL, query_used, query_max, called, both_done),
     ]
     text = " ".join(parts)
     if both_done:
@@ -211,12 +234,13 @@ def finalize_tool_result(name: str, result: str, *, success: bool) -> str:
 
 def tool_limit_message(name: str) -> str:
     """Refusal when this tool's successful-call quota is already spent."""
-    used, limit = tool_quota_state(name)
+    display = display_quota_name(name)
+    used, limit = tool_quota_state(display)
     other = (
-        QUERY_GRAPH_TOOL if name == ASK_SUBGRAPH_TOOL else ASK_SUBGRAPH_TOOL
+        QUERY_GRAPH_TOOL if display in SEMANTIC_TOOLS else semantic_tool_name()
     )
     other_used, other_limit = tool_quota_state(other)
-    head = f"TOOL_ERROR: {name} limit for this answer is spent ({used}/{limit})."
+    head = f"TOOL_ERROR: {display} limit for this answer is spent ({used}/{limit})."
     if quotas_exhausted():
         body = f"{head} {BOTH_EXHAUSTED_PHRASE}"
     else:

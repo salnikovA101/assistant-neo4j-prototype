@@ -12,7 +12,14 @@ from server.core.sq_status import (
     parse_sq_status_response,
     resolve_active_sq_refs,
 )
-from server.core.turn_state import DEFAULT_MAX_QUERY, DEFAULT_MAX_SEARCHES, bind_turn, searches_state
+from server.core.turn_state import (
+    DEFAULT_MAX_QUERY,
+    DEFAULT_MAX_SEARCHES,
+    STAGED_MAX_ASK,
+    STAGED_MAX_QUERY,
+    bind_turn,
+    searches_state,
+)
 from server.llm.base import BaseLLMProvider, public_llm_error_message
 from server.llm.model_router import (
     AUTH,
@@ -238,11 +245,14 @@ class LLMManager:
             logger.debug(history)
             effort = None if rotate else think_effort
             request_key = api_key if is_cloud_profile(self.config, candidate) else None
-            max_tool_turns = (
-                self.config.auto_max_tool_turns if mode == "auto"
-                else max(1, int(provider.profile.max_turns))
-            )
-            max_searches = 1 if mode == "staged" else DEFAULT_MAX_SEARCHES
+            if mode == "auto":
+                max_tool_turns = self.config.auto_max_tool_turns
+            elif mode == "staged":
+                max_tool_turns = self.config.staged_max_tool_turns
+            else:
+                max_tool_turns = max(1, int(provider.profile.max_turns))
+            max_searches = STAGED_MAX_ASK if mode == "staged" else DEFAULT_MAX_SEARCHES
+            max_query = STAGED_MAX_QUERY if mode == "staged" else DEFAULT_MAX_QUERY
             yielded_output = False
             announced = False
             retry_next = False
@@ -250,7 +260,7 @@ class LLMManager:
                 with bind_turn(
                     search_depth,
                     max_searches=max_searches,
-                    max_query=DEFAULT_MAX_QUERY,
+                    max_query=max_query,
                     context=turn_context,
                 ) as turn_state:
                     sq_stream_filter = SqStatusStreamFilter(mode == "staged")

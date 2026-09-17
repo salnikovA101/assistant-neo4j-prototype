@@ -10,13 +10,13 @@ from server.core.db import get_driver
 from server.core.graph_runs import chain_unit_index, record_accepted_chains
 from server.core.sessions import current_sources
 from server.core.turn_state import (
-    ASK_SUBGRAPH_TOOL,
     current_turn,
     finalize_tool_result,
     has_tool_slot,
     remember_subquestions,
     search_depth,
     seen_subquestions,
+    semantic_tool_name,
     subquestion_key,
     tool_limit_message,
 )
@@ -144,7 +144,7 @@ class SubgraphSearchAgent:
     Runs the graph retrieval pipeline and returns accepted evidence chains.
 
     Decomposition is the assistant's job; search depth comes from the UI and the
-    per-turn ask_subgraph quota is enforced here, not asked of the model.
+    per-turn semantic-search quota is enforced here, not asked of the model.
     """
 
     def __init__(self, source_registry: SourceRegistry | None = None):
@@ -155,6 +155,7 @@ class SubgraphSearchAgent:
         """Validate subquestions, run the pipeline, spend a slot only on success."""
         sqs, problems = normalize_subquestions(subquestions, seen_subquestions())
         depth = search_depth()
+        tool_name = semantic_tool_name()
 
         if not sqs:
             err = (
@@ -164,11 +165,11 @@ class SubgraphSearchAgent:
             )
             if problems:
                 err = f"{err} Rejected: {'; '.join(problems)}."
-            logger.warning("ask_subgraph rejected input: %s", problems)
-            return finalize_tool_result(ASK_SUBGRAPH_TOOL, err, success=False)
+            logger.warning("%s rejected input: %s", tool_name, problems)
+            return finalize_tool_result(tool_name, err, success=False)
 
-        if not has_tool_slot(ASK_SUBGRAPH_TOOL):
-            return tool_limit_message(ASK_SUBGRAPH_TOOL)
+        if not has_tool_slot(tool_name):
+            return tool_limit_message(tool_name)
 
         try:
             from server.algorithm.params import merge_params
@@ -181,7 +182,7 @@ class SubgraphSearchAgent:
             effective_run_id = ((turn.run_id if turn is not None else "") or "").strip()
             if not effective_run_id:
                 return finalize_tool_result(
-                    ASK_SUBGRAPH_TOOL,
+                    tool_name,
                     f"{TOOL_ERROR}: run_id is required for corpus search",
                     success=False,
                 )
@@ -229,7 +230,7 @@ class SubgraphSearchAgent:
                 if not payload:
                     remember_subquestions(sqs)
                     return finalize_tool_result(
-                        ASK_SUBGRAPH_TOOL,
+                        tool_name,
                         f"{NO_RESULTS}: all selected subquestions are closed or deferred in the current research-question list.",
                         success=True,
                     )
@@ -353,16 +354,16 @@ class SubgraphSearchAgent:
                 detail = result.get("error_detail")
                 if detail:
                     err_msg = f"{err_msg}: {detail}"
-                return finalize_tool_result(ASK_SUBGRAPH_TOOL, err_msg, success=False)
+                return finalize_tool_result(tool_name, err_msg, success=False)
             remember_subquestions(sqs)
             accepted = record_accepted_chains(result.get("accepted") or [])
             registry = current_sources() or self.source_registry
             res_str = _format_accepted_chains(accepted, registry)
             if problems:
                 res_str = f"{res_str}\n\n[Input note: {'; '.join(problems)}.]"
-            return finalize_tool_result(ASK_SUBGRAPH_TOOL, res_str, success=True)
+            return finalize_tool_result(tool_name, res_str, success=True)
         except Exception as e:
             logger.exception("SubgraphSearchAgent failed")
             return finalize_tool_result(
-                ASK_SUBGRAPH_TOOL, f"{TOOL_ERROR}: {e}", success=False
+                tool_name, f"{TOOL_ERROR}: {e}", success=False
             )

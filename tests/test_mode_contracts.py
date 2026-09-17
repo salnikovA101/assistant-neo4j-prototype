@@ -144,6 +144,17 @@ def test_mode_tools_have_distinct_contracts_and_five_sq_limit():
     assert staged["name"] == "advance_research"
     assert "required" not in staged["parameters"]
     assert "Empty research-question list" in staged["description"]
+    assert "1 successful advance_research" in staged["description"]
+    assert "query_graph" in staged["description"]
+    assert "ask_subgraph" not in staged["description"]
+    assert "compound object" in staged["description"]
+    assert "ready-made formulation" in staged["description"]
+    assert "verification axis" in staged["description"]
+    assert "strawberry" not in staged["description"].lower()
+    assert "GAPS" not in staged["description"]
+    assert "compound object" in auto["description"]
+    assert "First call:" in auto["description"]
+    assert "Second call:" in auto["description"]
     refs = staged["parameters"]["properties"]["open_sq_refs"]
     assert refs["maxItems"] == 5
     assert refs["items"]["pattern"] == "^subquestion:[1-9][0-9]*$"
@@ -171,9 +182,13 @@ def test_model_contract_uses_research_questions_and_evidence_language():
     assert "Ты отвечаешь по данным пользователя и базы знаний Neo4j" in staged_prompt
     assert "считай источником предоставленной пользователем информации" in prompt_text
     assert "если пользователь не просит проверить" in (prompt_root / "assistant_logic.md").read_text(encoding="utf-8")
-    assert "если пользователь не просит их проверить" in staged_prompt
+    assert "если пользователь не просит проверить" in staged_prompt
     assert "research-question list" in staged_tool["description"]
     assert "agenda" not in staged_tool["description"].lower()
+    auto_map = set(Tools(AppConfig()).get_tool_map("auto"))
+    staged_map = set(Tools(AppConfig()).get_tool_map("staged"))
+    assert "advance_research" not in auto_map
+    assert "ask_subgraph" not in staged_map
     assert "evidence text" in formatted
     assert "verbatim quote" not in formatted
 

@@ -118,7 +118,7 @@ def _check_tool_usage(case: dict[str, Any], transcript: Transcript) -> list[str]
         failures.append(f"{len(searches)} вызовов поиска при лимите {limit}")
 
     query_calls = [tc for tc in transcript.tool_calls if tc.name == "query_graph"]
-    query_limit = int(case.get("max_query_calls", 0 if mode == "staged" else 8))
+    query_limit = int(case.get("max_query_calls", 4 if mode == "staged" else 8))
     if len(query_calls) > query_limit:
         failures.append(
             f"{len(query_calls)} вызовов query_graph при лимите {query_limit}"

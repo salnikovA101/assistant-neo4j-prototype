@@ -29,15 +29,7 @@ from server.tools.source_registry import SourceRegistry
 
 logger = logging.getLogger(__name__)
 
-QUERY_GRAPH_DESCRIPTION = """\
-query_graph: run one read-only Cypher query against the current Neo4j corpus.
-You write Cypher; the server injects corpus isolation (run_id) and returns
-markdown. Never pass run_id, URI, credentials, or timeouts.
-
-Use for mentions, counts, rankings, filters, neighbors, intersections, bounded
-paths, and checks of a named object. For open-ended “find materials about X”
-use ask_subgraph (semantic evidence search). You may alternate in one answer.
-
+QUERY_GRAPH_CYPHER_BODY = """\
 LIMIT in the Cypher is honored up to 100. If you omit LIMIT (and omit max_rows),
 the server applies 20. max_rows is the same cap when Cypher has no LIMIT.
 
@@ -62,7 +54,7 @@ ORDER BY score DESC LIMIT 20
 Do not invent index names. toLower(n.name) CONTAINS $q is only a fallback after
 fulltext NO_MATCHES, or when combining with type/confidence filters. Do not
 broaden to a generic token like 'potassium' before trying formula + fulltext.
-Vector SEARCH / evidence_embedding is ask_subgraph. Cyrillic in queries misses.
+__VECTOR_LINE__ Cyrillic in queries misses.
 
 Write ONE Neo4j read query: MATCH, OPTIONAL MATCH, WHERE, WITH, RETURN, DISTINCT,
 ORDER BY, SKIP, LIMIT, UNION, count/sum/avg/min/max, CASE, lists, UNWIND,
@@ -85,13 +77,53 @@ the database”. If you used CONTAINS, retry the fulltext templates (names, then
 evidence); do not broaden to potassium. QUERY_ERROR <code> — read the code
 (syntax / unsupported / scope / db / timeout) and fix the Cypher; do not
 restate the user question. QUERY_ERROR does not spend a call slot. Server limit:
-8 successful query_graph calls per answer (schema counts). Each result ends with
-n/8; if this tool is exhausted, use ask_subgraph if it still has slots. If both
+__LIMIT__ successful query_graph calls per answer (schema counts). Each result ends with
+n/__LIMIT__; if this tool is exhausted, use __SIBLING__ if it still has slots. If both
 limits are spent, the result says tools are exhausted — answer now. Sources in
 the tool markdown are already folded to (source:N); the user sees the same
 document names in their source list. Do not say the graph only stores file
 numbers.
 """
+
+
+def query_graph_description(mode: str = "auto") -> str:
+    staged = str(mode) == "staged"
+    sibling = "advance_research" if staged else "ask_subgraph"
+    limit = 4 if staged else 8
+    if staged:
+        use = (
+            "Use to clarify and close already open research-question directions: "
+            "mentions of a named object or formula, counts, filters, neighbors, "
+            "intersections, bounded paths, and checks of a find. Do not open new SQ "
+            "and do not replace the research-question list; that is advance_research. "
+            "Call after advance_research in the same answer, not in the same batch as new SQ. "
+            "If the compound object is missing from the first cut, search the product "
+            "and the named ingredient separately. Do not spend a slot repeating the "
+            "same edges with another Cypher (fulltext, then CONTAINS on the same names). "
+            "Next slot: longer evidence or neighbors of the found name, not a sibling "
+            "analog, until the asked object is checked."
+        )
+    else:
+        use = (
+            "Use for mentions, counts, rankings, filters, neighbors, intersections, bounded "
+            "paths, and checks of a named object. For open-ended “find materials about X” "
+            "use ask_subgraph (semantic evidence search). You may alternate in one answer."
+        )
+    body = (
+        QUERY_GRAPH_CYPHER_BODY
+        .replace("__VECTOR_LINE__", f"Vector SEARCH / evidence_embedding is {sibling}.")
+        .replace("__SIBLING__", sibling)
+        .replace("__LIMIT__", str(limit))
+    )
+    return (
+        "query_graph: run one read-only Cypher query against the current Neo4j corpus.\n"
+        "You write Cypher; the server injects corpus isolation (run_id) and returns\n"
+        "markdown. Never pass run_id, URI, credentials, or timeouts.\n"
+        f"\n{use}\n\n{body}"
+    )
+
+
+QUERY_GRAPH_DESCRIPTION = query_graph_description("auto")
 
 _SCHEMA_CYPHER_LABELS = """
 MATCH (n)-[r]-()
@@ -260,12 +292,12 @@ def _record_query_graph_chain(viz_rows: list[VizRow]) -> None:
     record_accepted_chains([chain])
 
 
-def query_graph_openai_schema() -> dict[str, Any]:
+def query_graph_openai_schema(mode: str = "auto") -> dict[str, Any]:
     return {
         "type": "function",
         "function": {
             "name": "query_graph",
-            "description": QUERY_GRAPH_DESCRIPTION,
+            "description": query_graph_description(mode),
             "parameters": {
                 "type": "object",
                 "properties": {

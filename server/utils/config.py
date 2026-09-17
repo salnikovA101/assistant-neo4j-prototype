@@ -75,8 +75,9 @@ class LlmProfiles(BaseModel):
 
 class LlmConfig(BaseModel):
     current_profile: str = "other"
-    # Autonomous answer mode only; staged/card flows keep their own budgets.
+    # Tool-loop budgets by chat mode; card generation uses its own path.
     auto_max_tool_turns: int = Field(default=12, ge=1)
+    staged_max_tool_turns: int = Field(default=8, ge=1)
     # Nested LLM for mock_decompose / tools that need a second profile
     tool_profile: str = "other"
     # Profiles shown in the UI picker. Empty → [current_profile].

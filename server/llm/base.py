@@ -408,6 +408,35 @@ def _tool_budget_footer(turn: int, max_turns: int) -> str:
     )
 
 
+def _advance_research_has_new_sq(name: str, arguments: str) -> bool:
+    """True when staged approval must fire before sibling tools run."""
+    if name != "advance_research":
+        return False
+    try:
+        args = json.loads(arguments) if arguments else {}
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(args, dict):
+        return False
+    raw = args.get("new_subquestions")
+    if not isinstance(raw, list):
+        return False
+    return any(str(item).strip() for item in raw)
+
+
+def _prioritize_staged_approval_calls(tool_calls: Sequence[Any]) -> list[Any]:
+    """Run advance_research with new SQ first so approval can pause the batch."""
+    first = [
+        call
+        for call in tool_calls
+        if _advance_research_has_new_sq(getattr(call, "name", ""), getattr(call, "arguments", "") or "")
+    ]
+    if not first:
+        return list(tool_calls)
+    rest = [call for call in tool_calls if call not in first]
+    return first + rest
+
+
 def _assistant_message_dict(message: Any, profile: OpenAIProfile | None = None) -> Dict[str, Any]:
     """
     Replay assistant turn into the next request, preserving reasoning fields.
@@ -579,7 +608,7 @@ class BaseLLMProvider(ABC):
 
                 self._log_stream_usage(label, usage_holder, reasoning_parts)
 
-                tool_calls = assembler.finish()
+                tool_calls = _prioritize_staged_approval_calls(assembler.finish())
                 if not tool_calls:
                     text = strip_leaked_cot_preamble("".join(final_content_parts))
                     if not text:
@@ -681,6 +710,12 @@ class BaseLLMProvider(ABC):
                             "_assistant_replay": messages[-1],
                         },
                     )
+
+                    if not parse_error and _advance_research_has_new_sq(
+                        tc.name, tc.arguments
+                    ):
+                        # HTTP layer pauses for Accept; do not run this or later tools.
+                        return
 
                     fn = tool_map.get(tc.name) if tool_map else None
                     ok = True

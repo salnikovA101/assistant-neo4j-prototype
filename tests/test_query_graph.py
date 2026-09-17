@@ -15,7 +15,11 @@ from server.algorithm.cypher.query_format import (
     history_stub,
 )
 from server.core.turn_state import bind_turn
-from server.tools.query_graph import QUERY_GRAPH_DESCRIPTION, QueryGraphTool
+from server.tools.query_graph import (
+    QUERY_GRAPH_DESCRIPTION,
+    QueryGraphTool,
+    query_graph_description,
+)
 from server.tools.registry import Tools
 from server.tools.source_registry import SourceRegistry, tool_history_stub
 from server.utils.config import AppConfig
@@ -552,22 +556,38 @@ def test_history_stub_keeps_aggregates_not_generic_retrieved():
     assert err_stub.startswith("Tool error:")
 
 
-def test_tool_advertised_only_in_auto():
+def test_tool_contracts_keep_mode_names_separate():
     tools = Tools(AppConfig())
     auto_names = [item["function"]["name"] for item in tools.get_openai_tools("auto")]
     staged_names = [item["function"]["name"] for item in tools.get_openai_tools("staged")]
     assert auto_names == ["ask_subgraph", "query_graph", "get_service_guide"]
-    assert staged_names == ["advance_research", "get_service_guide"]
+    assert staged_names == ["advance_research", "query_graph", "get_service_guide"]
     assert set(tools.get_tool_map("auto")) == {
         "ask_subgraph",
         "query_graph",
         "get_service_guide",
     }
+    assert set(tools.get_tool_map("staged")) == {
+        "advance_research",
+        "query_graph",
+        "get_service_guide",
+    }
+    assert "advance_research" not in tools.get_tool_map("auto")
+    assert "ask_subgraph" not in tools.get_tool_map("staged")
     desc = tools.get_openai_tools("auto")[1]["function"]["description"]
     assert "Neo4j" in desc
     assert "Cypher" in desc
     assert "ask_subgraph" in desc
+    assert "advance_research" not in desc
     assert 1500 < len(desc) < 4500
+    staged_query = tools.get_openai_tools("staged")[1]["function"]["description"]
+    assert "advance_research" in staged_query
+    assert "ask_subgraph" not in staged_query
+    assert "4 successful" in staged_query
+    assert "8 successful" not in staged_query
+    assert "research-question" in staged_query
+    assert "compound object" in staged_query
+    assert "same edges" in staged_query
 
 
 @pytest.mark.asyncio
@@ -618,6 +638,12 @@ def test_description_matches_prompt_topics():
     assert "QUERY_ERROR" in QUERY_GRAPH_DESCRIPTION
     assert "run_ids" in QUERY_GRAPH_DESCRIPTION
     assert "8 successful" in QUERY_GRAPH_DESCRIPTION
+    staged_desc = query_graph_description("staged")
+    assert "4 successful" in staged_desc
+    assert "advance_research" in staged_desc
+    assert "ask_subgraph" not in staged_desc
+    assert "__LIMIT__" not in staged_desc
+    assert "__SIBLING__" not in QUERY_GRAPH_DESCRIPTION
     assert "stored once, directed" in QUERY_GRAPH_DESCRIPTION
     assert "count(DISTINCT r)" in QUERY_GRAPH_DESCRIPTION
     assert "visits each edge twice" in QUERY_GRAPH_DESCRIPTION
@@ -638,6 +664,13 @@ def test_description_matches_prompt_topics():
     assert "queryRelationships($__ft_rels, $q)" not in prompt
     assert "CALL db.index.fulltext" not in prompt
     assert "(a)-[r]->(b)" not in prompt
+    staged_prompt = (Path("prompts/assistant_staged.md")).read_text(encoding="utf-8")
+    assert "query_graph" in staged_prompt
+    assert "advance_research" in staged_prompt
+    assert "ask_subgraph" not in staged_prompt
+    assert "не больше 1 успешного `advance_research`" in staged_prompt
+    assert "4 успешных `query_graph`" in staged_prompt
+    assert "CALL db.index.fulltext" not in staged_prompt
 
 
 def test_schema_cypher_is_current_corpus_only():

@@ -47,6 +47,7 @@ tts:
 # Embeddings: local Ollama embeddinggemma:300m-qat-q8_0 (EMBED__* in .env, not yaml).
 llm:
   auto_max_tool_turns: 12
+  staged_max_tool_turns: 8
   current_profile: "auto"
   tool_profile: "ollama"
   fallback_profile: "ollama"

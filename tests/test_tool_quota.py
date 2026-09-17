@@ -7,6 +7,7 @@ import pytest
 from server.algorithm.cypher.query_execute import ExecutedQuery
 from server.algorithm.cypher.query_materialize import VizRow
 from server.core.turn_state import (
+    ADVANCE_RESEARCH_TOOL,
     ASK_SUBGRAPH_TOOL,
     BOTH_EXHAUSTED_PHRASE,
     QUERY_GRAPH_TOOL,
@@ -113,3 +114,41 @@ async def test_both_tool_limits_append_answer_now_on_last_success(monkeypatch):
         assert BOTH_EXHAUSTED_PHRASE in refused
         assert tool_quota_state(ASK_SUBGRAPH_TOOL) == (2, 2)
         assert tool_quota_state(QUERY_GRAPH_TOOL) == (8, 8)
+
+
+@pytest.mark.asyncio
+async def test_staged_query_graph_four_successes_point_to_advance_research(
+    monkeypatch,
+):
+    calls: list[int] = []
+
+    async def fake_exec(*args, **kwargs):
+        del args, kwargs
+        calls.append(1)
+        return _empty_executed()
+
+    monkeypatch.setattr("server.tools.query_graph.execute_compiled", fake_exec)
+    monkeypatch.setattr("server.tools.query_graph.get_driver", lambda: object())
+    tool = QueryGraphTool(SourceRegistry())
+    cypher = "MATCH (a)-[r]-(b) RETURN a.name LIMIT 1"
+    with bind_turn(
+        "medium",
+        max_searches=1,
+        max_query=4,
+        context={"run_id": "run-1", "mode": "staged"},
+    ):
+        for n in range(4):
+            text = await tool(cypher=cypher)
+            assert text.startswith("NO_MATCHES")
+            assert f"query_graph {n + 1}/4" in text
+            assert "advance_research 0/1 remaining" in text
+            assert "ask_subgraph" not in text
+            assert tool_quota_state(QUERY_GRAPH_TOOL) == (n + 1, 4)
+        fifth = await tool(cypher=cypher)
+        assert fifth.startswith(TOOL_ERROR)
+        assert "query_graph limit" in fifth
+        assert "Use advance_research" in fifth
+        assert "ask_subgraph" not in fifth
+        assert BOTH_EXHAUSTED_PHRASE not in fifth
+        assert tool_quota_state(ADVANCE_RESEARCH_TOOL) == (0, 1)
+    assert len(calls) == 4

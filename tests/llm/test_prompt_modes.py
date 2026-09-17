@@ -11,7 +11,8 @@ def test_prompt_loader_routes_auto_staged_and_card() -> None:
     staged = loader.get_system_prompt("staged")
     assert "Не останавливайся только потому, что уже сделал один поиск" in auto
     assert "Максимум 2 вызова" not in auto
-    assert "Вызов 2 —" not in auto
+    assert "Вызов 1 —" in auto
+    assert "Вызов 2 —" in auto
     assert "не подмешиваются" in auto
     assert "продолжающийся процесс разработки" in staged
     assert "Список исследовательских вопросов пуст" in staged
@@ -24,7 +25,11 @@ def test_prompt_loader_routes_auto_staged_and_card() -> None:
     assert '"status":"closed"' in staged
     assert "можно писать LaTeX" in auto
     assert "можно писать LaTeX" in staged
-    assert "Вызови `submit_card` ровно один раз" in loader.get_system_prompt("card")
+    assert "ask_subgraph" not in staged
+    assert "не больше 1 успешного `advance_research`" in staged
+    assert "4 успешных `query_graph`" in staged
+    assert "Уточняет и закрывает уже открытые направления" in staged
+    assert "JSON Schema" in loader.get_system_prompt("card")
     assert "TTS" not in loader.get_system_prompt("card")
 
 
@@ -70,6 +75,48 @@ def test_auto_prompt_describes_goal_completion_and_grounded_search():
     assert "Общее объяснение — без подтверждения в найденных материалах" not in prompt
     assert "Четыре основания" not in prompt
     assert "общие знания модели" not in prompt.lower()
+    assert "ось проверки" in prompt
+    assert "культура / матрица / доза" in prompt
+    assert "Гипотезу пользователя сохрани как вопрос о проверке" in prompt
+    assert "Нет ни продукта, ни класса, ни цели" in prompt
+    assert "Вызов 1 —" in prompt
+    assert "Вызов 2 —" in prompt
+    assert "составного объекта" in prompt
+    assert "strawberry" not in prompt.lower()
+    assert "клубнич" not in prompt.lower()
+
+
+def test_staged_prompt_describes_goal_without_auto_tool_names():
+    loader = PromptLoader("prompts", TTSModes.QUALITY, audio_enabled=False)
+    prompt = loader.get_system_prompt("staged")
+    assert "Главная цель — довести текущий запрос пользователя до проверяемого результата" in prompt
+    assert "advance_research" in prompt
+    assert "query_graph" in prompt
+    assert "get_service_guide" in prompt
+    assert "ask_subgraph" not in prompt
+    assert "не больше 1 успешного `advance_research`" in prompt
+    assert "4 успешных `query_graph`" in prompt
+    assert "8 успешных" not in prompt
+    assert "### GAPS" in prompt
+    assert "В режиме «С планом» не пиши `### GAPS`" in prompt
+    assert "<SQ_STATUS_JSON>" in prompt
+    assert "Один пустой `advance_research`" in prompt
+    assert "Уточняет и закрывает уже открытые направления" in prompt
+    assert "Связи направленные" in prompt
+    assert "Пользователь уже видит нормальные имена файлов" in prompt
+    assert "не заканчивай из‑за частичного перечня" in prompt
+    assert "Гипотезу пользователя сохрани как вопрос о проверке" in prompt
+    assert "Нет ни продукта, ни класса, ни цели" in prompt
+    assert "Строки `query_graph`" in prompt
+    assert "ось проверки" in prompt
+    assert "культура / матрица / доза" in prompt
+    assert "составного объекта" in prompt
+    assert "Не трать слот на повтор тех же рёбер" in prompt
+    assert "Аналог не закрывает SQ" in prompt
+    assert "Собрать состав" in prompt
+    assert "strawberry" not in prompt.lower()
+    assert "клубнич" not in prompt.lower()
+    assert "Вызов 2 —" not in prompt
 
 
 def test_ui_reports_autonomous_search_budget_independent_of_model():

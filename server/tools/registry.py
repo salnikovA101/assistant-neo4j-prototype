@@ -12,8 +12,28 @@ from server.utils.config import AppConfig
 
 logger = logging.getLogger(__name__)
 
+# Shared SQ writing for ask_subgraph and advance_research. Mode-specific call
+# budget and refs stay in each tool description.
+SQ_WRITE_CORE = (
+    "standalone neutral English questions, one verification axis each "
+    "(culture / matrix / dose / temperature-time / indicator-gas / packaging). "
+    "A named ingredient, filler or additive is a separate axis from the product "
+    "or starter — do not collapse them into one compound object or assume a "
+    "ready-made formulation. No Russian, no paraphrases, no planted answer or "
+    "effect direction. A simple request needs one question. Preserve the user's "
+    "product, constraints and unknowns. A user hypothesis stays a check, not a "
+    "fact. GOOD: 'Which starter cultures are used in cottage cheese production?' "
+    "GOOD: 'How do anthocyanin films respond to ammonia in packaged fish?' "
+    "GOOD: 'How does fermentation temperature affect syneresis in kefir?' "
+    "BAD: 'Why does higher fermentation temperature reduce syneresis in kefir?' "
+    "(planted effect). BAD: 'What starter cultures are used?' (missing product). "
+    "BAD: two paraphrases of a compound object instead of product/starter vs "
+    "named ingredient."
+)
 
-def _service_guide_tool_schema() -> dict[str, Any]:
+
+def _service_guide_tool_schema(mode: str = "auto") -> dict[str, Any]:
+    sibling = "advance_research" if mode == "staged" else "ask_subgraph"
     return {
         "type": "function",
         "function": {
@@ -24,7 +44,7 @@ def _service_guide_tool_schema() -> dict[str, Any]:
                 "search depth, graph and cards, voice input, what the assistant can do, "
                 "and how citations work. Call when the user asks how to use the product, "
                 "the UI, capabilities, or onboarding. Do not call it for domain research "
-                "instead of ask_subgraph or query_graph. When answering from this "
+                f"instead of {sibling} or query_graph. When answering from this "
                 "documentation, do not expose internal source markers or citation ids."
             ),
             "parameters": {
@@ -163,8 +183,6 @@ class Tools:
         Возвращает список всех доступных функций-инструментов.
         """
         mode_tool = self.advance_research if mode == "staged" else self.ask_subgraph
-        if mode == "staged":
-            return [mode_tool, self.get_service_guide]
         return [mode_tool, self.query_graph, self.get_service_guide]
 
     def get_tool_map(self, mode: str = "auto") -> dict[str, Callable]:
@@ -184,16 +202,38 @@ class Tools:
                     "function": {
                         "name": "advance_research",
                         "description": (
-                            "Start or continue staged graph search for food technology "
-                            "(starter cultures, freshness indicators, smart packaging). "
-                            "Empty research-question list: put the first 1–5 standalone neutral English questions in "
+                            "Semantic search over relationship evidence for this research "
+                            "branch (food technology: starter cultures, freshness "
+                            "indicators, smart packaging). Start or continue the "
+                            "research-question list and build a foundation of names for "
+                            "later query_graph. Empty research-question list: put the "
+                            "first 1–5 standalone neutral English questions in "
                             "`new_subquestions` and send `open_sq_refs` as []. "
                             "Existing open items: pass their `subquestion:N` refs. "
                             "New search directions also go in `new_subquestions` and need "
                             "user approval. At least one of the two arrays must be non-empty. "
-                            "At most 5 total SQ per call. "
-                            "GOOD: 'Which starter cultures are used in cottage cheese "
-                            "production?' BAD: 'What starter cultures are used?' (missing product context)"
+                            "At most 5 total SQ per call. Not a proof that a fact is absent. "
+                            "Search depth is set in the UI, not here.\n"
+                            "How to write new SQ: "
+                            f"{SQ_WRITE_CORE} "
+                            "Do not invent subquestion:N refs.\n"
+                            "How to read the result: a card is `A —relation→ B` (node names) "
+                            "plus the evidence text and (source:N). Chain = a walk; "
+                            "consecutive cards share a vertex. @Hub = still at that vertex "
+                            "(sibling edge), not the next process step. Properties stay "
+                            "inside the card they appear on. conf and Chain numbers are "
+                            "service fields.\n"
+                            "Feedback: NO_RESULTS — no new evidence for these questions; "
+                            "use query_graph to clarify or close the open direction. Do not "
+                            "mark the SQ not_closed while query_graph still has slots. "
+                            "Server limit: 1 successful advance_research call per answer; "
+                            "each result ends with n/1. TOOL_ERROR does not spend a slot — "
+                            "fix input and retry. If this tool is exhausted, use "
+                            "query_graph if it still has slots. If both limits are spent, "
+                            "the result says tools are exhausted — answer now. TOOL_ERROR — "
+                            "read the reason: new SQ require user approval; fix input "
+                            "format; if this tool's limit is spent, do not call it again; "
+                            "if search failed, state the technical limit. Do not invent cards."
                         ),
                         "parameters": {
                             "type": "object",
@@ -212,7 +252,8 @@ class Tools:
                                     "items": {"type": "string"},
                                     "maxItems": 5,
                                     "description": (
-                                        "New standalone neutral English questions, preserve user constraints and unknowns; do not assume answers. No Russian. "
+                                        "New standalone neutral English questions, one axis each; "
+                                        "preserve user constraints and unknowns; do not assume answers. No Russian. "
                                         "Required when the research-question list is empty or does not cover "
                                         "a necessary search direction. Empty array or omit "
                                         "when only existing open refs are searched."
@@ -222,7 +263,8 @@ class Tools:
                         },
                     },
                 },
-                _service_guide_tool_schema(),
+                query_graph_openai_schema("staged"),
+                _service_guide_tool_schema("staged"),
             ]
         return [
             {
@@ -239,13 +281,13 @@ class Tools:
                         "process, class or goal — including catalogs and comparison. "
                         "Not a proof that a fact is absent. Search depth is set in the "
                         "UI, not here.\n"
-                        "How to write subquestions: 1–5 standalone neutral English "
-                        "questions, one aspect each, no Russian, no paraphrases of the "
-                        "same thought. Preserve the user's product, constraints and "
-                        "unknowns; do not plant an expected answer. A user hypothesis "
-                        "stays a check, not a fact. GOOD: 'Which starter cultures are "
-                        "used in cottage cheese production?' BAD: 'What starter "
-                        "cultures are used?' (missing product).\n"
+                        "How to write subquestions: 1–5 "
+                        f"{SQ_WRITE_CORE} "
+                        "First call: product, class, process and goal from the question. "
+                        "Add a strain, gas, number or narrow matrix only if named in the "
+                        "question or your previous answer (including GAPS). Second call: "
+                        "only a missing field (dose, matrix, temperature, regulation) or "
+                        "a found name — do not repeat first-call phrases.\n"
                         "How to read the result: a card is `A —relation→ B` (node names) "
                         "plus the evidence text and (source:N). Chain = a walk; "
                         "consecutive cards share a vertex. @Hub = still at that vertex "
@@ -276,8 +318,8 @@ class Tools:
                                     "1–5 standalone neutral English questions, "
                                     "no Russian. Each one runs a separate search "
                                     "over evidence texts, so each must cover a different "
-                                    "aspect of the question — paraphrases return "
-                                    "overlapping evidence. Preserve user constraints and unknowns; do not invent answers. "
+                                    "verification axis — paraphrases return overlapping evidence. "
+                                    "Preserve user constraints and unknowns; do not invent answers. "
                                     "GOOD: 'Which starter cultures are used in "
                                     "cottage cheese production?' "
                                     "BAD: 'What starter cultures are used?' (missing product context)"
@@ -288,6 +330,6 @@ class Tools:
                     },
                 },
             },
-            query_graph_openai_schema(),
-            _service_guide_tool_schema(),
+            query_graph_openai_schema("auto"),
+            _service_guide_tool_schema("auto"),
         ]

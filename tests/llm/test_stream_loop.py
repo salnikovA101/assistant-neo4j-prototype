@@ -88,6 +88,85 @@ async def test_quota_tools_skip_global_tool_budget_footer():
     assert "Tool budget:" in last_contents[2]
 
 
+@pytest.mark.asyncio
+async def test_advance_research_new_sq_stops_sibling_tools():
+    from server.llm.base import _prioritize_staged_approval_calls
+    from server.llm.stream_events import AssembledToolCall
+
+    query = AssembledToolCall(
+        id="q",
+        name="query_graph",
+        arguments='{"cypher":"MATCH (n) RETURN n"}',
+        index=0,
+    )
+    adv = AssembledToolCall(
+        id="a",
+        name="advance_research",
+        arguments='{"new_subquestions":["Which starter cultures are used in kefir?"]}',
+        index=1,
+    )
+    ordered = _prioritize_staged_approval_calls([query, adv])
+    assert [item.name for item in ordered] == ["advance_research", "query_graph"]
+
+    profile = OpenAIProfile(
+        model="test-model",
+        base_url="http://localhost",
+        api_key="x",
+        think=False,
+        max_turns=2,
+    )
+    provider = OpenAIProvider(profile)
+    called: list[str] = []
+
+    async def fake_create(**_kwargs):
+        return _aiter([_Chunk(_Delta(tool_calls=[
+            {
+                "index": 0,
+                "id": "call_query",
+                "type": "function",
+                "function": {
+                    "name": "query_graph",
+                    "arguments": '{"cypher":"MATCH (n) RETURN n"}',
+                },
+            },
+            {
+                "index": 1,
+                "id": "call_adv",
+                "type": "function",
+                "function": {
+                    "name": "advance_research",
+                    "arguments": '{"new_subquestions":["Which cultures?"]}',
+                },
+            },
+        ]))])
+
+    async def fake_query(**_kwargs):
+        called.append("query_graph")
+        return "rows"
+
+    async def fake_adv(**_kwargs):
+        called.append("advance_research")
+        return "should not run"
+
+    provider.client.chat.completions.create = AsyncMock(side_effect=fake_create)
+    events = [
+        event
+        async for event in provider.generate_response_stream(
+            user_text="q",
+            prompt="sys",
+            tools=[
+                {"type": "function", "function": {"name": "query_graph"}},
+                {"type": "function", "function": {"name": "advance_research"}},
+            ],
+            tool_map={"query_graph": fake_query, "advance_research": fake_adv},
+        )
+    ]
+    assert called == []
+    names = [event.data.get("name") for event in events if event.type == "tool_call"]
+    assert names == ["advance_research"]
+    assert not any(event.type == "tool_result" for event in events)
+
+
 
 class _Delta:
     def __init__(self, **kwargs):

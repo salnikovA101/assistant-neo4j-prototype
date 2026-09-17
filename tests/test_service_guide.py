@@ -34,6 +34,7 @@ def test_service_guide_is_shared_and_available_in_every_mode(tmp_path):
     }
     assert set(tools.get_tool_map("staged")) == {
         "advance_research",
+        "query_graph",
         "get_service_guide",
     }
 
@@ -50,6 +51,12 @@ def test_service_guide_is_shared_and_available_in_every_mode(tmp_path):
         }
         assert "how to use" in help_schema["description"].lower()
         assert "graph search" in help_schema["description"].lower()
+        if mode == "staged":
+            assert "advance_research" in help_schema["description"]
+            assert "ask_subgraph" not in help_schema["description"]
+        else:
+            assert "ask_subgraph" in help_schema["description"]
+            assert "advance_research" not in help_schema["description"]
 
     # UI and tool read on demand, so editing the one Markdown source cannot
     # leave either consumer with a stale embedded copy.
