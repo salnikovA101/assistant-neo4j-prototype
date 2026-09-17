@@ -72,7 +72,6 @@ import type {
   PendingApproval,
   ResearchStep,
   ResearchBranch,
-  SearchDepth,
   SavedCard,
   UiConfig,
 } from "./types";
@@ -240,7 +239,6 @@ export function App() {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [forkingCheckpointId, setForkingCheckpointId] = useState("");
-  const [depth, setDepth] = useState<SearchDepth>("medium");
   const [effort, setEffort] = useState("");
   const [profile, setProfile] = useState("");
   const [mode, setMode] = useState<"auto" | "staged">("staged");
@@ -371,12 +369,6 @@ export function App() {
           adoptSessionId(target);
           setCurrentId(target);
         }
-        const storedDepth = localStorage.getItem("search_depth") as SearchDepth | null;
-        setDepth(
-          storedDepth && cfg.search_depth_options.includes(storedDepth)
-            ? storedDepth
-            : cfg.search_depth || "medium"
-        );
         const storedProfile = localStorage.getItem("llm_profile") || cfg.current_profile;
         const found = cfg.models.find((item) => item.id === storedProfile) || cfg.models[0];
         if (found) {
@@ -752,7 +744,6 @@ export function App() {
           });
         })(),
         body: streamBody(value, {
-          search_depth: depth,
           reasoning_effort: effort || undefined,
           profile: profile || undefined,
           turn_id: uid(),
@@ -1507,11 +1498,6 @@ export function App() {
             audioEnabled={Boolean(config?.audio_enabled)}
             onMic={() => void onMic()}
             recording={recording}
-            depth={depth}
-            onDepth={(value) => {
-              setDepth(value);
-              localStorage.setItem("search_depth", value);
-            }}
             effort={effort}
             effortOptions={effortOptions}
             onEffort={(value) => {

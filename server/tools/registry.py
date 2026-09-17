@@ -3,7 +3,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from server.core.turn_state import current_turn, search_depth
+from server.core.turn_state import current_turn
 from server.service_guide import load_service_guide
 from server.tools.query_graph import QueryGraphTool, query_graph_openai_schema
 from server.tools.source_registry import SourceRegistry
@@ -90,7 +90,7 @@ class Tools:
         Args:
             subquestions: 1–5 standalone neutral English questions, one per aspect.
             ignored: tolerated legacy/hallucinated arguments (e.g. `effort`);
-                search depth comes from the UI, not from the model.
+                the path budget comes from algorithm params, not from the model.
         """
         if subquestions is not None and not isinstance(subquestions, list):
             return (
@@ -99,11 +99,7 @@ class Tools:
         sqs = [str(s).strip() for s in (subquestions or []) if str(s).strip()]
         if ignored:
             logger.info("ask_subgraph: игнорируем аргументы модели %s", list(ignored))
-        logger.info(
-            "Вызов ask_subgraph depth=%s n_sq=%s",
-            search_depth(),
-            len(sqs),
-        )
+        logger.info("Вызов ask_subgraph n_sq=%s", len(sqs))
         for i, text in enumerate(sqs, 1):
             logger.info("  sq%s: %s", i, text)
 
@@ -213,7 +209,7 @@ class Tools:
                             "New search directions also go in `new_subquestions` and need "
                             "user approval. At least one of the two arrays must be non-empty. "
                             "At most 5 total SQ per call. Not a proof that a fact is absent. "
-                            "Search depth is set in the UI, not here.\n"
+                            "The number of retrieved chains is a server setting, not a tool argument.\n"
                             "How to write new SQ: "
                             f"{SQ_WRITE_CORE} "
                             "Do not invent subquestion:N refs.\n"
@@ -279,8 +275,8 @@ class Tools:
                         "evidence cut, names and conditions for later query_graph. "
                         "Call when the question names a product, substance, culture, "
                         "process, class or goal — including catalogs and comparison. "
-                        "Not a proof that a fact is absent. Search depth is set in the "
-                        "UI, not here.\n"
+                        "Not a proof that a fact is absent. The number of retrieved "
+                        "chains is a server setting, not a tool argument.\n"
                         "How to write subquestions: 1–5 "
                         f"{SQ_WRITE_CORE} "
                         "First call: product, class, process and goal from the question. "

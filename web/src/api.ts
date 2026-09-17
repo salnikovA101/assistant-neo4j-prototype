@@ -16,7 +16,6 @@ import type {
   PendingApproval,
   ResearchMap,
   SavedCard,
-  SearchDepth,
   UiConfig,
 } from "./types";
 
@@ -605,7 +604,6 @@ export async function deleteDocumentBatchItem(batchId: string, itemId: string): 
 export function streamBody(
   text: string,
   opts: {
-    search_depth: SearchDepth;
     reasoning_effort?: string;
     profile?: string;
     turn_id?: string;
@@ -619,7 +617,6 @@ export function streamBody(
 ): string {
   const payload: Record<string, string | boolean> = {
     text,
-    search_depth: opts.search_depth,
   };
   if (opts.profile) payload.profile = opts.profile;
   if (opts.profile !== "auto" && opts.reasoning_effort) payload.reasoning_effort = opts.reasoning_effort;

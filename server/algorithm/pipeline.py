@@ -116,7 +116,7 @@ async def run(
     *,
     subquestions: list[dict[str, Any]] | list[SubQuestion] | None = None,
     query: str = "",
-    effort: str = "medium",
+    effort: str | None = None,
     params: Params | None = None,
     s3_bundle: dict[str, Any] | None = None,
     emit_s3_bundle: bool = False,
@@ -131,6 +131,9 @@ async def run(
 
     S1–S3 once (embed → ANN → CE → per-sq graphs); S4 carousel until the
     path budget; S5 drops duplicate spines and returns the pool.
+
+    effort: optional override of Params.effort (low/medium/high). Omit to use
+    the value from params.py.
 
     s3_bundle: optional cached S3 payload (graphs + ann/rerank keys); skips S1–S3.
     emit_s3_bundle: include serializable S3 bundle in result for graph-cache writes.

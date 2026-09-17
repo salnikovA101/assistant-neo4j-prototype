@@ -50,15 +50,16 @@ class Params:
     s4_cost_power: float = 1.5
     s_floor: float = 1e-6
 
-    # How many units to mine and show (low / medium / high).
+    # How many units to mine and show. Server-side only (no UI selector).
+    # Switch effort: "low" (compact, default 5) | "medium" (10) | "high" (15).
     max_paths_low: int = 5
     max_paths_medium: int = 10
     max_paths_high: int = 15
-    effort: str = "medium"
+    effort: str = "low"
 
     def effort_max_paths(self) -> int:
         """Hard cap on accepted units per question (max_paths_* by effort)."""
-        e = (self.effort or "medium").strip().lower()
+        e = (self.effort or "low").strip().lower()
         if e == "low":
             return max(0, int(self.max_paths_low))
         if e == "high":

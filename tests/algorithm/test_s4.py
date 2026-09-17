@@ -136,6 +136,8 @@ def test_carousel_partial_last_round() -> None:
 
 
 def test_effort_path_budget() -> None:
+    assert Params().effort == "low"
+    assert Params().effort_max_paths() == Params().max_paths_low == 5
     assert Params(effort="low").effort_max_paths() == Params().max_paths_low
     assert Params(effort="medium").effort_max_paths() == Params().max_paths_medium
     assert Params(effort="high").effort_max_paths() == Params().max_paths_high

@@ -154,7 +154,7 @@ async def test_query_refuses_third_search_in_one_turn(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_query_passes_ui_depth_to_the_pipeline(monkeypatch):
+async def test_query_uses_params_effort_not_turn_depth(monkeypatch):
     seen: dict[str, object] = {}
 
     async def fake_run(driver, **kwargs):
@@ -168,7 +168,8 @@ async def test_query_passes_ui_depth_to_the_pipeline(monkeypatch):
     with bind_turn("high", max_searches=2, context={"run_id": "corpus-test"}):
         await agent.query(["Lactic acid bacteria acidify milk."])
 
-    assert seen["effort"] == "high"
+    assert "effort" not in seen
+    assert seen["params"].effort == "low"
     assert [sq["text"] for sq in seen["subquestions"]] == [
         "Lactic acid bacteria acidify milk."
     ]

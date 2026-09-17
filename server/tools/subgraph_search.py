@@ -14,7 +14,6 @@ from server.core.turn_state import (
     finalize_tool_result,
     has_tool_slot,
     remember_subquestions,
-    search_depth,
     seen_subquestions,
     semantic_tool_name,
     subquestion_key,
@@ -143,8 +142,9 @@ class SubgraphSearchAgent:
     """
     Runs the graph retrieval pipeline and returns accepted evidence chains.
 
-    Decomposition is the assistant's job; search depth comes from the UI and the
-    per-turn semantic-search quota is enforced here, not asked of the model.
+    Decomposition is the assistant's job; the path budget comes from
+    algorithm params, and the per-turn semantic-search quota is enforced here,
+    not asked of the model.
     """
 
     def __init__(self, source_registry: SourceRegistry | None = None):
@@ -154,7 +154,6 @@ class SubgraphSearchAgent:
     async def query(self, subquestions: list[str] | None = None) -> str:
         """Validate subquestions, run the pipeline, spend a slot only on success."""
         sqs, problems = normalize_subquestions(subquestions, seen_subquestions())
-        depth = search_depth()
         tool_name = semantic_tool_name()
 
         if not sqs:
@@ -250,7 +249,6 @@ class SubgraphSearchAgent:
                     built = await run(
                         driver,
                         subquestions=missing,
-                        effort=depth,
                         params=params,
                         emit_s3_bundle=True,
                         budget_override=0,
@@ -284,7 +282,6 @@ class SubgraphSearchAgent:
                     result = await run(
                         driver,
                         subquestions=payload,
-                        effort=depth,
                         params=params,
                         s3_bundle=subset,
                         carousel_state=retrieval.get("carousel") or {},
@@ -317,7 +314,7 @@ class SubgraphSearchAgent:
                             "carousel": carousel,
                             "priorSignatures": list(carousel.get("accepted_signatures") or []),
                             "lastMode": turn.mode,
-                            "lastDepth": depth,
+                            "lastDepth": params.effort,
                             "lastSubquestionIds": [item["id"] for item in payload],
                             "lastTrace": result.get("trace") or {},
                             "pBefore": p_before,
@@ -346,7 +343,6 @@ class SubgraphSearchAgent:
                 result = await run(
                     driver,
                     subquestions=payload,
-                    effort=depth,
                     params=params,
                 )
             if result.get("error"):

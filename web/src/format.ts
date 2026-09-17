@@ -314,12 +314,6 @@ export function parseSseBlock(raw: string): { event: string; data: Record<string
   }
 }
 
-export const DEPTH_LABELS: Record<string, string> = {
-  low: "Компактно",
-  medium: "Обычно",
-  high: "Расширенно",
-};
-
 export const EFFORT_LABELS: Record<string, { label: string; hint: string }> = {
   off: { label: "Выкл", hint: "без рассуждения" },
   none: { label: "Выкл", hint: "без рассуждения" },

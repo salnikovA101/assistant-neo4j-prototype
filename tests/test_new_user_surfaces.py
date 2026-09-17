@@ -143,6 +143,8 @@ def test_chat_has_one_cards_entry_and_compact_user_question():
     assert "documentsEnabled" in composer
     assert "Добавить PDF в базу" in composer
     assert "onOpenDocuments()" in composer
+    assert "Объём данных" not in composer
+    assert "onDepth" not in composer
     assert 'openResearch("map")' in app
     assert "GRAPH_PANEL_MIN" in app
     assert "min={GRAPH_PANEL_MIN}" in app
