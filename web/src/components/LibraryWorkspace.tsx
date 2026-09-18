@@ -1,27 +1,63 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { deleteDocumentBatchItem } from "../api";
-import { documentQueueSummary, documentStatusLabel, formatEta, formatFileSize, isActiveDocumentStatus } from "../documents";
+import { documentStatusLabel } from "../documents";
 import type { DocumentBatch } from "../types";
-import { IconClose, IconLibrary } from "./Icons";
+import { DocumentReader } from "./DocumentReader";
+import { IconClose } from "./Icons";
 
-const catalog = [
-  {
-    id: "articles",
-    label: "Научные статьи",
-    description: "Здесь будут научные публикации, на основе которых создана база знаний.",
-    features: ["Поиск по статьям", "Метаданные и источники", "Связь с базой"],
-  },
-  {
-    id: "regulations",
-    label: "Нормативные документы",
-    description: "Здесь будут нормативные документы для проверки заквасок и продуктов. Проверка ассистентом — в разработке.",
-    features: ["Поиск по нормативам", "Проверка карточек", "Использование ассистентом"],
-  },
-];
+const FILTERS = [
+  { id: "all", label: "Все" },
+  { id: "articles", label: "Научные статьи" },
+  { id: "regulations", label: "Нормативные документы" },
+  { id: "uploads", label: "Мои файлы" },
+] as const;
+
+type FilterId = (typeof FILTERS)[number]["id"];
+type DocumentKind = "upload" | "article" | "regulation";
+
+const KIND_LABEL: Record<DocumentKind, string> = {
+  upload: "Мой файл",
+  article: "Научная",
+  regulation: "Норматив",
+};
+
+const EMPTY_COPY: Record<FilterId, string> = {
+  all: "Документов пока нет",
+  articles: "Научных статей пока нет",
+  regulations: "Нормативных документов пока нет",
+  uploads: "Загруженных файлов пока нет",
+};
+
+type LibraryDoc = {
+  id: string;
+  title: string;
+  kind: DocumentKind;
+  batchId?: string;
+  status?: string;
+  error?: string | null;
+  canRemove?: boolean;
+};
+
+function statusTone(status: string): "ok" | "warn" | "danger" | "faint" {
+  if (status === "completed") return "ok";
+  if (status === "failed") return "danger";
+  if (status === "processing" || status === "queued") return "warn";
+  return "faint";
+}
+
+function canRemoveStatus(status: string): boolean {
+  return status === "unavailable" || status === "queued" || status === "cancelled";
+}
+
+function matchesFilter(doc: LibraryDoc, filter: FilterId): boolean {
+  if (filter === "all") return true;
+  if (filter === "uploads") return doc.kind === "upload";
+  if (filter === "articles") return doc.kind === "article";
+  return doc.kind === "regulation";
+}
 
 export function LibraryWorkspace({
   ingestEnabled,
-  ingestReady,
   batches,
   loading = false,
   focusUploadsKey = 0,
@@ -40,33 +76,64 @@ export function LibraryWorkspace({
   onUploadsVisible: (visible: boolean) => void;
   onBatchesChanged: () => void;
 }) {
-  const tabs = ingestEnabled
-    ? [{ id: "uploads", label: "Загрузки" }, ...catalog]
-    : catalog;
-  const [activeTab, setActiveTab] = useState(tabs[0].id);
+  const [filter, setFilter] = useState<FilterId>("all");
+  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState("");
+  const [pendingId, setPendingId] = useState("");
   const [busyId, setBusyId] = useState("");
 
-  useEffect(() => {
-    if (!tabs.some((tab) => tab.id === activeTab)) setActiveTab(tabs[0].id);
-  }, [activeTab, ingestEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
+  const documents = useMemo<LibraryDoc[]>(() => (
+    batches.flatMap((batch) => batch.items.map((item) => ({
+      id: item.id,
+      title: item.filename,
+      kind: "upload" as const,
+      batchId: batch.id,
+      status: item.status,
+      error: item.error || (item.status === "unavailable" ? batch.message : null),
+      canRemove: canRemoveStatus(item.status),
+    })))
+  ), [batches]);
 
   useEffect(() => {
-    if (ingestEnabled && focusUploadsKey > 0) setActiveTab("uploads");
+    if (ingestEnabled && focusUploadsKey > 0) {
+      setFilter("uploads");
+      setSelectedId("");
+    }
   }, [focusUploadsKey, ingestEnabled]);
 
   useEffect(() => {
-    const visible = ingestEnabled && activeTab === "uploads";
+    const visible = ingestEnabled && filter === "uploads";
     onUploadsVisible(visible);
     return () => onUploadsVisible(false);
-  }, [activeTab, ingestEnabled, onUploadsVisible]);
+  }, [filter, ingestEnabled, onUploadsVisible]);
 
-  const files = batches.flatMap((batch) => batch.items.map((item) => ({ batch, item })));
-  const summary = documentQueueSummary(batches);
+  useEffect(() => {
+    if (selectedId && !documents.some((doc) => doc.id === selectedId)) setSelectedId("");
+    if (pendingId && !documents.some((doc) => doc.id === pendingId)) setPendingId("");
+  }, [documents, pendingId, selectedId]);
 
-  const removeItem = async (batchId: string, itemId: string) => {
-    setBusyId(itemId);
+  useEffect(() => {
+    if (!pendingId) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setPendingId("");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pendingId]);
+
+  const selected = documents.find((doc) => doc.id === selectedId) || null;
+  const needle = query.trim().toLowerCase();
+  const inFilter = documents.filter((doc) => matchesFilter(doc, filter));
+  const visible = needle ? inFilter.filter((doc) => doc.title.toLowerCase().includes(needle)) : inFilter;
+
+  const removeItem = async (doc: LibraryDoc) => {
+    if (!doc.batchId) return;
+    setBusyId(doc.id);
     try {
-      await deleteDocumentBatchItem(batchId, itemId);
+      await deleteDocumentBatchItem(doc.batchId, doc.id);
+      setPendingId("");
       onBatchesChanged();
     } catch (error) {
       onNotice(error instanceof Error ? error.message : "Не удалось удалить файл");
@@ -75,114 +142,95 @@ export function LibraryWorkspace({
     }
   };
 
-  return (
-    <section className="article-library" aria-labelledby="article-library-title">
-      <div className="article-library-inner">
-        <header className="article-library-header">
-          <div>
-            <p className="article-library-kicker">ИСТОЧНИКИ ЗНАНИЙ</p>
-            <h1 id="article-library-title">Библиотека документов</h1>
-            <p>{ingestEnabled ? "Загрузка PDF в очередь обработки и будущая библиотека корпуса." : "Научные статьи и нормативные документы."}</p>
-          </div>
-          {ingestEnabled ? (
-            <button type="button" className="primary-btn" onClick={onOpenUpload}>Загрузить PDF</button>
-          ) : (
-            <span className="article-library-status">В разработке</span>
-          )}
-        </header>
+  if (selected) {
+    return (
+      <section className="ws-page" aria-label="Документы">
+        <DocumentReader
+          title={selected.title}
+          kindLabel={KIND_LABEL[selected.kind]}
+          error={selected.error}
+          onClose={() => setSelectedId("")}
+        />
+      </section>
+    );
+  }
 
-        <div className="document-library-tabs" role="tablist" aria-label="Виды документов">
-          {tabs.map((section, index) => (
+  return (
+    <section className="ws-page" aria-label="Документы">
+      <div className="ws-toolbar">
+        <label className="ws-search">
+          <span className="sr-only">Поиск по документам</span>
+          <input type="search" placeholder="Найти документ по названию" value={query} onChange={(event) => setQuery(event.target.value)} />
+        </label>
+        <div className="ws-seg" role="group" aria-label="Тип документов">
+          {FILTERS.map((item) => (
             <button
-              key={section.id}
+              key={item.id}
               type="button"
-              role="tab"
-              id={`document-tab-${section.id}`}
-              aria-controls={`document-panel-${section.id}`}
-              aria-selected={activeTab === section.id}
-              tabIndex={activeTab === section.id ? 0 : -1}
-              onClick={() => setActiveTab(section.id)}
-              onKeyDown={(event) => {
-                let nextIndex = index;
-                if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
-                else if (event.key === "ArrowLeft") nextIndex = (index + tabs.length - 1) % tabs.length;
-                else if (event.key === "Home") nextIndex = 0;
-                else if (event.key === "End") nextIndex = tabs.length - 1;
-                else return;
-                event.preventDefault();
-                setActiveTab(tabs[nextIndex].id);
-                document.getElementById(`document-tab-${tabs[nextIndex].id}`)?.focus();
-              }}
-            >{section.label}</button>
+              aria-pressed={filter === item.id}
+              onClick={() => setFilter(item.id)}
+            >{item.label}</button>
           ))}
         </div>
-
-        {ingestEnabled && (
-          <div role="tabpanel" id="document-panel-uploads" aria-labelledby="document-tab-uploads" hidden={activeTab !== "uploads"} tabIndex={0}>
-            <p className="document-upload-hint">
-              {ingestReady
-                ? "Статус каждого файла обновляется по мере обработки."
-                : "PDF можно выбрать и отправить. Сервис обработки ещё не подключён, поэтому файлы остаются в очереди со статусом «Ожидает сервис»."}
-            </p>
-            {summary && <p className="document-queue-summary">{summary}</p>}
-            {loading && files.length === 0 && <p className="document-upload-hint">Загрузка списка…</p>}
-            {!loading && files.length === 0 && (
-              <div className="article-library-placeholder">
-                <div className="article-library-icon" aria-hidden="true"><IconLibrary /></div>
-                <h2>Загрузок пока нет</h2>
-                <p>Добавьте PDF кнопкой «Загрузить PDF» в шапке или «Добавить PDF» под полем сообщения. Файлы появятся здесь вместе со статусом обработки.</p>
-              </div>
-            )}
-            {files.length > 0 && (
-              <ul className="document-batch-list">
-                {files.map(({ batch, item }) => {
-                  const eta = isActiveDocumentStatus(item.status) ? formatEta(item.etaSeconds) : "";
-                  const canRemove = item.status === "unavailable" || item.status === "queued" || item.status === "cancelled";
-                  return (
-                    <li key={item.id} className={`document-batch-row is-${item.status}`}>
-                      <div>
-                        <strong>{item.filename}</strong>
-                        <span>
-                          {formatFileSize(item.size)}
-                          <i aria-hidden="true">·</i>
-                          {documentStatusLabel(item.status)}
-                          {eta ? <><i aria-hidden="true">·</i>{eta}</> : null}
-                        </span>
-                        {(item.error || (item.status === "unavailable" && batch.message)) && (
-                          <small>{item.error || batch.message}</small>
-                        )}
-                      </div>
-                      {canRemove && (
-                        <button
-                          type="button"
-                          className="icon-btn"
-                          aria-label={`Убрать ${item.filename}`}
-                          disabled={busyId === item.id}
-                          onClick={() => void removeItem(batch.id, item.id)}
-                        >
-                          <IconClose />
-                        </button>
+        {ingestEnabled && <button type="button" className="primary-btn" onClick={onOpenUpload}>Загрузить PDF</button>}
+      </div>
+      <div className="ws-body">
+        {loading && documents.length === 0 && <p className="ws-empty">Загрузка списка…</p>}
+        {!loading && inFilter.length === 0 && (
+          <>
+            <p className="ws-empty">{EMPTY_COPY[filter]}</p>
+            <div className="ws-tile-grid" aria-hidden="true">
+              {[0, 1, 2, 3, 4].map((index) => (
+                <div key={index} className="ws-tile is-ghost">
+                  <div className="ws-tile-preview" />
+                  <div className="ws-tile-meta"><span className="ws-tile-title" /></div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+        {inFilter.length > 0 && visible.length === 0 && <p className="ws-empty">Ничего не найдено</p>}
+        {visible.length > 0 && (
+          <div className="ws-tile-grid">
+            {visible.map((doc) => (
+              <article key={doc.id} className={pendingId === doc.id ? "ws-tile is-confirming" : "ws-tile"}>
+                <button type="button" className="ws-tile-open" onClick={() => { if (pendingId !== doc.id) setSelectedId(doc.id); }}>
+                  <div className="ws-tile-preview" aria-hidden="true" />
+                  <div className="ws-tile-meta">
+                    <strong className="ws-tile-title">{doc.title}</strong>
+                    <div className="ws-tile-badges">
+                      <span className="ws-badge">{KIND_LABEL[doc.kind]}</span>
+                      {doc.kind === "upload" && doc.status && (
+                        <span className={`ws-badge is-${statusTone(doc.status)}`}>{documentStatusLabel(doc.status)}</span>
                       )}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+                    </div>
+                  </div>
+                </button>
+                {doc.canRemove && pendingId !== doc.id && (
+                  <button
+                    type="button"
+                    className="icon-btn ws-tile-remove"
+                    aria-label={`Убрать ${doc.title}`}
+                    title={`Убрать ${doc.title}`}
+                    disabled={busyId === doc.id}
+                    onClick={() => setPendingId(doc.id)}
+                  >
+                    <IconClose />
+                  </button>
+                )}
+                {pendingId === doc.id && (
+                  <div className="ws-tile-confirm" role="dialog" aria-label={`Убрать ${doc.title}?`}>
+                    <p>Убрать этот файл?</p>
+                    <div className="ws-tile-confirm-actions">
+                      <button type="button" className="ghost-btn" onClick={() => setPendingId("")}>Отмена</button>
+                      <button type="button" className="ghost-btn danger-btn" disabled={busyId === doc.id} onClick={() => void removeItem(doc)}>Убрать</button>
+                    </div>
+                  </div>
+                )}
+              </article>
+            ))}
           </div>
         )}
-
-        {catalog.map((section) => (
-          <div key={section.id} role="tabpanel" id={`document-panel-${section.id}`} aria-labelledby={`document-tab-${section.id}`} hidden={activeTab !== section.id} tabIndex={0}>
-            <div className="article-library-placeholder">
-              <div className="article-library-icon" aria-hidden="true"><IconLibrary /></div>
-              <h2>{section.label} · Скоро</h2>
-              <p>{section.description}</p>
-              <div className="article-library-plan" aria-label="Запланированные возможности">
-                {section.features.map((feature) => <span key={feature}>{feature}</span>)}
-              </div>
-            </div>
-          </div>
-        ))}
       </div>
     </section>
   );

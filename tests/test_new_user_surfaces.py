@@ -437,14 +437,20 @@ def test_document_upload_stub_is_always_visible_and_not_regex_gated():
     app = (WEB / "App.tsx").read_text(encoding="utf-8")
     composer = (WEB / "components" / "Composer.tsx").read_text(encoding="utf-8")
     library = (WEB / "components" / "LibraryWorkspace.tsx").read_text(encoding="utf-8")
+    reader = (WEB / "components" / "DocumentReader.tsx").read_text(encoding="utf-8")
     modal = (WEB / "components" / "DocumentUploadModal.tsx").read_text(encoding="utf-8")
     chat = (WEB / "components" / "ChatThread.tsx").read_text(encoding="utf-8")
     sidebar = (WEB / "components" / "Sidebar.tsx").read_text(encoding="utf-8")
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
     guide = load_service_guide(ROOT / "prompts")
     assert "DocumentUploadModal" in app
     assert "onOpenDocuments={() => setUploadOpen(true)}" in app
     assert "Загрузить PDF" in library
-    assert 'id: "uploads"' in library
+    assert "Мои файлы" in library
+    assert "ws-tile-grid" in library
+    assert "DocumentReader" in library
+    assert "Escape" in reader
+    assert "Страница появится, когда подключим хранилище." in reader
     assert "accept=\"application/pdf,.pdf\"" in modal
     assert "Добавить ещё" in modal
     assert "Обработка документов будет подключена позже." in modal
@@ -453,12 +459,15 @@ def test_document_upload_stub_is_always_visible_and_not_regex_gated():
     assert "ingestEnabled" in sidebar
     assert "sidebar-doc-dot" in sidebar
     assert "documentIndicator" in sidebar
-    assert "document-queue-summary" in library
+    assert ".ws-toolbar" in styles
+    assert ".ws-tile" in styles
+    assert ".ws-empty" in styles
     assert "fetchDocumentBatches" in app
     assert "visibilitychange" in app
     assert "toast is-action" in app
     assert "### Документы" in guide
     assert "жёлтая точка" in guide
+    assert "Мои файлы" in guide
     assert "Добавить PDF" in guide
     assert "не прикрепление" in guide
     assert "/api/document-batches" in (WEB / "api.ts").read_text(encoding="utf-8")
