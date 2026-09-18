@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { UiModel } from "../types";
 import { effortLabel } from "../format";
 import { MODE_LABELS } from "../uiLabels";
-import { IconAttach, IconCards, IconChevron, IconMic, IconSend, IconStop } from "./Icons";
+import { IconCards, IconChevron, IconLibrary, IconMic, IconSend, IconStop } from "./Icons";
 
 export function Composer({
   text,
@@ -174,21 +174,22 @@ export function Composer({
         {documentsEnabled && (
           <button
             type="button"
-            className="chip-btn composer-upload-button"
+            className="chip-btn composer-action-btn composer-upload-button"
             aria-label="Добавить PDF в базу"
-            title="Добавить PDF в базу"
+            title="Добавить PDF в очередь обработки — не к этому сообщению"
             onClick={() => {
               closeComposerMenus();
               onOpenDocuments();
             }}
           >
-            <IconAttach />
+            <IconLibrary />
+            <span className="composer-action-label">Добавить PDF</span>
           </button>
         )}
         {cardsEnabled && (
           <button
             type="button"
-            className="chip-btn composer-cards-button"
+            className="chip-btn composer-action-btn composer-cards-button"
             aria-label="Открыть карточки"
             title={cardActionsEnabled ? "Открыть карточки" : "Карточки доступны после первого ответа и вне активной генерации."}
             disabled={!cardActionsEnabled}
@@ -198,6 +199,7 @@ export function Composer({
             }}
           >
             <IconCards />
+            <span className="composer-action-label">Карточки</span>
           </button>
         )}
         {audioEnabled && (

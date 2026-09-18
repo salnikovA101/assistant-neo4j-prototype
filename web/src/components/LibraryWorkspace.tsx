@@ -130,7 +130,7 @@ export function LibraryWorkspace({
               <div className="article-library-placeholder">
                 <div className="article-library-icon" aria-hidden="true"><IconLibrary /></div>
                 <h2>Загрузок пока нет</h2>
-                <p>Добавьте PDF кнопкой «Загрузить PDF» в шапке или скрепкой в поле сообщения. Файлы появятся здесь вместе со статусом обработки.</p>
+                <p>Добавьте PDF кнопкой «Загрузить PDF» в шапке или «Добавить PDF» под полем сообщения. Файлы появятся здесь вместе со статусом обработки.</p>
               </div>
             )}
             {files.length > 0 && (

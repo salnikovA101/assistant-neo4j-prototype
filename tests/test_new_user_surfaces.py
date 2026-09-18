@@ -142,7 +142,12 @@ def test_chat_has_one_cards_entry_and_compact_user_question():
     assert "Открыть карточки" in composer
     assert "documentsEnabled" in composer
     assert "Добавить PDF в базу" in composer
+    assert 'composer-action-label">Добавить PDF' in composer
+    assert 'composer-action-label">Карточки' in composer
+    assert "IconLibrary" in composer
     assert "onOpenDocuments()" in composer
+    assert "container-name:chat-col" in styles
+    assert "@container chat-col (max-width:860px)" in styles
     assert "Объём данных" not in composer
     assert "onDepth" not in composer
     assert 'useState<"auto" | "staged">("auto")' in app
@@ -409,7 +414,8 @@ def test_document_upload_stub_is_always_visible_and_not_regex_gated():
     assert "toast is-action" in app
     assert "### Документы" in guide
     assert "жёлтая точка" in guide
-    assert "Скрепка слева" in guide
+    assert "Добавить PDF" in guide
+    assert "не прикрепление" in guide
     assert "/api/document-batches" in (WEB / "api.ts").read_text(encoding="utf-8")
     docs = (WEB / "documents.ts").read_text(encoding="utf-8")
     assert "documentIndicator(" in docs
