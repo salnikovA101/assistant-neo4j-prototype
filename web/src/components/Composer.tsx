@@ -1,8 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { UiModel } from "../types";
-import { effortLabel } from "../format";
-import { MODE_LABELS } from "../uiLabels";
-import { IconCards, IconChevron, IconLibrary, IconMic, IconSend, IconStop } from "./Icons";
+import { useEffect, useRef } from "react";
+import { IconCards, IconLibrary, IconMic, IconSend, IconStop } from "./Icons";
 
 export function Composer({
   text,
@@ -13,17 +10,8 @@ export function Composer({
   audioEnabled,
   onMic,
   recording,
-  effort,
-  effortOptions,
-  onEffort,
-  profile,
-  models,
-  onProfile,
   centered,
   mode,
-  onMode,
-  stagedEnabled,
-  branchMode,
   cardsEnabled,
   cardActionsEnabled,
   onOpenCards,
@@ -40,17 +28,8 @@ export function Composer({
   audioEnabled: boolean;
   onMic: () => void;
   recording: boolean;
-  effort: string;
-  effortOptions: string[];
-  onEffort: (value: string) => void;
-  profile: string;
-  models: UiModel[];
-  onProfile: (id: string) => void;
   centered: boolean;
   mode: "auto" | "staged";
-  onMode: (value: "auto" | "staged") => void;
-  stagedEnabled: boolean;
-  branchMode?: "auto" | "staged";
   cardsEnabled: boolean;
   cardActionsEnabled: boolean;
   onOpenCards: () => void;
@@ -60,64 +39,6 @@ export function Composer({
   focusKey?: number;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
-  const formRef = useRef<HTMLFormElement>(null);
-  const modelMenuRef = useRef<HTMLDetailsElement>(null);
-  const modelPopoverRef = useRef<HTMLDivElement>(null);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const currentModel = models.find((model) => model.id === profile);
-
-  useLayoutEffect(() => {
-    if (!modelMenuOpen) return;
-    const position = () => {
-      const menu = modelMenuRef.current;
-      const popover = modelPopoverRef.current;
-      if (!menu || !popover) return;
-      const anchor = menu.getBoundingClientRect();
-      const viewport = window.visualViewport;
-      const left = viewport?.offsetLeft ?? 0;
-      const top = viewport?.offsetTop ?? 0;
-      const width = viewport?.width ?? window.innerWidth;
-      const height = viewport?.height ?? window.innerHeight;
-      const panelWidth = Math.min(320, width - 24);
-      const above = anchor.top - top - 20;
-      const below = top + height - anchor.bottom - 20;
-      const upward = above >= Math.min(300, below);
-      popover.style.width = `${panelWidth}px`;
-      popover.style.setProperty("--model-menu-left", `${Math.max(left + 12, Math.min(anchor.left, left + width - panelWidth - 12))}px`);
-      popover.style.maxHeight = `${Math.max(0, upward ? above : below)}px`;
-      popover.style.top = upward ? "auto" : `${anchor.bottom + 8}px`;
-      popover.style.bottom = upward ? `${window.innerHeight - anchor.top + 8}px` : "auto";
-    };
-    position();
-    modelPopoverRef.current?.querySelector<HTMLInputElement>("input:checked")?.closest("label")?.scrollIntoView({ block: "nearest" });
-    window.addEventListener("resize", position);
-    window.addEventListener("scroll", position, true);
-    window.visualViewport?.addEventListener("resize", position);
-    window.visualViewport?.addEventListener("scroll", position);
-    return () => {
-      window.removeEventListener("resize", position);
-      window.removeEventListener("scroll", position, true);
-      window.visualViewport?.removeEventListener("resize", position);
-      window.visualViewport?.removeEventListener("scroll", position);
-    };
-  }, [modelMenuOpen, effortOptions.length]);
-
-  const closeMenu = (target: HTMLElement) => {
-    const menu = target.closest("details");
-    if (menu instanceof HTMLDetailsElement) menu.open = false;
-  };
-
-  const closeComposerMenus = () => {
-    setModelMenuOpen(false);
-    formRef.current?.querySelectorAll("details[open]").forEach((menu) => {
-      (menu as HTMLDetailsElement).open = false;
-    });
-  };
-
-  useEffect(() => {
-    if (!busy) return;
-    closeComposerMenus();
-  }, [busy]);
 
   useEffect(() => {
     const el = ref.current;
@@ -130,24 +51,11 @@ export function Composer({
     if (focusKey > 0) ref.current?.focus();
   }, [focusKey]);
 
-  useEffect(() => {
-    const closeOnOutsideClick = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      if (target.closest("details.composer-menu")) return;
-      closeComposerMenus();
-    };
-    document.addEventListener("mousedown", closeOnOutsideClick);
-    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
-  }, []);
-
   return (
     <form
-      ref={formRef}
       className={`composer ${centered ? "is-centered" : ""}`}
       onSubmit={(e) => {
         e.preventDefault();
-        closeComposerMenus();
         if (busy) onStop();
         else onSubmit();
       }}
@@ -160,11 +68,9 @@ export function Composer({
         aria-label="Сообщение для Neo4j Assistant"
         disabled={disabled}
         onChange={(e) => onText(e.target.value)}
-        onFocus={() => closeComposerMenus()}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
-            closeComposerMenus();
             if (busy) onStop();
             else onSubmit();
           }
@@ -177,10 +83,7 @@ export function Composer({
             className="chip-btn composer-action-btn composer-upload-button"
             aria-label="Добавить PDF в базу"
             title="Добавить PDF в очередь обработки — не к этому сообщению"
-            onClick={() => {
-              closeComposerMenus();
-              onOpenDocuments();
-            }}
+            onClick={onOpenDocuments}
           >
             <IconLibrary />
             <span className="composer-action-label">Добавить PDF</span>
@@ -193,10 +96,7 @@ export function Composer({
             aria-label="Открыть карточки"
             title={cardActionsEnabled ? "Открыть карточки" : "Карточки доступны после первого ответа и вне активной генерации."}
             disabled={!cardActionsEnabled}
-            onClick={() => {
-              closeComposerMenus();
-              onOpenCards();
-            }}
+            onClick={onOpenCards}
           >
             <IconCards />
             <span className="composer-action-label">Карточки</span>
@@ -213,37 +113,6 @@ export function Composer({
           >
             <IconMic />
           </button>
-        )}
-        {!centered && <details className="composer-menu retrieval-menu" onToggle={(event) => {
-          if (!event.currentTarget.open) return;
-          formRef.current?.querySelectorAll("details[open]").forEach((menu) => {
-            if (menu !== event.currentTarget) (menu as HTMLDetailsElement).open = false;
-          });
-        }}>
-          <summary>{MODE_LABELS[mode]}<IconChevron /></summary>
-          <div className="composer-popover">
-            <p className="composer-popover-title">Режим работы</p>
-            {stagedEnabled && branchMode !== "auto" && <label><input type="radio" checked={mode === "staged"} onChange={(event) => { onMode("staged"); closeMenu(event.currentTarget); }} /><span><strong>Исследование</strong><small>Сохраняет исследовательские вопросы и найденные данные, чтобы продолжать работу по направлениям.</small></span></label>}
-            <label><input type="radio" checked={mode === "auto"} onChange={(event) => { onMode("auto"); closeMenu(event.currentTarget); }} /><span><strong>Вопрос по базе</strong><small>{branchMode === "staged" ? "Ответит на отдельный вопрос в новом варианте. Текущее исследование сохранится." : "Отвечает на один самостоятельный вопрос без накопления плана."}</small></span></label>
-            {branchMode === "auto" && <p className="popover-note">Исследование начинается в новом чате. Этот вариант остаётся в режиме «Вопрос по базе».</p>}
-            {mode !== "auto" && <p className="popover-note">За один шаг — один поиск по выбранным исследовательским вопросам.</p>}
-          </div>
-        </details>}
-        {models.length > 0 && (
-          <details ref={modelMenuRef} className="composer-menu model-menu" onToggle={(event) => {
-            setModelMenuOpen(event.currentTarget.open);
-            if (!event.currentTarget.open) return;
-            formRef.current?.querySelectorAll("details[open]").forEach((menu) => {
-              if (menu !== event.currentTarget) (menu as HTMLDetailsElement).open = false;
-            });
-          }}>
-            <summary>{currentModel?.label || "Модель"}<IconChevron /></summary>
-            <div ref={modelPopoverRef} className="composer-popover composer-model-popover">
-              <p className="composer-popover-title">Модель</p>
-              <div className="composer-model-list">{models.map((model) => <label key={model.id}><input type="radio" checked={profile === model.id} onChange={(event) => { onProfile(model.id); closeMenu(event.currentTarget); }} /><span><strong>{model.label}</strong></span></label>)}</div>
-              {effortOptions.length > 0 && <div className="popover-setting"><span>Насколько вдумчиво</span><div>{effortOptions.map((id) => <button key={id} type="button" className={effort === id ? "is-on" : ""} onClick={(event) => { onEffort(id); closeMenu(event.currentTarget); }}>{effortLabel(id)}</button>)}</div></div>}
-            </div>
-          </details>
         )}
         <button
           type="submit"

@@ -44,6 +44,7 @@ import { branchColor } from "./branchVisuals";
 import { ChatThread } from "./components/ChatThread";
 import { Welcome } from "./components/Welcome";
 import { Composer } from "./components/Composer";
+import { SessionMenus } from "./components/SessionMenus";
 import { DocumentUploadModal } from "./components/DocumentUploadModal";
 import { AgendaDrawer } from "./components/AgendaDrawer";
 import { BranchMenu } from "./components/BranchMenu";
@@ -1440,20 +1441,51 @@ export function App() {
           onChange={setSidebarWidth}
         />
       )}
-      <div ref={mainColRef} className="main-col">
+      <div ref={mainColRef} className={`main-col ${rightPanelOpen ? "with-graph" : ""}`}>
         <header className="topbar">
-          <div className="topbar-title">
-            <span>{workspace === "graph" ? "Вся база" : workspace === "library" ? (ingestEnabled ? "Документы" : "Документы · Скоро") : workspace === "help" ? "Помощь" : workspace === "cards" ? "Карточки" : current?.title || "Новый чат"}</span>
-            {workspace === "chat" && branches.length > 0 && (
-              <BranchMenu
-                branches={branches}
-                activeId={branchId}
-                open={rightPanel.kind === "research"}
-                openDirections={stagedAgendaActive ? openDirectionCount : 0}
-                onOpen={() => rightPanel.kind === "research" ? closeResearch() : openResearch("map")}
+          {workspace === "chat" ? (
+            <div className="topbar-controls">
+              {branches.length > 0 && (
+                <BranchMenu
+                  branches={branches}
+                  activeId={branchId}
+                  open={rightPanel.kind === "research"}
+                  openDirections={stagedAgendaActive ? openDirectionCount : 0}
+                  onOpen={() => rightPanel.kind === "research" ? closeResearch() : openResearch("map")}
+                />
+              )}
+              <SessionMenus
+                showMode={!empty}
+                mode={mode}
+                onMode={(value) => {
+                  setMode(value);
+                  localStorage.setItem("retrieval_mode", value);
+                }}
+                stagedEnabled={config?.staged_enabled !== false}
+                branchMode={activeBranchMode}
+                profile={profile}
+                models={config?.models || []}
+                onProfile={(id) => {
+                  setProfile(id);
+                  localStorage.setItem("llm_profile", id);
+                  const found = config?.models.find((item) => item.id === id);
+                  if (found?.reasoning_effort) setEffort(found.reasoning_effort);
+                }}
+                effort={effort}
+                effortOptions={effortOptions}
+                onEffort={(value) => {
+                  setEffort(value);
+                  localStorage.setItem("reasoning_effort", value);
+                }}
+                busy={busy}
+                disabled={Boolean(current?.readOnly)}
               />
-            )}
-          </div>
+            </div>
+          ) : (
+            <div className="topbar-title">
+              <span>{workspace === "graph" ? "Вся база" : workspace === "library" ? (ingestEnabled ? "Документы" : "Документы · Скоро") : workspace === "help" ? "Помощь" : "Карточки"}</span>
+            </div>
+          )}
         </header>
         {workspace === "chat" ? <div className={`chat-col ${empty ? "is-empty" : ""} ${rightPanelOpen ? "with-graph" : ""}`}>
           {!empty && (
@@ -1526,28 +1558,8 @@ export function App() {
             audioEnabled={Boolean(config?.audio_enabled)}
             onMic={() => void onMic()}
             recording={recording}
-            effort={effort}
-            effortOptions={effortOptions}
-            onEffort={(value) => {
-              setEffort(value);
-              localStorage.setItem("reasoning_effort", value);
-            }}
-            profile={profile}
-            models={config?.models || []}
-            onProfile={(id) => {
-              setProfile(id);
-              localStorage.setItem("llm_profile", id);
-              const found = config?.models.find((item) => item.id === id);
-              if (found?.reasoning_effort) setEffort(found.reasoning_effort);
-            }}
             centered={empty}
             mode={mode}
-            onMode={(value) => {
-              setMode(value);
-              localStorage.setItem("retrieval_mode", value);
-            }}
-            stagedEnabled={config?.staged_enabled !== false}
-            branchMode={activeBranchMode}
             cardsEnabled={config?.cards_enabled !== false}
             cardActionsEnabled={Boolean(headCheckpointId && currentId && !pendingApproval && !busy && !current?.readOnly)}
             onOpenCards={() => setRightPanel({ kind: "cards", tab: "templates" })}

@@ -138,16 +138,32 @@ def test_chat_has_one_cards_entry_and_compact_user_question():
     styles = (WEB / "styles.css").read_text(encoding="utf-8")
     assert "onOpenCardTemplates" not in app + composer
     assert "onOpenCardLibrary" not in app + composer
-    assert composer.count("onOpenCards()") == 1
+    assert composer.count("onClick={onOpenCards}") == 1
     assert "Открыть карточки" in composer
     assert "documentsEnabled" in composer
     assert "Добавить PDF в базу" in composer
     assert 'composer-action-label">Добавить PDF' in composer
     assert 'composer-action-label">Карточки' in composer
     assert "IconLibrary" in composer
-    assert "onOpenDocuments()" in composer
+    assert "onClick={onOpenDocuments}" in composer
     assert "container-name:chat-col" in styles
-    assert "@container chat-col (max-width:860px)" in styles
+    assert "container-name:composer" in styles
+    assert "@container composer (max-width:360px)" in styles
+    assert "@container chat-col (max-width:860px)" not in styles
+    assert ".topbar .session-menu > summary { max-width:none;" in styles
+    assert "SessionMenus" in app
+    assert "showMode={!empty}" in app
+    assert 'className={`main-col ${rightPanelOpen ? "with-graph" : ""}`}' in app
+    assert "branch-menu-variant" in (WEB / "components" / "BranchMenu.tsx").read_text(encoding="utf-8")
+    assert ".topbar-title { min-width:0; flex:1 1 auto; overflow:hidden;" in styles
+    assert ".topbar-controls,.session-menus { display:flex; min-width:0; flex:0 1 auto;" in styles
+    assert 'workspace === "chat" ? (' in app
+    assert "current?.title" not in app.split("<header className=\"topbar\">", 1)[1].split("</header>", 1)[0]
+    assert "topbar-controls" in app
+    assert ".main-col.with-graph .branch-menu-variant { display:none; }" in styles
+    assert ".main-col { min-width:280px;" in styles
+    assert "retrieval-menu" not in composer
+    assert "model-menu" not in composer
     assert "Объём данных" not in composer
     assert "onDepth" not in composer
     assert 'useState<"auto" | "staged">("auto")' in app
@@ -169,20 +185,16 @@ def test_chat_has_one_cards_entry_and_compact_user_question():
 
 def test_composer_closes_pickers_when_sending():
     composer = (WEB / "components" / "Composer.tsx").read_text(encoding="utf-8")
+    menus = (WEB / "components" / "SessionMenus.tsx").read_text(encoding="utf-8")
     app = (WEB / "App.tsx").read_text(encoding="utf-8")
     styles = (WEB / "styles.css").read_text(encoding="utf-8")
-    assert "const closeComposerMenus = () => {" in composer
-    assert "setModelMenuOpen(false);" in composer.split("const closeComposerMenus = () => {", 1)[1].split("};", 1)[0]
-    assert "closeComposerMenus();" in composer
-    assert "if (!busy) return;" in composer
+    assert "const closeMenus = () => {" in menus
+    assert "setOpenMenu(null);" in menus.split("const closeMenus = () => {", 1)[1].split("};", 1)[0]
+    assert "closeMenus();" in menus
+    assert "if (!busy) return;" in menus
     assert ".composer-menu:not([open]) > .composer-popover { display:none !important; }" in styles
-    submit = composer.split("onSubmit={(e) => {", 1)[1].split("}}", 1)[0]
-    assert "closeComposerMenus();" in submit
-    keydown = composer.split("onKeyDown={(e) => {", 1)[1].split("}}", 1)[0]
-    assert "closeComposerMenus();" in keydown
-    assert 'onFocus={() => closeComposerMenus()}' in composer
-    assert 'if (target.closest("details.composer-menu")) return;' in composer
-    assert "if (formRef.current?.contains(event.target as Node)) return;" not in composer
+    assert "closeComposerMenus" not in composer
+    assert 'if (target.closest("details.session-menu")) return;' in menus
     assert "setSettingsOpen(false);" in app.split("setBusy(true);", 1)[1][:80]
 
 
