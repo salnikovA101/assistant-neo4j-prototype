@@ -132,7 +132,8 @@ export function DocumentUploadModal({
         >
           <IconAttach />
           <strong>Перетащите PDF сюда</strong>
-          <span>или нажмите, чтобы выбрать файлы. До {maxFiles} штук, до {formatFileSize(maxFileBytes)} каждый.</span>
+          <span>Или нажмите, чтобы выбрать</span>
+          <span>До {maxFiles} файлов, каждый до {formatFileSize(maxFileBytes)}</span>
         </button>
         <input
           ref={inputRef}
@@ -168,16 +169,10 @@ export function DocumentUploadModal({
           </ul>
         )}
 
-        <div className="document-upload-extra">
-          <button type="button" className="ghost-btn" disabled={busy || selected.length >= maxFiles} onClick={() => inputRef.current?.click()}>
-            Добавить ещё
-          </button>
-        </div>
-
         {error && <p className="document-upload-error" role="alert">{error}</p>}
 
         <footer>
-          <button type="button" className="ghost-btn" disabled={busy} onClick={onClose}>Отмена</button>
+          <button type="button" className="ghost-btn document-upload-cancel" disabled={busy} onClick={onClose}>Отмена</button>
           <button type="button" className="primary-btn" disabled={busy || selected.length === 0} onClick={() => void submit()}>
             {busy ? "Отправляю…" : "Отправить"}
           </button>

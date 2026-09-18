@@ -452,7 +452,9 @@ def test_document_upload_stub_is_always_visible_and_not_regex_gated():
     assert "Escape" in reader
     assert "Страница появится, когда подключим хранилище." in reader
     assert "accept=\"application/pdf,.pdf\"" in modal
-    assert "Добавить ещё" in modal
+    assert "Добавить ещё" not in modal
+    assert "document-upload-extra" not in modal
+    assert "document-upload-more" not in modal
     assert "Обработка документов будет подключена позже." in modal
     assert "onOpenDocuments" in composer
     assert "Добавить PDF в базу" not in chat

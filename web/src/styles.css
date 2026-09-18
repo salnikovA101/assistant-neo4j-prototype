@@ -983,15 +983,16 @@ input::placeholder,textarea::placeholder { color:var(--faint); opacity:1; }
 .document-upload-dropzone { display:flex; width:100%; flex-direction:column; align-items:center; gap:6px; margin-top:16px; border:1px dashed var(--border-strong); border-radius:12px; padding:28px 16px; background:rgba(255,255,255,.02); color:var(--muted); text-align:center; cursor:pointer; }
 .document-upload-dropzone:hover,.document-upload-dropzone.is-over { border-color:var(--accent); background:var(--accent-tint); color:var(--text); }
 .document-upload-dropzone strong { color:var(--text); font-size:13px; font-weight:500; }
-.document-upload-dropzone span { max-width:360px; font-size:11px; line-height:1.45; }
+.document-upload-dropzone span { max-width:100%; font-size:11px; line-height:1.45; }
 .document-upload-list { display:flex; flex-direction:column; gap:6px; margin:14px 0 0; padding:0; list-style:none; }
 .document-upload-list > li { display:flex; align-items:center; justify-content:space-between; gap:10px; border:1px solid var(--border); border-radius:9px; padding:8px 10px; }
 .document-upload-list > li > span { min-width:0; display:flex; flex-direction:column; gap:2px; }
 .document-upload-list strong { color:var(--text); font-size:12px; font-weight:500; overflow-wrap:anywhere; }
 .document-upload-list small { color:var(--muted); font-size:11px; }
-.document-upload-extra { margin-top:10px; }
 .document-upload-error { margin:10px 0 0; color:var(--danger); font-size:12px; }
-.document-upload-modal > footer { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
+.document-upload-modal > footer { display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:16px; }
+.document-upload-modal > footer .ghost-btn,.document-upload-modal > footer .primary-btn { min-height:36px; }
+.document-upload-modal > footer .document-upload-cancel:hover:not(:disabled) { border-color:rgba(255,145,145,.35); background:rgba(255,145,145,.1); color:var(--danger); }
 .builder-field,.builder-preview .visual-card { border-radius:12px; }
 @media (max-width:1100px) {
 }
