@@ -129,6 +129,23 @@ def test_single_message_and_card_actions_are_direct():
     assert '{chatMode && onInsert && <button className="primary-btn"' in cards
     assert 'className="ghost-btn danger-btn"' in cards
     assert ">Удалить</button>" in cards
+    assert "Импорт карточки" in cards
+    assert "Вставить карточку" not in cards
+    assert 'className="library-tools-end"' in cards
+
+
+def test_card_authorship_sits_beside_template_kind():
+    visual = (WEB / "components" / "CardVisual.tsx").read_text(encoding="utf-8")
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
+    guide = load_service_guide(ROOT / "prompts")
+    assert 'className="visual-card-kicker"' in visual
+    assert visual.index("visual-card-kind") < visual.index("visual-card-status")
+    assert visual.index("visual-card-kicker") < visual.index("<h3>")
+    assert ".visual-card-kicker { display:flex;" in styles
+    assert ".visual-card-status { color:var(--accent);" in styles
+    assert ".library-card header .visual-card-kind,.library-card header .visual-card-status { color:var(--accent);" in styles
+    assert ".library-tools-end { display:flex;" in styles
+    assert "справа показаны число найденных карточек и **Импорт карточки**" in guide
 
 
 def test_chat_has_one_cards_entry_and_compact_user_question():

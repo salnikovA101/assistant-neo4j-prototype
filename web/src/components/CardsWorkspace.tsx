@@ -302,15 +302,17 @@ export function CardsWorkspace({
         <div className="library-shell">
           <div className="library-tools">
             <label className="library-search"><span className="sr-only">Поиск по карточкам</span><input type="search" placeholder="Найти карточку по названию или содержанию" value={cardQuery} onChange={(event) => setCardQuery(event.target.value)} /></label>
-            <span className="library-count">{visibleCards.length} из {cards.length}</span>
-            {!chatMode && <>
-              <input ref={importInputRef} type="file" accept="application/json,.json" hidden disabled={busy || readOnly || !!draft} onChange={(event) => {
-                const file = event.currentTarget.files?.[0];
-                event.currentTarget.value = "";
-                if (file) void importFile(file);
-              }} />
-              <button type="button" className="ghost-btn library-import-button" disabled={busy || readOnly || !!draft} title="Загрузить JSON — шаблон определится автоматически" onClick={() => importInputRef.current?.click()}>Вставить карточку</button>
-            </>}
+            <div className="library-tools-end">
+              <span className="library-count">{visibleCards.length} из {cards.length}</span>
+              {!chatMode && <>
+                <input ref={importInputRef} type="file" accept="application/json,.json" hidden disabled={busy || readOnly || !!draft} onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  event.currentTarget.value = "";
+                  if (file) void importFile(file);
+                }} />
+                <button type="button" className="ghost-btn library-import-button" disabled={busy || readOnly || !!draft} title="Загрузить JSON — шаблон определится автоматически" onClick={() => importInputRef.current?.click()}>Импорт карточки</button>
+              </>}
+            </div>
           </div>
           <div className="library-grid">
             {draft && <article className="library-card library-import-draft"><DraftReview key={draft.id} onCancel={() => { setDraft(null); setDraftQueue([]); }} draft={draft} template={draftTemplate} queueSize={draftQueue.length} busy={busy} onSave={async (data, provenance, title) => {

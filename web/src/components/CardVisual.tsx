@@ -80,7 +80,10 @@ export function CardVisual({
     <article className={`visual-card ${editable ? "is-editable" : ""}`}>
       <header className="visual-card-head">
         <div>
-          <span className="visual-card-kind">{templateName}</span>
+          <div className="visual-card-kicker">
+            <span className="visual-card-kind">{templateName}</span>
+            {status && <span className="visual-card-status">{status}</span>}
+          </div>
           {editable ? (
             <input
               className="visual-card-title-input"
@@ -91,7 +94,6 @@ export function CardVisual({
             />
           ) : <h3>{empty(title) ? titlePlaceholder : String(title)}</h3>}
         </div>
-        {status && <span className="visual-card-status">{status}</span>}
       </header>
       <div className="visual-card-fields">
         {definition.fields.map((field) => {
