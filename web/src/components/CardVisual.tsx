@@ -11,8 +11,8 @@ function dateText(value: unknown): string {
   return new Intl.DateTimeFormat("ru-RU").format(new Date(year, month - 1, day));
 }
 
-function ReadValue({ value, widget, unit }: { value: unknown; widget: string; unit: string }) {
-  if (empty(value)) return <span className="card-empty">Не заполнено</span>;
+function ReadValue({ value, widget, unit, emptyText }: { value: unknown; widget: string; unit: string; emptyText?: string }) {
+  if (empty(value)) return <span className="card-empty">{emptyText || "Не заполнено"}</span>;
   if (value && typeof value === "object" && !Array.isArray(value)) return (
     <div className="card-nested-answer">{Object.entries(value as Record<string, unknown>).map(([key, item]) => (
       <div key={key}><strong>{key.replaceAll("_", " ")}</strong><ReadValue value={item} widget={Array.isArray(item) ? "list" : "short_text"} unit="" /></div>
@@ -100,13 +100,12 @@ export function CardVisual({
           return <section key={field.key} className="visual-card-field">
             <div className="visual-card-label">
               <strong>{field.label}</strong>
-              {field.description && <details className="card-field-help"><summary aria-label={`Пояснение к полю «${field.label}»`}>Подсказка</summary><p>{field.description}</p></details>}
             </div>
             <div className="visual-card-answer">
               {editable ? (
                 <EditValue value={data[field.key]} widget={field.widget} unit={field.unit} options={field.options} onChange={(value) => onChange?.(field.key, value)} />
               ) : (
-                <ReadValue value={data[field.key]} widget={field.widget} unit={field.unit} />
+                <ReadValue value={data[field.key]} widget={field.widget} unit={field.unit} emptyText={field.description.trim() || undefined} />
               )}
             </div>
           </section>;

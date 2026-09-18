@@ -122,7 +122,6 @@ def test_single_message_and_card_actions_are_direct():
     assert "answerMarkdownForCopy" in chat
     assert "answer-source-panel" in chat
     assert "more-actions-menu" not in cards
-    assert "IconTrash" in cards
     assert "Прикрепить к варианту" not in cards
     assert "attachCard" not in cards
     assert "Вставить в диалог" in cards
@@ -130,8 +129,26 @@ def test_single_message_and_card_actions_are_direct():
     assert 'className="ghost-btn danger-btn"' in cards
     assert ">Удалить</button>" in cards
     assert "Импорт карточки" in cards
+    assert 'className="ghost-btn library-import-button"' in cards
+    assert ">Новый шаблон</button>" in cards
+    assert "+ Новый шаблон" not in cards
     assert "Вставить карточку" not in cards
     assert 'className="library-tools-end"' in cards
+    assert "{chatMode && (" in cards
+    assert 'className="workspace-bar cards-workspace-bar"' in cards
+    assert ">Библиотека</button>" in cards
+    assert cards.index("{chatMode && (") < cards.index(">Библиотека</button>")
+    assert "К карточкам" not in cards
+    assert 'className="ws-toolbar"' in cards
+    assert "{!chatMode && !editor && (" in cards
+    assert 'className="ws-seg"' in cards
+    assert 'aria-label="Раздел карточек"' in cards
+    assert "Найти шаблон по названию или описанию" in cards
+    assert "visibleTemplates" in cards
+    assert "Сохранить копию" in cards
+    assert "template-field-list" not in cards
+    assert "на вкладке «Шаблоны»" not in cards
+    assert "в Шаблонах" in cards
 
 
 def test_card_authorship_sits_beside_template_kind():
@@ -145,7 +162,16 @@ def test_card_authorship_sits_beside_template_kind():
     assert ".visual-card-status { color:var(--accent);" in styles
     assert ".library-card header .visual-card-kind,.library-card header .visual-card-status { color:var(--accent);" in styles
     assert ".library-tools-end { display:flex;" in styles
-    assert "справа показаны число найденных карточек и **Импорт карточки**" in guide
+    assert ".cards-list-panel { display:flex; flex-direction:column; gap:12px;" in styles
+    assert ".cards-workspace > .cards-grid:not(.is-editing) { padding:16px 24px 24px; column-gap:24px; }" in styles
+    assert ".main-col:has(> .cards-workspace) > .topbar { padding-inline:24px; }" in styles
+    assert ".cards-grid.is-editing { grid-template-columns:minmax(0,1fr); }" in styles
+    assert "переключатель **Библиотека** / **Шаблоны**" in guide
+    assert "открывается на вкладке **Библиотека**" not in guide
+    assert "список **Поля карточки**" not in guide
+    assert "card-field-help" not in visual
+    assert "emptyText={field.description.trim() || undefined}" in visual
+    assert "нажмите **Подсказка**" not in guide
 
 
 def test_chat_has_one_cards_entry_and_compact_user_question():
