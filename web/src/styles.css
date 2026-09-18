@@ -1194,7 +1194,8 @@ button.toast { margin:0; font:inherit; text-align:left; cursor:pointer; }
 button.toast:hover { border-color:var(--accent); color:var(--text); }
 
 /* Keep the model list compact and the reasoning controls outside its scroll area. */
-.model-menu .composer-model-popover { position:fixed; right:auto !important; left:var(--model-menu-left, 12px); display:flex; flex-direction:column; overflow:hidden; box-sizing:border-box; max-width:calc(100vw - 24px); }
+.composer-menu:not([open]) > .composer-popover { display:none !important; }
+.model-menu[open] .composer-model-popover { position:fixed; right:auto !important; left:var(--model-menu-left, 12px); display:flex; flex-direction:column; overflow:hidden; box-sizing:border-box; max-width:calc(100vw - 24px); }
 .composer-model-popover .composer-popover-title { flex:none; }
 .composer-model-list { min-height:0; max-height:176px; overflow-y:auto; overscroll-behavior:contain; scrollbar-gutter:stable; }
 .composer-model-list > label { display:flex; align-items:center; gap:8px; min-height:44px; box-sizing:border-box; padding:10px; border-radius:6px; cursor:pointer; }
@@ -1204,5 +1205,5 @@ button.toast:hover { border-color:var(--accent); color:var(--text); }
 .composer-model-popover .popover-setting { flex:none; }
 .composer-model-popover .popover-setting > div { flex-wrap:wrap; }
 @media (max-width:640px) {
-  .model-menu .composer-model-popover { left:var(--model-menu-left, 12px) !important; }
+  .model-menu[open] .composer-model-popover { left:var(--model-menu-left, 12px) !important; }
 }

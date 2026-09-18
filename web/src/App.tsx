@@ -747,6 +747,7 @@ export function App() {
       )
     );
     setBusy(true);
+    setSettingsOpen(false);
     const ac = new AbortController();
     abortRef.current = ac;
     try {

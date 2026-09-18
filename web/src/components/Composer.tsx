@@ -107,6 +107,18 @@ export function Composer({
     if (menu instanceof HTMLDetailsElement) menu.open = false;
   };
 
+  const closeComposerMenus = () => {
+    setModelMenuOpen(false);
+    formRef.current?.querySelectorAll("details[open]").forEach((menu) => {
+      (menu as HTMLDetailsElement).open = false;
+    });
+  };
+
+  useEffect(() => {
+    if (!busy) return;
+    closeComposerMenus();
+  }, [busy]);
+
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -120,10 +132,10 @@ export function Composer({
 
   useEffect(() => {
     const closeOnOutsideClick = (event: MouseEvent) => {
-      if (formRef.current?.contains(event.target as Node)) return;
-      formRef.current?.querySelectorAll("details[open]").forEach((menu) => {
-        (menu as HTMLDetailsElement).open = false;
-      });
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest("details.composer-menu")) return;
+      closeComposerMenus();
     };
     document.addEventListener("mousedown", closeOnOutsideClick);
     return () => document.removeEventListener("mousedown", closeOnOutsideClick);
@@ -135,6 +147,7 @@ export function Composer({
       className={`composer ${centered ? "is-centered" : ""}`}
       onSubmit={(e) => {
         e.preventDefault();
+        closeComposerMenus();
         if (busy) onStop();
         else onSubmit();
       }}
@@ -147,9 +160,11 @@ export function Composer({
         aria-label="Сообщение для Neo4j Assistant"
         disabled={disabled}
         onChange={(e) => onText(e.target.value)}
+        onFocus={() => closeComposerMenus()}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
+            closeComposerMenus();
             if (busy) onStop();
             else onSubmit();
           }
@@ -163,9 +178,7 @@ export function Composer({
             aria-label="Добавить PDF в базу"
             title="Добавить PDF в базу"
             onClick={() => {
-              formRef.current?.querySelectorAll("details[open]").forEach((menu) => {
-                (menu as HTMLDetailsElement).open = false;
-              });
+              closeComposerMenus();
               onOpenDocuments();
             }}
           >
@@ -180,9 +193,7 @@ export function Composer({
             title={cardActionsEnabled ? "Открыть карточки" : "Карточки доступны после первого ответа и вне активной генерации."}
             disabled={!cardActionsEnabled}
             onClick={() => {
-              formRef.current?.querySelectorAll("details[open]").forEach((menu) => {
-                (menu as HTMLDetailsElement).open = false;
-              });
+              closeComposerMenus();
               onOpenCards();
             }}
           >

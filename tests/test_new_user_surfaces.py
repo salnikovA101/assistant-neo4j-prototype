@@ -162,6 +162,25 @@ def test_chat_has_one_cards_entry_and_compact_user_question():
     assert ".bubble-user { width:fit-content;" in desktop
 
 
+def test_composer_closes_pickers_when_sending():
+    composer = (WEB / "components" / "Composer.tsx").read_text(encoding="utf-8")
+    app = (WEB / "App.tsx").read_text(encoding="utf-8")
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
+    assert "const closeComposerMenus = () => {" in composer
+    assert "setModelMenuOpen(false);" in composer.split("const closeComposerMenus = () => {", 1)[1].split("};", 1)[0]
+    assert "closeComposerMenus();" in composer
+    assert "if (!busy) return;" in composer
+    assert ".composer-menu:not([open]) > .composer-popover { display:none !important; }" in styles
+    submit = composer.split("onSubmit={(e) => {", 1)[1].split("}}", 1)[0]
+    assert "closeComposerMenus();" in submit
+    keydown = composer.split("onKeyDown={(e) => {", 1)[1].split("}}", 1)[0]
+    assert "closeComposerMenus();" in keydown
+    assert 'onFocus={() => closeComposerMenus()}' in composer
+    assert 'if (target.closest("details.composer-menu")) return;' in composer
+    assert "if (formRef.current?.contains(event.target as Node)) return;" not in composer
+    assert "setSettingsOpen(false);" in app.split("setBusy(true);", 1)[1][:80]
+
+
 def test_collapsed_sidebar_does_not_render_chat_initials():
     sidebar = (WEB / "components" / "Sidebar.tsx").read_text(encoding="utf-8")
     styles = (WEB / "styles.css").read_text(encoding="utf-8")
