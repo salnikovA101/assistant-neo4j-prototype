@@ -259,6 +259,22 @@ def test_welcome_mode_cards_emphasize_the_selected_default():
     assert 'placeholder={mode === "staged" ? "Что исследовать?" : "Спросите базу…"}' in composer
 
 
+def test_embedded_chain_picker_is_a_combined_control():
+    pane = (WEB / "components" / "GraphPane.tsx").read_text(encoding="utf-8")
+    styles = (WEB / "styles.css").read_text(encoding="utf-8")
+    guide = load_service_guide(ROOT / "prompts")
+    assert 'className={`graph-view-picker${embedded ? " is-combined" : ""}`}' in pane
+    assert "moveView(-1)}>‹</button>" in pane
+    assert "moveView(1)}>›</button>" in pane
+    assert "moveView(-1)}>←" not in pane
+    assert "moveView(1)}>→" not in pane
+    assert ".is-embedded-graph > .graph-pane-bar { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); align-items:center; min-height:0; gap:2px; padding:8px 12px; }" in styles
+    assert "padding:8px 12px;" in styles.split(".research-shell-header {", 1)[1].split("}", 1)[0]
+    assert "border-right:1px solid rgba(255,255,255,.08)" in styles
+    assert ".graph-view-picker.is-combined" in styles
+    assert "шевроны ‹ › и список **Все цепочки · N**" in guide
+
+
 def test_empty_research_branch_placeholder_is_selectable():
     app = (WEB / "App.tsx").read_text(encoding="utf-8")
     pane = (WEB / "components" / "ResearchMapPane.tsx").read_text(encoding="utf-8")

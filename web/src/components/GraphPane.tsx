@@ -65,14 +65,18 @@ export function GraphPane({
   const toolbar = (search?: ReactNode) => <>
       <header className="graph-pane-bar">
         {embedded && search}
-        <div className="graph-view-picker">
+        <div className={`graph-view-picker${embedded ? " is-combined" : ""}`}>
           {!embedded && <span>{title}</span>}
-          {embedded && <button type="button" className="graph-chain-arrow" aria-label="Предыдущая цепочка" title="Предыдущая цепочка" disabled={!payload || viewIndex === 0} onClick={() => moveView(-1)}>←</button>}
+          {embedded && (
+            <button type="button" className="graph-chain-arrow" aria-label="Предыдущая цепочка" title="Предыдущая цепочка" disabled={!payload || viewIndex === 0} onClick={() => moveView(-1)}>‹</button>
+          )}
           <select aria-label="Представление данных" value={viewId} onChange={(event) => setViewId(event.target.value)}>
             <option value="all">Все цепочки · {views.length}</option>
             {views.map((view, index) => <option key={view.id} value={view.id}>{embedded ? `Цепочка ${index + 1} из ${views.length}` : chainLabel(view.label, view.unit_no)}{view.origin?.step_no ? ` · вопрос ${view.origin.step_no}` : ""}{view.is_new && payload?.mode === "staged" ? " · новая" : ""}</option>)}
           </select>
-          {embedded && <button type="button" className="graph-chain-arrow" aria-label="Следующая цепочка" title="Следующая цепочка" disabled={!payload || viewIndex >= views.length} onClick={() => moveView(1)}>→</button>}
+          {embedded && (
+            <button type="button" className="graph-chain-arrow" aria-label="Следующая цепочка" title="Следующая цепочка" disabled={!payload || viewIndex >= views.length} onClick={() => moveView(1)}>›</button>
+          )}
         </div>
         {!embedded && <button type="button" className="icon-btn" onClick={onClose} aria-label="Скрыть данные"><IconClose /></button>}
       </header>
